@@ -36,6 +36,19 @@ def _locked(fn):
     return wrapper
 
 
+_NOTE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,120}")
+
+
+def is_safe_note_id(note_id: Optional[str]) -> bool:
+    """파일 경로에 쓰일 note_id 검증 (경로 탈출 '..\\' 등 차단)."""
+    return bool(note_id) and bool(_NOTE_ID_RE.fullmatch(note_id))
+
+
+def _require_safe_note_id(note_id: str):
+    if not is_safe_note_id(note_id):
+        raise ValueError(f"허용되지 않는 노트 ID 형식입니다: {note_id!r}")
+
+
 def ensure_dirs():
     """데이터 및 노트 저장 디렉토리를 확인하고 생성합니다."""
     os.makedirs(NOTES_DIR, exist_ok=True)
@@ -161,7 +174,9 @@ def save_note(
     
     # 기존 수정이 아니면 매번 고유한 note_id 생성 (같은 영상도 여러 버전 보관 가능)
     if not note_id:
-        note_id = f"{video_id}_{timestamp}"
+        safe_vid = re.sub(r"[^A-Za-z0-9_-]", "_", str(video_id))[:100] or "note"
+        note_id = f"{safe_vid}_{timestamp}"
+    _require_safe_note_id(note_id)
 
     filename = f"{note_id}.md"
     file_path = os.path.join(NOTES_DIR, filename)
@@ -219,6 +234,7 @@ created_at: "{created_time}"
 @_locked
 def update_note(note_id: str, new_markdown: str) -> Optional[Dict[str, Any]]:
     """사용자가 웹 에디터에서 직접 수정한 마크다운을 저장합니다."""
+    _require_safe_note_id(note_id)
     lib = load_library()
     meta = lib.get("notes", {}).get(note_id)
     if not meta:
@@ -255,6 +271,8 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
 @_locked
 def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]]) -> bool:
     """노트에 번역되거나 업데이트된 자막 데이터를 영구 캐싱 저장합니다."""
+    if not is_safe_note_id(note_id):
+        return False
     lib = load_library()
     notes = lib.get("notes", {})
     if note_id in notes:
@@ -279,7 +297,7 @@ def get_note(note_id_or_video_id: str) -> Optional[Dict[str, Any]]:
                 target_id = nid
                 break
 
-    if not target_id:
+    if not target_id or not is_safe_note_id(target_id):
         return None
 
     meta = notes[target_id]
@@ -312,6 +330,8 @@ def list_saved_notes() -> List[Dict[str, Any]]:
 @_locked
 def delete_note(note_id: str) -> bool:
     """학습 노트 및 메타데이터를 삭제합니다."""
+    if not is_safe_note_id(note_id):
+        return False
     lib = load_library()
     if note_id in lib.get("notes", {}):
         del lib["notes"][note_id]

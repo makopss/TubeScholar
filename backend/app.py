@@ -54,13 +54,29 @@ from analyzer import (
     DEFAULT_NOTE_MODEL,
     DEFAULT_TRANSLATE_MODEL
 )
-from storage import save_note, get_note, list_saved_notes, delete_note, update_note, update_note_subtitles
+from storage import save_note, get_note, list_saved_notes, delete_note, update_note, update_note_subtitles, is_safe_note_id
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from stt import transcribe_audio_groq
 from tts import generate_note_audio, list_available_voices, AUDIO_DIR
 from typing import List, Dict, Any
 import re
 
 app = FastAPI(title="TubeScholar API")
+
+# 🔒 로컬 서버 보안
+# 1) DNS 리바인딩 방지: Host 헤더가 127.0.0.1/localhost 인 요청만 허용
+app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+
+# 2) CSRF 방지: 상태를 바꾸는 /api 요청은 전용 헤더 필수
+#    (외부 웹사이트가 커스텀 헤더를 붙이면 CORS preflight 가 발생하는데, 이 서버는 CORS 를 허용하지 않으므로 차단됨)
+_CSRF_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+@app.middleware("http")
+async def csrf_guard(request: Request, call_next):
+    if request.method in _CSRF_METHODS and request.url.path.startswith("/api/"):
+        if request.headers.get("x-tubescholar") != "1":
+            return JSONResponse(status_code=403, content={"detail": "허용되지 않은 요청입니다. (CSRF 보호)"})
+    return await call_next(request)
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -153,8 +169,12 @@ def set_config(req: ConfigRequest):
                     parts = line.strip().split("=", 1)
                     env_lines[parts[0].strip()] = parts[1].strip()
 
+    def _clean_key(v: str) -> str:
+        # 줄바꿈/제어문자/공백 제거 → .env 에 다른 줄이 끼어드는 것(인젝션) 방지
+        return re.sub(r"[\s\x00-\x1f\x7f]", "", v or "")
+
     if req.api_key is not None:
-        k = req.api_key.strip()
+        k = _clean_key(req.api_key)
         os.environ["GEMINI_API_KEY"] = k
         if k:
             env_lines["GEMINI_API_KEY"] = k
@@ -162,7 +182,7 @@ def set_config(req: ConfigRequest):
             env_lines.pop("GEMINI_API_KEY", None)
 
     if req.groq_api_key is not None:
-        k = req.groq_api_key.strip()
+        k = _clean_key(req.groq_api_key)
         os.environ["GROQ_API_KEY"] = k
         if k:
             env_lines["GROQ_API_KEY"] = k
@@ -341,6 +361,8 @@ def analyze_local_video_audio(
 @app.post("/api/manual-save")
 def manual_save_note(req: ManualSaveRequest):
     """구독 AI로부터 받은 답변 마크다운을 직접 붙여넣어 새 노트로 저장"""
+    if req.note_id and not is_safe_note_id(req.note_id):
+        raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     video_id = extract_video_id(req.url) if req.url else None
     if not video_id:
         video_id = f"custom_{int(time.time())}"
@@ -556,6 +578,8 @@ def get_single_note(note_id: str):
 @app.put("/api/notes/{note_id}")
 def update_single_note(note_id: str, req: UpdateNoteRequest):
     """사용자가 직접 편집한 마크다운을 저장"""
+    if not is_safe_note_id(note_id):
+        raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     res = update_note(note_id, req.markdown)
     if not res:
         raise HTTPException(status_code=404, detail="수정할 노트를 찾을 수 없습니다.")

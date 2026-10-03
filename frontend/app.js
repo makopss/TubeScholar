@@ -1,5 +1,21 @@
 // TubeScholar Frontend Application Logic (Dual-Mode, Local Video & Live Editor Edition)
 
+// 🔒 로컬 서버 CSRF 방어: 같은 출처의 /api 요청에 전용 헤더를 자동 첨부
+// (다른 웹사이트는 이 커스텀 헤더를 붙여 127.0.0.1 로 요청할 수 없음 → 서버가 403 거부)
+(() => {
+  const nativeFetch = window.fetch.bind(window);
+  window.fetch = (input, init = {}) => {
+    const url = typeof input === "string" ? input : (input && input.url) || String(input || "");
+    if (url.startsWith("/api/") || url.startsWith(location.origin + "/api/")) {
+      const base = init.headers || (input instanceof Request ? input.headers : undefined);
+      const headers = new Headers(base);
+      headers.set("X-TubeScholar", "1");
+      init = { ...init, headers };
+    }
+    return nativeFetch(input, init);
+  };
+})();
+
 let ytPlayer = null;
 let currentVideoId = null;
 let currentNoteId = null;
@@ -15,6 +31,8 @@ let currentActiveView = "note"; // 'note' or 'subtitles'
 let isCcEnabled = true;
 let currentFontScale = 100; // 70% ~ 160%
 let activeSubtitleIndex = -1;
+let subtitleRowByIdx = new Map(); // 자막 인덱스 → 목록 행 요소 (renderSubtitlesList 에서 갱신)
+let highlightedRowIdx = -1;
 let timeSyncTimer = null;
 let isTranslatingSubtitles = false;
 let transAbortController = null;
@@ -115,11 +133,21 @@ function parseTimeToSeconds(timeStr) {
   return 0;
 }
 
+function sanitizeHtml(html) {
+  // AI 생성/붙여넣기 노트에 섞인 악성 HTML(스크립트, onerror 등) 제거
+  if (window.DOMPurify) return DOMPurify.sanitize(html);
+  // DOMPurify 로드 실패 시 안전하게 전부 텍스트로 처리
+  const d = document.createElement("div");
+  d.textContent = html;
+  return d.innerHTML;
+}
+
 function processMarkdownHtml(html) {
   const tempDiv = document.createElement("div");
-  tempDiv.innerHTML = html;
+  tempDiv.innerHTML = sanitizeHtml(html);
 
   const timeRegex = /\[(\d{1,2}:\d{2}(?::\d{2})?)\]/g;
+  const timeTest = /\[(\d{1,2}:\d{2}(?::\d{2})?)\]/; // test() 용 (g 플래그의 lastIndex 부작용 방지)
   const walker = document.createTreeWalker(tempDiv, NodeFilter.SHOW_TEXT, null, false);
   const textNodes = [];
   while (walker.nextNode()) {
@@ -127,11 +155,11 @@ function processMarkdownHtml(html) {
   }
 
   for (const node of textNodes) {
-    if (timeRegex.test(node.nodeValue)) {
+    if (timeTest.test(node.nodeValue)) {
       const parent = node.parentNode;
       if (parent && parent.tagName !== 'CODE' && parent.tagName !== 'PRE') {
         const span = document.createElement('span');
-        span.innerHTML = node.nodeValue.replace(timeRegex, (match, p1) => {
+        span.innerHTML = escapeHtmlStr(node.nodeValue).replace(timeRegex, (match, p1) => {
           const secs = parseTimeToSeconds(p1);
           return `<button type="button" class="timestamp-tag" data-seconds="${secs}" title="${p1} 구간으로 이동">${p1}</button>`;
         });
@@ -979,43 +1007,48 @@ function toggleSubtitleAutoScroll() {
   }
 }
 
+// (subtitleRowByIdx / highlightedRowIdx 는 파일 상단에 선언)
+const ROW_HIGHLIGHT_CLASSES = ["border-sky-400", "bg-sky-950/70", "ring-1", "ring-sky-400/60"];
+
 function scrollToActiveSubtitle(idx) {
   if (currentActiveView !== 'subtitles') return;
-  const rows = document.querySelectorAll("#subtitle-list .subtitle-row");
-  if (rows && rows[idx]) {
-    rows[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+  const row = subtitleRowByIdx.get(idx);
+  if (row) row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function applyRowHighlight(idx, allowScroll = true) {
+  if (highlightedRowIdx === idx) return;
+  const prev = subtitleRowByIdx.get(highlightedRowIdx);
+  if (prev) prev.classList.remove(...ROW_HIGHLIGHT_CLASSES);
+  highlightedRowIdx = idx;
+  const row = subtitleRowByIdx.get(idx);
+  if (!row) return; // 검색 필터로 숨겨진 자막
+  row.classList.add(...ROW_HIGHLIGHT_CLASSES);
+  if (allowScroll && currentActiveView === 'subtitles' && isSubtitleAutoScroll) {
+    const container = document.getElementById("subtitle-list");
+    if (container) {
+      const rowTop = row.offsetTop - container.offsetTop;
+      const rowBottom = rowTop + row.clientHeight;
+      const containerTop = container.scrollTop;
+      const containerBottom = containerTop + container.clientHeight;
+      if (rowTop < containerTop || rowBottom > containerBottom) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
   }
 }
 
 function highlightSubtitleRow(idx) {
-  const rows = document.querySelectorAll("#subtitle-list .subtitle-row");
-  rows.forEach((row, i) => {
-    if (i === idx) {
-      row.classList.add("border-sky-400", "bg-sky-950/70", "ring-1", "ring-sky-400/60");
-      if (currentActiveView === 'subtitles' && isSubtitleAutoScroll) {
-        const container = document.getElementById("subtitle-list");
-        if (container) {
-          const rowTop = row.offsetTop - container.offsetTop;
-          const rowBottom = rowTop + row.clientHeight;
-          const containerTop = container.scrollTop;
-          const containerBottom = containerTop + container.clientHeight;
-          if (rowTop < containerTop || rowBottom > containerBottom) {
-            row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-          }
-        }
-      }
-    } else {
-      row.classList.remove("border-sky-400", "bg-sky-950/70", "ring-1", "ring-sky-400/60");
-    }
-  });
+  applyRowHighlight(idx, true);
 }
 
 function clearActiveSubtitleHighlight() {
+  // 자막 사이 공백 구간에서 0.12초마다 호출되므로, 이미 비어 있으면 즉시 반환
+  if (activeSubtitleIndex === -1 && highlightedRowIdx === -1) return;
   activeSubtitleIndex = -1;
-  const rows = document.querySelectorAll("#subtitle-list .subtitle-row");
-  rows.forEach(row => {
-    row.classList.remove("border-sky-400", "bg-sky-950/70", "ring-1", "ring-sky-400/60");
-  });
+  const prev = subtitleRowByIdx.get(highlightedRowIdx);
+  if (prev) prev.classList.remove(...ROW_HIGHLIGHT_CLASSES);
+  highlightedRowIdx = -1;
 }
 
 function startTimeSync() {
@@ -1093,11 +1126,11 @@ function renderSubtitlesList(filterKeyword = "") {
     `;
   }
 
-  currentSubtitles.forEach((sub) => {
+  currentSubtitles.forEach((sub, subIdx) => {
     const origText = sub.text || "";
     const koText = sub.ko_text || "";
-    const timeStr = sub.timestamp || formatTimestampFromSeconds(sub.start);
-    const secs = sub.start || 0;
+    const timeStr = escapeHtmlStr(sub.timestamp || formatTimestampFromSeconds(sub.start));
+    const secs = Number(sub.start) || 0;
 
     if (keyword && !origText.toLowerCase().includes(keyword) && !koText.toLowerCase().includes(keyword)) {
       return;
@@ -1130,6 +1163,7 @@ function renderSubtitlesList(filterKeyword = "") {
       <div 
         class="subtitle-row p-2.5 rounded-xl bg-slate-900/60 hover:bg-slate-800/90 border border-slate-800 hover:border-sky-500/50 cursor-pointer transition flex items-start space-x-3 group"
         data-seconds="${secs}"
+        data-idx="${subIdx}"
         title="클릭하여 ${timeStr} 구간으로 이동"
       >
         <button type="button" class="flex-shrink-0 px-2 py-1 rounded-lg bg-sky-500/10 group-hover:bg-sky-500 text-sky-400 group-hover:text-white font-mono text-[11px] font-bold transition flex items-center space-x-1">
@@ -1157,14 +1191,23 @@ function renderSubtitlesList(filterKeyword = "") {
     inlineBtn.addEventListener("click", () => requestKoreanTranslation(true));
   }
 
+  // 자막 인덱스 → 행 요소 맵 (강조 표시 시 전체 행 순회 방지, 검색 필터 중에도 정확)
+  subtitleRowByIdx = new Map();
   container.querySelectorAll(".subtitle-row").forEach(row => {
-    row.addEventListener("click", () => {
-      const secs = parseFloat(row.dataset.seconds);
-      seekVideo(secs);
-      container.querySelectorAll(".subtitle-row").forEach(r => r.classList.remove("border-sky-500", "bg-sky-950/40"));
-      row.classList.add("border-sky-500", "bg-sky-950/40");
-    });
+    subtitleRowByIdx.set(Number(row.dataset.idx), row);
   });
+  highlightedRowIdx = -1;
+  if (activeSubtitleIndex >= 0) applyRowHighlight(activeSubtitleIndex, false);
+
+  // 클릭 이벤트는 컨테이너에 한 번만 위임 바인딩
+  if (!container.dataset.clickBound) {
+    container.dataset.clickBound = "1";
+    container.addEventListener("click", (e) => {
+      const row = e.target.closest(".subtitle-row");
+      if (!row || !container.contains(row)) return;
+      seekVideo(parseFloat(row.dataset.seconds));
+    });
+  }
 }
 
 function switchViewTab(tabName) {
@@ -1500,12 +1543,12 @@ async function loadLibrary() {
       
       card.innerHTML = `
         <div class="w-20 h-14 bg-slate-900 rounded-lg border border-slate-700 flex-shrink-0 overflow-hidden flex items-center justify-center">
-          ${thumb ? `<img src="${thumb}" alt="thumb" class="w-full h-full object-cover">` : `<span class="text-xs text-amber-400 font-bold">📁 로컬</span>`}
+          ${thumb ? `<img src="${escapeHtmlStr(thumb)}" alt="thumb" class="w-full h-full object-cover">` : `<span class="text-xs text-amber-400 font-bold">📁 로컬</span>`}
         </div>
         <div class="flex-1 min-w-0 pr-6">
-          <p class="text-xs font-semibold text-sky-400 truncate">${item.channel || 'YouTube'}</p>
-          <h4 class="text-xs font-bold text-white truncate mt-0.5" title="${item.title}">${item.title}</h4>
-          <p class="text-[10px] text-slate-400 mt-1">${item.created_at || ''}</p>
+          <p class="text-xs font-semibold text-sky-400 truncate">${escapeHtmlStr(item.channel || 'YouTube')}</p>
+          <h4 class="text-xs font-bold text-white truncate mt-0.5" title="${escapeHtmlStr(item.title)}">${escapeHtmlStr(item.title)}</h4>
+          <p class="text-[10px] text-slate-400 mt-1">${escapeHtmlStr(item.created_at || '')}</p>
         </div>
         <button class="delete-note-btn absolute top-2 right-2 text-slate-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition" title="삭제">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>

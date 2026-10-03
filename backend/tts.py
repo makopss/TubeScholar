@@ -2,6 +2,7 @@ import os
 import sys
 import re
 import asyncio
+import hashlib
 from typing import List, Dict, Any
 import edge_tts
 
@@ -100,11 +101,20 @@ async def generate_note_audio(
     voice_key: str = DEFAULT_VOICE,
     speed: str = '+0%'
 ) -> Dict[str, Any]:
-    voice_info = VOICES.get(voice_key, VOICES[DEFAULT_VOICE])
+    # 🔒 파일명/edge-tts 인자로 쓰이는 값은 화이트리스트로 정규화 (경로 조작 방지)
+    if voice_key not in VOICES:
+        voice_key = DEFAULT_VOICE
+    voice_info = VOICES[voice_key]
     voice_id = voice_info['id']
 
+    if not re.fullmatch(r'[+-]\d{1,3}%', speed or ''):
+        speed = '+0%'
+    safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id or 'temp_note')[:120] or 'temp_note'
+
+    # 노트 내용이 수정되면 새 오디오를 만들도록 내용 해시를 캐시 키에 포함
+    content_hash = hashlib.sha1((markdown_text or '').encode('utf-8')).hexdigest()[:8]
     safe_speed = speed.replace('+', 'p').replace('-', 'm').replace('%', '')
-    filename = f'{note_id}_{voice_key}_{safe_speed}.mp3'
+    filename = f'{safe_note}_{voice_key}_{safe_speed}_{content_hash}.mp3'
     filepath = os.path.join(AUDIO_DIR, filename)
 
     if os.path.exists(filepath) and os.path.getsize(filepath) > 1024:
