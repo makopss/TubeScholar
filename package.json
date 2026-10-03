@@ -1,0 +1,11 @@
+{
+  "name": "tubescholar-frontend-build",
+  "private": true,
+  "description": "Builds the static Tailwind CSS for TubeScholar (replaces the online Tailwind Play CDN).",
+  "scripts": {
+    "build:css": "tailwindcss -c tailwind.config.js -i frontend/tailwind.src.css -o frontend/vendor/tailwind.css --minify"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17"
+  }
+}

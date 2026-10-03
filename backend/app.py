@@ -655,7 +655,7 @@ if os.path.exists(FRONTEND_DIR):
 
     @app.get("/")
     def serve_index():
-        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"), headers={"Cache-Control": "no-cache"})
 
     @app.get("/favicon.ico")
     def serve_favicon():

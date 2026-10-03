@@ -6,8 +6,6 @@
   <title>TubeScholar - 유튜브 & 로컬 비디오 LLM 심층 지식 확장 학습기</title>
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="shortcut icon" href="/favicon.ico">
-  <!-- Tailwind CSS CDN -->
-  <script src="https://cdn.tailwindcss.com"></script>
   <!-- Marked.js (v15.0.12, 로컬 고정) + DOMPurify (HTML 정화) : 오프라인 동작 및 버전 고정 -->
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
@@ -15,29 +13,9 @@
   <script src="https://www.youtube.com/iframe_api"></script>
   <!-- Custom CSS -->
   <link rel="stylesheet" href="/static/style.css">
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            brand: {
-              50: '#f0f7ff',
-              100: '#e0effe',
-              500: '#0284c7',
-              600: '#0369a1',
-              700: '#075985',
-            },
-            surface: {
-              dark: '#0f172a',
-              card: '#1e293b',
-              border: '#334155',
-            }
-          }
-        }
-      }
-    }
-  </script>
+  <!-- Tailwind CSS (로컬 정적 빌드: npm run build:css / 설정은 tailwind.config.js)
+       기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에 둠 -->
+  <link rel="stylesheet" href="/static/vendor/tailwind.css">
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -984,7 +962,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.4.1"></script>
+  <script src="/static/app.js?v=3.5.0"></script>
 </body>
 
 </html>

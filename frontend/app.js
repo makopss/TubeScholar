@@ -33,6 +33,7 @@ let currentFontScale = 100; // 70% ~ 160%
 let activeSubtitleIndex = -1;
 let subtitleRowByIdx = new Map(); // 자막 인덱스 → 목록 행 요소 (renderSubtitlesList 에서 갱신)
 let highlightedRowIdx = -1;
+let lastOverlayRenderKey = ""; // updateActiveSubtitle 의 중복 DOM 갱신 방지용
 let timeSyncTimer = null;
 let isTranslatingSubtitles = false;
 let transAbortController = null;
@@ -940,6 +941,17 @@ function updateActiveSubtitle(currentTime) {
     const sub = currentSubtitles[idx];
     const origText = sub.text || "";
     const koText = sub.ko_text || "";
+
+    // 같은 자막·언어·문구가 이미 표시 중이면 DOM 갱신 생략 (120ms 주기 호출 최적화)
+    const renderKey = `${idx}|${currentSubLang}|${koText}|${origText}`;
+    if (renderKey === lastOverlayRenderKey && !overlay.classList.contains("hidden")) {
+      if (activeSubtitleIndex !== idx) {
+        activeSubtitleIndex = idx;
+        highlightSubtitleRow(idx);
+      }
+      return;
+    }
+    lastOverlayRenderKey = renderKey;
 
     if (currentSubLang === "ko") {
       subKo.textContent = koText || origText;
@@ -2102,9 +2114,12 @@ document.addEventListener("DOMContentLoaded", () => {
   const abortTransBtn = document.getElementById("abort-trans-btn");
   if (abortTransBtn) abortTransBtn.addEventListener("click", abortTranslation);
 
-  // 자막 실시간 검색 필터링
+  // 자막 실시간 검색 필터링 (입력이 멈춘 뒤 200ms 후 1회만 재렌더링)
+  let subtitleSearchTimer = null;
   document.getElementById("subtitle-search-input").addEventListener("input", (e) => {
-    renderSubtitlesList(e.target.value);
+    const value = e.target.value;
+    clearTimeout(subtitleSearchTimer);
+    subtitleSearchTimer = setTimeout(() => renderSubtitlesList(value), 200);
   });
 
   // 자막 파일 다운로드 및 재번역
@@ -2657,8 +2672,10 @@ function initZenModeEvents() {
   // 단축키: F (자막 일체형 비디오 전체화면), Z (독서 팝업 열기/닫기), Esc (전체화면 또는 팝업 닫기)
   window.addEventListener("keydown", (e) => {
     const activeEl = document.activeElement;
-    const isInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.isContentEditable);
+    const isInput = activeEl && (activeEl.tagName === "INPUT" || activeEl.tagName === "TEXTAREA" || activeEl.tagName === "SELECT" || activeEl.isContentEditable);
     if (isInput) return;
+    // Ctrl+F(찾기)·Ctrl+Z 등 브라우저/OS 조합키는 가로채지 않음
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
 
     if (e.key === "f" || e.key === "F") {
       e.preventDefault();
