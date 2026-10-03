@@ -81,6 +81,9 @@ function initLocalVideoPlayer(videoFile) {
 
   const localPlayer = document.getElementById("local-video-player");
   localPlayer.classList.remove("hidden");
+  if (localPlayer.src && localPlayer.src.startsWith("blob:")) {
+    try { URL.revokeObjectURL(localPlayer.src); } catch (e) {}
+  }
   localPlayer.src = URL.createObjectURL(videoFile);
   localPlayer.play();
   document.getElementById("player-controls").classList.remove("hidden");
@@ -209,6 +212,35 @@ function displayVideoMetadata(info) {
     origLink.classList.remove("hidden");
     origLink.href = `https://www.youtube.com/watch?v=${info.video_id}`;
   }
+}
+
+// ==========================================
+// 미디어 컨텍스트 전환 (영상/노트 전환 시 이전 작업 결과가 섞이는 문제 방지)
+// ==========================================
+let mediaGeneration = 0;
+
+function switchMediaContext(videoId, noteId) {
+  mediaGeneration++;
+  // 이전 영상의 번역이 진행 중이면 중단 (완료 시 새 영상 자막을 덮어쓰는 사고 방지)
+  if (isTranslatingSubtitles || transAbortController) {
+    abortTranslation();
+    const modal = document.getElementById("trans-progress-modal");
+    if (modal) modal.classList.add("hidden");
+  }
+  currentVideoId = videoId || null;
+  currentNoteId = noteId || null;
+  refreshSyncBadge(true);
+  return mediaGeneration;
+}
+
+function isCurrentMedia(gen) {
+  return gen === mediaGeneration;
+}
+
+function localMediaKey(file, fallbackName) {
+  // 같은 로컬 파일은 같은 키 → 싱크 보정값이 파일별로 유지됨
+  if (file) return `local_${file.name}_${file.size}`;
+  return `local_${fallbackName || "file"}`;
 }
 
 function setSubtitles(subs) {
@@ -372,6 +404,8 @@ function appendTransLog(message, type = "info") {
 }
 
 async function requestKoreanTranslation(force = false) {
+  // 이 번역이 시작된 시점의 영상/노트 (도중에 전환되면 결과를 버림)
+  const gen = mediaGeneration;
   // 1. 자막 데이터 유무 확인 및 자동 복구 시도
   if (!currentSubtitles || currentSubtitles.length === 0) {
     if (currentNoteId || currentVideoId) {
@@ -384,6 +418,7 @@ async function requestKoreanTranslation(force = false) {
           body: JSON.stringify({ video_id: currentVideoId, note_id: currentNoteId })
         });
         const d = await fetchRes.json();
+        if (!isCurrentMedia(gen)) return false;
         if (d.success && d.subtitles && d.subtitles.length > 0) {
           setSubtitles(d.subtitles);
           appendTransLog(`서버에서 자막 ${d.subtitles.length}개를 성공적으로 불러왔습니다.`, "success");
@@ -420,7 +455,8 @@ async function requestKoreanTranslation(force = false) {
   updateTranslationButtonState();
   showTranslationModal();
 
-  transAbortController = new AbortController();
+  const myController = new AbortController();
+  transAbortController = myController;
 
   const bar = document.getElementById("trans-progress-bar");
   const percentEl = document.getElementById("trans-progress-percent");
@@ -433,7 +469,7 @@ async function requestKoreanTranslation(force = false) {
     const res = await fetch("/api/subtitles/translate-stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: transAbortController.signal,
+      signal: myController.signal,
       body: JSON.stringify({
         subtitles: currentSubtitles,
         translate_ko: true,
@@ -465,6 +501,8 @@ async function requestKoreanTranslation(force = false) {
         if (line.startsWith("data: ")) {
           try {
             const data = JSON.parse(line.substring(6));
+            // 번역 도중 다른 영상/노트로 전환됐다면 이 결과는 적용하지 않음
+            if (!isCurrentMedia(gen)) continue;
             
             if (data.type === "start") {
               if (labelEl) labelEl.textContent = `총 ${data.total_count}개 대사 번역 준비 완료 (${data.total_batches}개 배치)`;
@@ -542,15 +580,20 @@ async function requestKoreanTranslation(force = false) {
     }
     return false;
   } finally {
-    isTranslatingSubtitles = false;
-    transAbortController = null;
-    updateTranslationButtonState();
-    const abortBtn = document.getElementById("abort-trans-btn");
-    const cancelBtn = document.getElementById("cancel-trans-btn");
-    if (abortBtn) abortBtn.classList.add("hidden");
-    if (cancelBtn) cancelBtn.classList.remove("hidden");
-    const searchInput = document.getElementById("subtitle-search-input");
-    renderSubtitlesList(searchInput ? searchInput.value : "");
+    // 이 실행이 소유한 상태일 때만 정리 (영상 전환 후 새 번역이 시작된 경우 건드리지 않음)
+    if (transAbortController === myController || transAbortController === null) {
+      isTranslatingSubtitles = false;
+      transAbortController = null;
+      updateTranslationButtonState();
+      const abortBtn = document.getElementById("abort-trans-btn");
+      const cancelBtn = document.getElementById("cancel-trans-btn");
+      if (abortBtn) abortBtn.classList.add("hidden");
+      if (cancelBtn) cancelBtn.classList.remove("hidden");
+    }
+    if (isCurrentMedia(gen)) {
+      const searchInput = document.getElementById("subtitle-search-input");
+      renderSubtitlesList(searchInput ? searchInput.value : "");
+    }
   }
 }
 
@@ -1258,10 +1301,6 @@ async function triggerSubtitleDownload(format) {
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "자막 다운로드 생성 실패");
 
-    if (data.subtitles) {
-      currentSubtitles = data.subtitles;
-    }
-
     const mime = format === "txt" ? "text/plain;charset=utf-8" : "application/x-subrip;charset=utf-8";
     const blob = new Blob([data.content], { type: mime });
     const url = URL.createObjectURL(blob);
@@ -1357,10 +1396,10 @@ async function runGeminiAnalysis(url) {
       throw new Error((data && data.detail) || "분석 요청에 실패했습니다.");
     }
 
-    currentVideoId = data.video_info.video_id;
-    currentNoteId = data.note_id;
-    isKoreanContent = data.is_korean || false;
+    switchMediaContext(data.video_info.video_id, data.note_id);
     initYouTubePlayer(currentVideoId);
+    // initYouTubePlayer()가 isKoreanContent를 초기화하므로 반드시 그 뒤에 설정
+    isKoreanContent = data.is_korean || false;
     displayVideoMetadata(data.video_info);
     renderMarkdownNote(data.markdown, `Gemini: ${data.model_used}`, data.note_id);
     if (data.subtitles) {
@@ -1369,6 +1408,8 @@ async function runGeminiAnalysis(url) {
         data.subtitles.forEach(s => { if (!s.ko_text) s.ko_text = s.text; });
       }
       setSubtitles(data.subtitles);
+    } else {
+      setSubtitles([]);
     }
 
     const langLabel = isKoreanContent ? '한국어 원문' : (data.transcript_language || '감지됨');
@@ -1405,17 +1446,18 @@ async function runSubscriptionPrompt(url) {
 
     await navigator.clipboard.writeText(data.prompt);
     
-    currentVideoId = data.video_info.video_id;
+    const gen = switchMediaContext(data.video_info.video_id, null);
     initYouTubePlayer(currentVideoId);
     displayVideoMetadata(data.video_info);
+    setSubtitles([]);
     
-    // 비동기로 자막 목록도 함께 로드
+    // 비동기로 자막 목록도 함께 로드 (그 사이 다른 영상으로 바뀌면 무시)
     fetch("/api/subtitles", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ video_id: currentVideoId })
     }).then(r => r.json()).then(d => {
-      if (d.success && d.subtitles) setSubtitles(d.subtitles);
+      if (isCurrentMedia(gen) && d.success && d.subtitles) setSubtitles(d.subtitles);
     }).catch(() => {});
 
     const pasteCard = document.getElementById("inline-paste-card");
@@ -1498,11 +1540,17 @@ async function loadSingleSavedNote(noteIdOrVid) {
     if (!res.ok) throw new Error("노트를 불러올 수 없습니다.");
     const data = await res.json();
 
-    currentNoteId = data.note_id;
-    currentVideoId = data.metadata.video_id;
+    const gen = switchMediaContext(data.metadata.video_id, data.note_id);
 
     if (data.metadata.video_type !== 'local') {
       initYouTubePlayer(currentVideoId);
+    } else {
+      // 로컬 영상 노트: 원본 파일이 없으므로 이전 영상 재생을 멈춤
+      if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
+        try { ytPlayer.pauseVideo(); } catch (e) {}
+      }
+      const lp = document.getElementById("local-video-player");
+      if (lp) lp.pause();
     }
     displayVideoMetadata(data.metadata);
     renderMarkdownNote(data.markdown, "저장된 보관 노트", currentNoteId);
@@ -1512,12 +1560,13 @@ async function loadSingleSavedNote(noteIdOrVid) {
     if (data.metadata.subtitles && data.metadata.subtitles.length > 0) {
       setSubtitles(data.metadata.subtitles);
     } else if (data.metadata.video_type !== 'local' && currentVideoId && !currentVideoId.startsWith('custom_')) {
+      setSubtitles([]);
       fetch("/api/subtitles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ video_id: currentVideoId })
       }).then(r => r.json()).then(d => {
-        if (d.success && d.subtitles) setSubtitles(d.subtitles);
+        if (isCurrentMedia(gen) && d.success && d.subtitles) setSubtitles(d.subtitles);
       }).catch(() => {});
     } else {
       setSubtitles([]);
@@ -1690,10 +1739,12 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "저장 실패");
 
-      currentNoteId = data.note_id;
-      if (data.video_info.video_id && !data.video_info.video_id.startsWith('custom_')) {
-        currentVideoId = data.video_info.video_id;
+      const newVid = (data.video_info.video_id && !data.video_info.video_id.startsWith('custom_')) ? data.video_info.video_id : null;
+      if (newVid && newVid !== currentVideoId) {
+        switchMediaContext(newVid, data.note_id);
         initYouTubePlayer(currentVideoId);
+      } else {
+        currentNoteId = data.note_id;
       }
       displayVideoMetadata(data.video_info);
       renderMarkdownNote(data.markdown, "구독 AI 연동 노트", data.note_id);
@@ -1725,6 +1776,11 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const subText = await subFile.text();
+
+    // 로컬 파일용 새 컨텍스트 (이전 YouTube 영상 ID·싱크값·번역이 섞이지 않도록)
+    const gen = switchMediaContext(localMediaKey(videoFile, title), null);
+    isKoreanContent = false;
+    setSubtitles([]);
 
     if (videoFile) {
       initLocalVideoPlayer(videoFile);
@@ -1769,6 +1825,7 @@ document.addEventListener("DOMContentLoaded", () => {
           d = await res.json();
         } catch (e) {}
         if (!res.ok) throw new Error((d && d.detail) || "분석 실패");
+        if (!isCurrentMedia(gen)) return;
         renderMarkdownNote(d.markdown, `Gemini: ${d.model_used}`, d.note_id);
         if (d.subtitles) setSubtitles(d.subtitles);
         loadLibrary();
@@ -1793,7 +1850,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const title = document.getElementById("local-title-input").value.trim() || videoFile.name.replace(/\.[^/.]+$/, "");
     
-    // 로컬 비디오 플레이어 바로 준비 및 재생
+    // 로컬 비디오 플레이어 바로 준비 및 재생 (새 컨텍스트)
+    const gen = switchMediaContext(localMediaKey(videoFile, title), null);
+    isKoreanContent = false;
+    setSubtitles([]);
     initLocalVideoPlayer(videoFile);
     displayVideoMetadata({
       title: title,
@@ -1838,6 +1898,7 @@ document.addEventListener("DOMContentLoaded", () => {
         data = await res.json();
       } catch (e) {}
       if (!res.ok) throw new Error((data && data.detail) || "로컬 영상 음성 분석 실패");
+      if (!isCurrentMedia(gen)) return;
 
       clearTimeout(stepTimer);
       setAnalysisStep(3);

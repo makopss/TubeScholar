@@ -6,6 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from pydantic import BaseModel
 from dotenv import load_dotenv
 import threading
@@ -243,15 +244,20 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     }
 
 @app.post("/api/local/video-analyze")
-async def analyze_local_video_audio(
+def analyze_local_video_audio(
     video: UploadFile = File(...),
     title: Optional[str] = Form(None)
 ):
-    """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성"""
-    vid_title = title or os.path.splitext(video.filename or "로컬 비디오")[0]
+    """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성
+    (일반 def: FastAPI 가 작업 스레드에서 실행하므로 분석 중에도 다른 요청이 멈추지 않음)"""
+    vid_title = title or os.path.splitext(os.path.basename(video.filename or "") or "로컬 비디오")[0]
     
     temp_dir = tempfile.mkdtemp()
-    temp_video_path = os.path.join(temp_dir, video.filename or "temp_video.mp4")
+    # 클라이언트 파일명은 경로로 쓰지 않음 (경로 탈출 방지) → 고정 이름 + 검증된 확장자만 사용
+    ext = os.path.splitext(os.path.basename(video.filename or ""))[1].lower()
+    if not re.fullmatch(r"\.[a-z0-9]{1,8}", ext or ""):
+        ext = ".mp4"
+    temp_video_path = os.path.join(temp_dir, "input" + ext)
     temp_audio_path = os.path.join(temp_dir, "extracted_audio.mp3")
 
     try:
@@ -319,6 +325,7 @@ async def analyze_local_video_audio(
             model_used = llm_result.get("model_used")
 
         save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles)
+        subtitles = save_res["metadata"].get("subtitles", subtitles)
         return {
             "success": True,
             "note_id": save_res["note_id"],
@@ -447,14 +454,14 @@ async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Re
     
     # 전달받은 자막이 비어있는 경우 note_id나 video_id/url로 자막 복구
     if not subtitles and req.note_id:
-        note_data = get_note(req.note_id)
+        note_data = await run_in_threadpool(get_note, req.note_id)
         if note_data and note_data.get("metadata", {}).get("subtitles"):
             subtitles = note_data["metadata"]["subtitles"]
 
     if not subtitles:
         v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
         if v_id:
-            res = get_video_transcript(v_id)
+            res = await run_in_threadpool(get_video_transcript, v_id)
             if res.get("success"):
                 subtitles = res.get("subtitles", [])
 
@@ -465,19 +472,24 @@ async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Re
 
     async def event_generator():
         nonlocal is_cancelled
-        last_subtitles = None
-        for event in translate_subtitles_stream(subtitles, is_cancelled_callback=check_cancelled):
-            if await request.is_disconnected():
-                is_cancelled = True
-                break
-            if event.get("type") in ["complete", "cancelled"]:
-                last_subtitles = event.get("subtitles")
-                if req.note_id and last_subtitles:
-                    try:
-                        update_note_subtitles(req.note_id, last_subtitles)
-                    except Exception:
-                        pass
-            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        # 번역(Gemini 호출 + 속도 제한 대기)은 블로킹 작업이므로 작업 스레드에서 실행
+        # → 번역 중에도 노트 목록/오디오북/종료 등 다른 요청이 멈추지 않음
+        gen = translate_subtitles_stream(subtitles, is_cancelled_callback=check_cancelled)
+        try:
+            async for event in iterate_in_threadpool(gen):
+                if await request.is_disconnected():
+                    break
+                if event.get("type") in ["complete", "cancelled"]:
+                    last_subtitles = event.get("subtitles")
+                    if req.note_id and last_subtitles:
+                        try:
+                            await run_in_threadpool(update_note_subtitles, req.note_id, last_subtitles)
+                        except Exception:
+                            pass
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+        finally:
+            # 연결 종료/취소 시 작업 스레드의 번역 루프도 다음 배치에서 중단되도록 신호
+            is_cancelled = True
 
     return StreamingResponse(
         event_generator(),
@@ -574,7 +586,7 @@ async def generate_tts_endpoint(req: TTSRequest):
     """마크다운 노트를 자연스러운 한국어 오디오북 MP3로 생성/캐싱"""
     text = req.markdown or ""
     if not text.strip() and req.note_id:
-        note = get_note(req.note_id)
+        note = await run_in_threadpool(get_note, req.note_id)
         if note:
             text = note.get("markdown", "")
     if not text.strip():

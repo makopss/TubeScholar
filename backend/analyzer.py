@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import threading
 import warnings
 from typing import Dict, Any, Optional, List, Tuple
 from google import genai
@@ -43,19 +44,27 @@ FALLBACK_TRANSLATE_MODELS = [
 # Gemini Free Tier (15 RPM) 기준, 5.0초 간격 보장 시 분당 최대 12회(20% 안전 버퍼)로 429 에러 원천 차단
 TRANSLATE_MIN_INTERVAL = 5.0
 _last_translate_time: float = 0.0
+_rate_lock = threading.Lock()
 
 def _wait_for_rate_limit(min_interval: float = TRANSLATE_MIN_INTERVAL):
     """
     Gemini API 호출 주기를 min_interval(기본 5.0초) 이상으로 보장하여
     분당 호출수를 최대 12회(15 RPM 한도 대비 20% 안전 버퍼)로 엄격히 통제합니다.
+    (번역이 작업 스레드에서 동시에 돌 수 있으므로 잠금으로 보호)
     """
     global _last_translate_time
-    now = time.time()
-    elapsed = now - _last_translate_time
-    if elapsed < min_interval:
-        sleep_duration = min_interval - elapsed
-        time.sleep(sleep_duration)
-    _last_translate_time = time.time()
+    with _rate_lock:
+        now = time.time()
+        elapsed = now - _last_translate_time
+        if elapsed < min_interval:
+            time.sleep(min_interval - elapsed)
+        _last_translate_time = time.time()
+
+def _mark_rate_limit_now():
+    """429 등으로 강제 대기한 직후 기준 시각을 갱신합니다."""
+    global _last_translate_time
+    with _rate_lock:
+        _last_translate_time = time.time()
 
 # 하위 호환성 유지용 기본값
 DEFAULT_GEMINI_MODEL = DEFAULT_NOTE_MODEL
@@ -688,7 +697,7 @@ def _translate_batch_with_recovery(
             last_err = str(e)
             if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err:
                 time.sleep(8.0)
-                _last_translate_time = time.time()
+                _mark_rate_limit_now()
             else:
                 time.sleep(2.0)
             continue
