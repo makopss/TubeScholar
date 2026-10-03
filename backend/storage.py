@@ -3,6 +3,9 @@ import sys
 import json
 import time
 import re
+import shutil
+import threading
+import functools
 from typing import List, Dict, Any, Optional
 
 if getattr(sys, 'frozen', False):
@@ -13,34 +16,117 @@ else:
 DATA_DIR = os.environ.get("TUBESCHOLAR_DATA_DIR") or DEFAULT_DATA_DIR
 NOTES_DIR = os.path.join(DATA_DIR, "notes")
 LIBRARY_FILE = os.path.join(DATA_DIR, "library.json")
+LIBRARY_BACKUP = LIBRARY_FILE + ".bak"
+
+# library.json 읽기-수정-쓰기 전체를 보호하는 프로세스 전역 잠금
+# (동시 요청 시 업데이트 유실 및 파일 손상 방지)
+_LIB_LOCK = threading.RLock()
+
+
+class LibraryCorruptedError(RuntimeError):
+    """library.json 과 백업이 모두 손상되어 안전하게 읽을 수 없는 경우."""
+
+
+def _locked(fn):
+    """load → 수정 → save 전체를 하나의 잠금 구간으로 묶습니다."""
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        with _LIB_LOCK:
+            return fn(*args, **kwargs)
+    return wrapper
+
 
 def ensure_dirs():
     """데이터 및 노트 저장 디렉토리를 확인하고 생성합니다."""
     os.makedirs(NOTES_DIR, exist_ok=True)
-    if not os.path.exists(LIBRARY_FILE):
-        with open(LIBRARY_FILE, "w", encoding="utf-8") as f:
-            json.dump({"notes": {}}, f, ensure_ascii=False, indent=2)
+    if not os.path.exists(LIBRARY_FILE) and not os.path.exists(LIBRARY_BACKUP):
+        _atomic_write_json(LIBRARY_FILE, {"notes": {}})
+
+
+def _retry_io(fn, attempts: int = 6, delay: float = 0.25):
+    """백신/인덱서가 잠시 파일을 잠그는 Windows 환경을 위한 재시도."""
+    last = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except PermissionError as e:
+            last = e
+            time.sleep(delay * (i + 1))
+    raise last
+
+
+def _atomic_write_json(path: str, data: Dict[str, Any]):
+    """임시 파일에 완전히 기록한 뒤 교체하여, 쓰는 도중 중단돼도 원본이 깨지지 않게 합니다."""
+    tmp = f"{path}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+        f.flush()
+        os.fsync(f.fileno())
+    _retry_io(lambda: os.replace(tmp, path))
+
+
+def _read_json(path: str) -> Dict[str, Any]:
+    def _do():
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    data = _retry_io(_do)
+    if not isinstance(data, dict):
+        raise ValueError("library root is not an object")
+    return data
+
 
 def load_library() -> Dict[str, Any]:
-    ensure_dirs()
-    try:
-        with open(LIBRARY_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            # 하위 호환성 (videos 키가 있을 경우 notes로 마이그레이션)
-            if "videos" in data and "notes" not in data:
-                data["notes"] = {}
-                for vid, vdata in data["videos"].items():
-                    nid = f"{vid}_{int(time.time())}"
-                    vdata["note_id"] = nid
-                    data["notes"][nid] = vdata
-            return data
-    except Exception:
-        return {"notes": {}}
+    with _LIB_LOCK:
+        ensure_dirs()
+        data = None
+        if os.path.exists(LIBRARY_FILE):
+            try:
+                data = _read_json(LIBRARY_FILE)
+            except (ValueError, UnicodeDecodeError):
+                # 손상 파일은 지우지 않고 별도 보관 후 백업에서 복구 시도
+                corrupt_copy = f"{LIBRARY_FILE}.corrupt-{time.strftime('%Y%m%d_%H%M%S')}"
+                try:
+                    shutil.copy2(LIBRARY_FILE, corrupt_copy)
+                except Exception:
+                    pass
+                print(f"[storage] library.json 손상 감지 → {corrupt_copy} 보관, 백업에서 복구 시도")
+
+        if data is None and os.path.exists(LIBRARY_BACKUP):
+            try:
+                data = _read_json(LIBRARY_BACKUP)
+                _atomic_write_json(LIBRARY_FILE, data)
+                print("[storage] library.json.bak 에서 복구 완료")
+            except (ValueError, UnicodeDecodeError):
+                data = None
+
+        if data is None:
+            # 절대 빈 목록을 반환하지 않음 → 다음 저장이 기존 노트를 덮어쓰는 사고 방지
+            raise LibraryCorruptedError(
+                "노트 라이브러리 파일(library.json)이 손상되어 읽을 수 없습니다. "
+                f"데이터 폴더({DATA_DIR})의 .corrupt / .bak 파일을 확인해주세요."
+            )
+
+        data.setdefault("notes", {})
+        # 하위 호환성 (videos 키가 있을 경우 notes로 마이그레이션)
+        if "videos" in data and not data["notes"]:
+            for vid, vdata in data["videos"].items():
+                nid = vdata.get("note_id") or vid
+                vdata["note_id"] = nid
+                data["notes"][nid] = vdata
+        return data
+
 
 def save_library(data: Dict[str, Any]):
-    ensure_dirs()
-    with open(LIBRARY_FILE, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with _LIB_LOCK:
+        ensure_dirs()
+        # 직전 정상본을 .bak 으로 보존 (원자적 교체 직전)
+        if os.path.exists(LIBRARY_FILE):
+            try:
+                _read_json(LIBRARY_FILE)  # 정상 파일일 때만 백업으로 승격
+                _retry_io(lambda: shutil.copy2(LIBRARY_FILE, LIBRARY_BACKUP))
+            except Exception:
+                pass
+        _atomic_write_json(LIBRARY_FILE, data)
 
 def strip_frontmatter(content: str) -> str:
     """마크다운 시작 부분의 YAML Frontmatter(--- ... ---)를 제거하여 순수 마크다운만 반환합니다."""
@@ -56,6 +142,7 @@ def _normalize_subs(subtitles: Optional[List[Dict[str, Any]]]) -> List[Dict[str,
     except Exception:
         return subtitles
 
+@_locked
 def save_note(
     video_info: Dict[str, Any], 
     markdown_content: str, 
@@ -129,6 +216,7 @@ created_at: "{created_time}"
         "markdown": clean_md
     }
 
+@_locked
 def update_note(note_id: str, new_markdown: str) -> Optional[Dict[str, Any]]:
     """사용자가 웹 에디터에서 직접 수정한 마크다운을 저장합니다."""
     lib = load_library()
@@ -164,6 +252,7 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
         "markdown": clean_md
     }
 
+@_locked
 def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]]) -> bool:
     """노트에 번역되거나 업데이트된 자막 데이터를 영구 캐싱 저장합니다."""
     lib = load_library()
@@ -213,10 +302,14 @@ def get_note(note_id_or_video_id: str) -> Optional[Dict[str, Any]]:
 def list_saved_notes() -> List[Dict[str, Any]]:
     """저장된 모든 학습 노트 목록을 최신순으로 정렬하여 반환합니다."""
     lib = load_library()
-    items = list(lib.get("notes", {}).values())
+    items = [
+        {k: v for k, v in meta.items() if k != "subtitles"}
+        for meta in lib.get("notes", {}).values()
+    ]
     items.sort(key=lambda x: x.get("created_at", ""), reverse=True)
     return items
 
+@_locked
 def delete_note(note_id: str) -> bool:
     """학습 노트 및 메타데이터를 삭제합니다."""
     lib = load_library()
