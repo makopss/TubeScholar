@@ -1,0 +1,990 @@
+<!DOCTYPE html>
+<html lang="ko" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TubeScholar - 유튜브 & 로컬 비디오 LLM 심층 지식 확장 학습기</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Marked.js for Markdown rendering -->
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <!-- YouTube IFrame API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="/static/style.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f7ff',
+              100: '#e0effe',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+            },
+            surface: {
+              dark: '#0f172a',
+              card: '#1e293b',
+              border: '#334155',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
+
+  <!-- 상단 네비게이션 바 -->
+  <header class="h-16 flex-shrink-0 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-40 px-4 flex items-center justify-between">
+    <div class="flex items-center space-x-3">
+      <img src="/static/icon.png" class="w-10 h-10 rounded-xl shadow-lg shadow-sky-500/30 object-cover flex-shrink-0 border border-sky-500/30" alt="TubeScholar Logo">
+      <div>
+        <h1 class="text-lg font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">TubeScholar</h1>
+        <p class="text-[11px] text-slate-400 hidden sm:block">유튜브 & 로컬 비디오 LLM 심층 학습기</p>
+      </div>
+    </div>
+
+    <!-- 중앙 2대 특화 모드 선택 & URL 입력창 -->
+    <div class="flex-1 max-w-3xl mx-4">
+      <form id="analyze-form" class="flex items-center space-x-2">
+        
+        <!-- 2대 모드 세그먼트 스위치 -->
+        <div class="inline-flex p-1 bg-slate-800 border border-slate-700 rounded-xl flex-shrink-0">
+          <button 
+            type="button" 
+            id="tab-gemini" 
+            class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow"
+          >
+            <span>⚡ Gemini 자동 분석</span>
+          </button>
+          <button 
+            type="button" 
+            id="tab-subscription" 
+            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white"
+          >
+            <span>📋 구독 AI 연동</span>
+          </button>
+        </div>
+
+        <!-- URL 입력창 및 실행 버튼 -->
+        <div class="relative flex-1">
+          <input 
+            type="text" 
+            id="url-input"
+            placeholder="유튜브 영상 URL 또는 채널 URL 입력..." 
+            class="w-full pl-9 pr-32 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition shadow-inner placeholder-slate-500 text-white"
+          />
+          <svg class="w-4 h-4 absolute left-3 top-2.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+          </svg>
+          
+          <div class="absolute right-1 top-1 bottom-1 flex items-center space-x-1">
+            <button 
+              type="button" 
+              id="header-cancel-btn"
+              class="hidden px-2.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 animate-pulse"
+              title="분석 중단하기"
+            >
+              <span>⏹️ 중단</span>
+            </button>
+            <button 
+              type="submit" 
+              id="submit-btn"
+              class="px-3.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95"
+            >
+              <span id="submit-btn-text">⚡ 분석 및 생성</span>
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+
+    <!-- 우측 도구 버튼 -->
+    <div class="flex items-center space-x-2">
+      <!-- 로컬 비디오 열기 버튼 -->
+      <button 
+        id="local-file-btn" 
+        title="내 PC 로컬 영상 및 자막 열기" 
+        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-amber-300 flex items-center space-x-1 transition"
+      >
+        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
+        </svg>
+        <span class="hidden md:inline">📁 로컬 영상</span>
+      </button>
+
+      <!-- 채널 탐색 모달 버튼 -->
+      <button 
+        id="channel-btn" 
+        title="채널 영상 탐색" 
+        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 flex items-center space-x-1 transition"
+      >
+        <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
+        </svg>
+        <span class="hidden md:inline">채널 탐색</span>
+      </button>
+
+      <!-- 보관함 열기 버튼 -->
+      <button 
+        id="library-toggle-btn" 
+        title="저장된 학습 보관함" 
+        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 flex items-center space-x-1 transition relative"
+      >
+        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path>
+        </svg>
+        <span class="hidden md:inline">보관함</span>
+        <span id="library-count-badge" class="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold">0</span>
+      </button>
+
+
+      <!-- 설정 버튼 -->
+      <button 
+        id="settings-btn" 
+        title="Gemini 무료 API 키 설정" 
+        class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-400 hover:text-white transition"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
+        </svg>
+      </button>
+
+      <!-- 프로그램 종료 버튼 -->
+      <button 
+        id="shutdown-btn" 
+        title="TubeScholar 프로그램 종료" 
+        class="p-2 bg-slate-800 hover:bg-rose-900/60 border border-slate-700 hover:border-rose-700 rounded-lg text-slate-400 hover:text-rose-300 transition"
+      >
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- 메인 스플릿 뷰 컨테이너 (좌우 독립 스크롤) -->
+  <main class="flex-1 flex flex-col lg:flex-row overflow-hidden relative">
+
+    <!-- 좌측 패널: 플레이어 및 컨트롤 (독립 스크롤) -->
+    <section id="video-section" class="w-full lg:w-1/2 h-full flex flex-col border-r border-slate-800 bg-slate-950/50 p-4 space-y-4 overflow-y-auto">
+      
+      <!-- 비디오 플레이어 컨테이너 (16:9 비율 유지) -->
+      <div id="video-player-wrapper" class="relative w-full pt-[56.25%] rounded-2xl overflow-hidden bg-black shadow-2xl border border-slate-800 flex-shrink-0 group/player">
+        <!-- 대기 안내 화면 -->
+        <div id="youtube-player-placeholder" class="absolute inset-0 flex flex-col items-center justify-center p-6 text-center text-slate-500 z-10 bg-slate-950">
+          <div class="w-16 h-16 rounded-full bg-slate-800/80 flex items-center justify-center mb-3">
+            <svg class="w-8 h-8 text-slate-600" fill="currentColor" viewBox="0 0 24 24">
+              <path d="M19.615 3.184c-3.604-.246-11.631-.245-15.23 0-3.897.266-4.356 2.62-4.385 8.816.029 6.185.484 8.549 4.385 8.816 3.6.245 11.626.246 15.23 0 3.897-.266 4.356-2.62 4.385-8.816-.029-6.185-.484-8.549-4.385-8.816zm-10.615 12.816v-8l8 3.993-8 4.007z"/>
+            </svg>
+          </div>
+          <p class="text-sm font-medium text-slate-400">학습할 유튜브 영상 URL을 입력하거나 [📁 로컬 영상]을 선택하세요.</p>
+          <p class="text-xs text-slate-600 mt-1">타임스탬프 클릭 시 해당 위치로 영상이 즉시 점프합니다.</p>
+        </div>
+        <!-- 유튜브 IFrame -->
+        <div id="player" class="absolute inset-0 w-full h-full"></div>
+        <!-- 로컬 HTML5 비디오 플레이어 -->
+        <video id="local-video-player" class="absolute inset-0 w-full h-full hidden bg-black" controls controlsList="nofullscreen"></video>
+        <!-- 영상 화면 위 실시간 자막 오버레이 (마우스 드래그 이동 지원) -->
+        <div id="video-subtitle-overlay-container" class="absolute inset-0 z-20 pointer-events-none overflow-hidden flex flex-col items-center justify-end pb-4">
+          <div 
+            id="video-subtitle-overlay" 
+            class="hidden absolute pointer-events-auto cursor-grab active:cursor-grabbing select-none px-4 py-2 bg-black/85 backdrop-blur-md rounded-xl text-center shadow-2xl border border-white/15 transition-shadow duration-150 hover:border-sky-400/60 group"
+            style="bottom: 16px; left: 50%; transform: translateX(-50%); max-width: 92%;"
+            title="마우스로 잡고 원하는 위치로 드래그할 수 있습니다 (더블클릭 시 하단 복원)"
+          >
+            <!-- 드래그 핸들 힌트 뱃지 -->
+            <div class="absolute -top-2.5 left-1/2 -translate-x-1/2 px-1.5 py-0.2 bg-slate-800/90 text-slate-400 text-[9px] rounded-full border border-slate-700 opacity-0 group-hover:opacity-100 transition flex items-center space-x-0.5">
+              <span>✥ 드래그 이동</span>
+            </div>
+            <div id="video-sub-ko" class="text-amber-300 font-bold leading-snug drop-shadow-md"></div>
+            <div id="video-sub-orig" class="text-slate-100 font-medium leading-relaxed drop-shadow-sm mt-0.5"></div>
+          </div>
+        </div>
+
+        <!-- 자막 싱크 조절 시 화면 표시 (전체화면에서도 보임) -->
+        <div id="sync-osd" class="hidden absolute top-3 left-1/2 -translate-x-1/2 z-40 px-3 py-1.5 bg-black/80 border border-sky-400/50 text-sky-200 text-xs font-semibold rounded-lg pointer-events-none shadow-lg"></div>
+
+        <!-- 영상 위 우측 하단 20% 플로팅 컨트롤 (자막 포함 전체화면) -->
+        <div id="player-floating-bar" class="absolute z-30 flex items-center pointer-events-auto opacity-0 group-hover/player:opacity-100 transition-opacity duration-200" style="bottom: 20%; right: 14px;">
+          <button 
+            type="button" 
+            id="floating-fullscreen-btn" 
+            class="group w-10 h-10 rounded-full bg-black/75 hover:bg-black/95 text-white hover:text-sky-300 border border-white/20 hover:border-sky-400 shadow-2xl backdrop-blur-md flex items-center justify-center transition-all duration-200 hover:scale-110 active:scale-95"
+            title="자막과 함께 전체화면 전환 (단축키: F)"
+          >
+            <!-- 전체화면 화살표 아이콘 (4방향 확장 화살표) -->
+            <svg id="floating-fs-expand-icon" class="w-5 h-5 transition-transform duration-200 group-hover:scale-110 drop-shadow" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"></path>
+            </svg>
+            <!-- 창모드 복원 축소 화살표 아이콘 (중앙 수렴 4방향 축소 화살표) -->
+            <svg id="floating-fs-compress-icon" class="w-5 h-5 hidden transition-transform duration-200 group-hover:scale-110 drop-shadow" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25"></path>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <!-- 플레이어 컨트롤러 (영상 재생 & 자막 제어) -->
+      <div id="player-controls" class="hidden flex flex-col space-y-2 p-3 bg-slate-900/90 border border-slate-800 rounded-xl flex-shrink-0">
+        <!-- 1행: 영상 재생 & 탐색 & 배속 & 전체화면 -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <button id="seek-back-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-300 transition">
+              ⏪ -10초
+            </button>
+            <button id="play-pause-btn" class="px-3 py-1.5 bg-sky-600 hover:bg-sky-500 text-xs font-semibold rounded-lg text-white transition">
+              재생 / 일시정지
+            </button>
+            <button id="seek-forward-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs font-semibold rounded-lg text-slate-300 transition">
+              ⏩ +10초
+            </button>
+          </div>
+          <div class="flex items-center space-x-1.5 text-xs text-slate-400">
+            <span class="text-[11px]">배속:</span>
+            <button class="speed-btn px-2 py-1 bg-slate-800 rounded text-slate-300 hover:text-white text-xs font-mono" data-speed="1.0">1.0x</button>
+            <button class="speed-btn px-2 py-1 bg-slate-800 rounded text-slate-300 hover:text-white text-xs font-mono" data-speed="1.25">1.25x</button>
+            <button class="speed-btn px-2 py-1 bg-slate-800 rounded text-slate-300 hover:text-white text-xs font-mono" data-speed="1.5">1.5x</button>
+            <!-- 자막 일체형 전체화면 버튼 -->
+            <button 
+              type="button" 
+              id="player-fullscreen-btn" 
+              class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-sky-400 hover:text-white border border-slate-700 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold ml-1.5" 
+              title="자막과 함께 전체화면으로 시청 (단축키: F)"
+            >
+              <span class="fullscreen-icon">⛶</span>
+              <span class="fullscreen-label">전체화면</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 2행: 화면 자막 전용 컨트롤러 (언어 선택, 폰트 크기 증감, 위치 리셋) -->
+        <div class="pt-2 border-t border-slate-800/80 flex flex-wrap items-center justify-between gap-2">
+          <!-- 자막 ON/OFF & 언어 선택 그룹 -->
+          <div class="flex items-center space-x-1.5">
+            <button id="toggle-cc-btn" class="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-xs font-semibold rounded-lg text-white transition flex items-center space-x-1 shadow-sm" title="화면 위 실시간 자막 켜기/끄기">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
+              <span id="cc-btn-text">CC ON</span>
+            </button>
+
+            <!-- 언어 선택 토글 (영상 하단) -->
+            <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-lg text-xs">
+              <button type="button" id="ctrl-sub-lang-orig" class="px-2 py-0.5 rounded font-bold transition bg-sky-600 text-white text-[11px]" title="영문 원문 자막">
+                🇺🇸 원문
+              </button>
+              <button type="button" id="ctrl-sub-lang-ko" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="한국어 번역 자막">
+                🇰🇷 한글
+              </button>
+              <button type="button" id="ctrl-sub-lang-bi" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="한/영 동시 출력">
+                🌐 병기
+              </button>
+            </div>
+          </div>
+
+          <!-- 폰트 크기 조절 & 위치 초기화 그룹 -->
+          <div class="flex items-center space-x-1.5 text-xs">
+            <!-- 자막 싱크 보정 ([ / ] 단축키, \ 초기화) -->
+            <div class="flex items-center bg-slate-800 border border-slate-700 rounded-lg p-0.5" title="자막 싱크 보정 (영상별 자동 저장)">
+              <button type="button" id="btn-sync-later" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="자막을 0.2초 늦게 표시 (단축키: [ )">
+                ⏪
+              </button>
+              <button type="button" id="sync-offset-badge" class="px-1.5 text-[11px] font-mono text-sky-300 select-none hover:text-white transition" title="자막 싱크 보정값 (클릭 또는 \ 키: 0초로 초기화)">
+                싱크 0.0s
+              </button>
+              <button type="button" id="btn-sync-earlier" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="자막을 0.2초 빠르게 표시 (단축키: ] )">
+                ⏩
+              </button>
+            </div>
+
+            <div class="flex items-center bg-slate-800 border border-slate-700 rounded-lg p-0.5">
+              <button type="button" id="btn-font-dec" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="자막 글자 크기 축소">
+                A-
+              </button>
+              <span id="cc-font-scale-badge" class="px-1.5 text-[11px] font-mono text-amber-300 select-none">100%</span>
+              <button type="button" id="btn-font-inc" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="자막 글자 크기 확대">
+                A+
+              </button>
+            </div>
+
+            <button type="button" id="btn-reset-pos" class="px-2 py-1 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-400 hover:text-white text-[11px] rounded-lg transition flex items-center space-x-1" title="드래그한 자막 위치를 기본 하단 중앙으로 초기화">
+              <span>↺ 위치 복원</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 영상 메타데이터 카드 -->
+      <div id="video-meta-card" class="hidden p-4 bg-slate-900/60 border border-slate-800/80 rounded-2xl space-y-3 flex-shrink-0">
+        <div class="flex items-start justify-between">
+          <div>
+            <span id="meta-channel" class="text-xs font-semibold text-sky-400 uppercase tracking-wider">Channel Name</span>
+            <h2 id="meta-title" class="text-base font-bold text-white mt-1 leading-snug">Video Title Here</h2>
+          </div>
+          <span id="meta-duration" class="px-2.5 py-1 bg-slate-800 text-slate-300 rounded-lg text-xs font-mono">00:00</span>
+        </div>
+        <p id="meta-desc" class="text-xs text-slate-400 line-clamp-2 leading-relaxed"></p>
+        <div class="pt-2 border-t border-slate-800/60 flex items-center justify-between text-xs text-slate-500">
+          <span id="meta-lang">자막: 감지됨</span>
+          <a id="meta-orig-link" href="#" target="_blank" class="text-sky-400 hover:underline flex items-center space-x-1">
+            <span>원본 보기</span>
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+          </a>
+        </div>
+      </div>
+
+      <!-- 특화 학습 안내 배너 -->
+      <div class="p-4 bg-gradient-to-r from-sky-950/30 to-indigo-950/30 border border-sky-800/30 rounded-2xl text-xs space-y-2 text-slate-400 flex-shrink-0">
+        <div class="font-bold text-sky-300 flex items-center space-x-1.5">
+          <span>💡 효율적인 학습 팁</span>
+        </div>
+        <div class="space-y-1 text-[11px]">
+          <p>• 우측 상단의 <strong class="text-amber-300">✏️ 편집</strong> 버튼을 누르면 노트를 직접 수정/필기할 수 있습니다.</p>
+          <p>• 같은 영상을 여러 번 분석해도 각각 별도의 고유 노트로 자동 누적 보관됩니다.</p>
+          <p>• <strong class="text-sky-400">📁 로컬 영상</strong>을 누르면 PC 안의 영상과 자막(.srt)도 동일하게 시청 & 연동됩니다.</p>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- 우측 패널: LLM 학습 노트 뷰어 및 에디터 (독립 스크롤) -->
+    <section id="note-section" class="w-full lg:w-1/2 h-full flex flex-col bg-slate-900/40 overflow-hidden relative">
+      
+      <!-- 노트 상단 툴바 -->
+      <div class="h-12 border-b border-slate-800 px-4 flex items-center justify-between bg-slate-900/60 backdrop-blur flex-shrink-0">
+        <!-- 탭 스위처: [📖 학습 노트] vs [💬 자막 스크립트] -->
+        <div class="flex items-center space-x-1.5">
+          <button type="button" id="view-tab-note" class="px-3 py-1 bg-sky-600 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center space-x-1">
+            <span>📖 학습 노트</span>
+          </button>
+          <button type="button" id="view-tab-subtitles" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center space-x-1">
+            <span>💬 자막 스크립트</span>
+            <span id="subtitle-badge" class="hidden ml-1 px-1.5 py-0.2 text-[10px] bg-slate-700 rounded-full font-mono">0</span>
+          </button>
+          <span id="status-tag" class="hidden px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-bold">완료</span>
+          <span id="engine-tag" class="hidden px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full text-[10px] font-mono"></span>
+        </div>
+
+        <!-- 툴바 액션 버튼 그룹 -->
+        <div class="flex items-center space-x-2">
+          <!-- 1) 학습 노트용 버튼들 -->
+          <div id="note-toolbar-buttons" class="flex items-center space-x-2">
+            <button id="toggle-edit-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs rounded-lg transition flex items-center space-x-1">
+              <span id="edit-btn-text">✏️ 편집</span>
+            </button>
+            <button id="copy-markdown-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition flex items-center space-x-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+              <span>복사</span>
+            </button>
+            <button id="download-markdown-btn" class="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white text-xs rounded-lg transition flex items-center space-x-1">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              <span>.md 다운로드</span>
+            </button>
+            <button id="tts-audiobook-btn" class="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold" title="edge-tts 고품질 신경망 음성으로 노트를 읽어줍니다">
+              <span id="tts-btn-icon">🎧</span>
+              <span id="tts-btn-text">오디오북</span>
+              <span id="tts-btn-spinner" class="hidden w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
+            </button>
+            <button id="zen-mode-toggle-btn" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold" title="영상과 패널을 접고 책처럼 편안하게 읽는 집중 독서 모드 (단축키: Z)">
+              <span>📖</span>
+              <span>읽기 모드</span>
+            </button>
+          </div>
+
+          <!-- 2) 자막 스크립트용 버튼들 -->
+          <div id="subtitle-toolbar-buttons" class="hidden flex items-center space-x-2">
+            <button id="retranslate-sub-btn" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold" title="현재 영상의 자막을 1:1 고정밀 싱크 엔진으로 다시 번역합니다">
+              <span>🔄</span>
+              <span>자막 재번역</span>
+            </button>
+            <button id="download-srt-btn" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+              <span>📥 .SRT 다운로드</span>
+            </button>
+            <button id="download-txt-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition flex items-center space-x-1 border border-slate-700 font-semibold">
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+              <span>📄 .TXT 다운로드</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 📖 집중 읽기 모드 (Zen Focus View) 전용 상단 컨트롤 바 -->
+      <div id="zen-topbar" class="h-12 border-b border-slate-800 px-6 items-center justify-between bg-slate-900/80 backdrop-blur z-20 flex-shrink-0">
+        <div class="flex items-center space-x-3">
+          <button id="exit-zen-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition flex items-center space-x-1.5 font-semibold border border-slate-700">
+            <span>✕</span>
+            <span>일반 뷰로 복귀</span>
+          </button>
+          <span id="zen-doc-title" class="text-xs font-bold text-slate-300 truncate max-w-xs md:max-w-md"></span>
+        </div>
+
+        <div class="flex items-center space-x-3 text-xs">
+          <!-- 테마 스위처 (다크 / 세피아 / 라이트) -->
+          <div class="flex items-center bg-slate-800/80 border border-slate-700 rounded-lg p-0.5">
+            <button type="button" id="zen-theme-dark" class="px-2 py-0.5 rounded text-[11px] font-medium text-white bg-slate-700 transition" title="다크 테마">
+              🌙 다크
+            </button>
+            <button type="button" id="zen-theme-sepia" class="px-2 py-0.5 rounded text-[11px] font-medium text-amber-200/70 hover:text-amber-200 transition" title="세피아 (눈 편한 종이책 톤)">
+              📜 세피아
+            </button>
+            <button type="button" id="zen-theme-light" class="px-2 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition" title="라이트 테마">
+              ☀️ 라이트
+            </button>
+          </div>
+
+          <!-- 폰트 크기 조절 (A- / A+) -->
+          <div class="flex items-center bg-slate-800/80 border border-slate-700 rounded-lg p-0.5">
+            <button type="button" id="zen-font-dec" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="글자 축소">
+              A-
+            </button>
+            <span id="zen-font-badge" class="px-1.5 text-[11px] font-mono text-sky-400 select-none">100%</span>
+            <button type="button" id="zen-font-inc" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="글자 확대">
+              A+
+            </button>
+          </div>
+
+          <!-- 목차 토글 버튼 -->
+          <button type="button" id="zen-toc-toggle-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition flex items-center space-x-1" title="목차 패널 열기/닫기">
+            <span>📑 목차</span>
+          </button>
+
+          <!-- 오디오북 빠른 재생 -->
+          <button type="button" id="zen-tts-btn" class="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 rounded-lg transition flex items-center space-x-1 font-semibold" title="오디오북 재생">
+            <span>🎧 오디오</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 플로팅 목차 (TOC) 사이드 패널 -->
+      <div id="zen-toc-panel" class="hidden fixed left-6 top-16 w-64 max-h-[80vh] bg-slate-900/95 border border-slate-800 backdrop-blur-md rounded-2xl p-4 shadow-2xl z-30 flex flex-col space-y-2">
+        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
+          <span class="text-xs font-bold text-sky-300 flex items-center space-x-1.5">
+            <span>📑 목차 (TOC)</span>
+          </span>
+          <button type="button" id="close-zen-toc-btn" class="text-slate-400 hover:text-white text-xs p-1">✕</button>
+        </div>
+        <div id="zen-toc-list" class="flex-1 overflow-y-auto space-y-1 pr-1">
+          <p class="text-[11px] text-slate-500">목차를 생성하고 있습니다...</p>
+        </div>
+      </div>
+
+      <!-- 🎧 edge-tts 오디오북 플레이어 바 (기본 숨김) -->
+      <div id="tts-player-card" class="hidden p-3 bg-purple-950/40 border-b border-purple-800/40 flex-shrink-0 space-y-2 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div class="flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <span class="w-6 h-6 rounded-lg bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs">🎧</span>
+            <span class="text-xs font-bold text-purple-200">AI 신경망 오디오북 (edge-tts)</span>
+            <span id="tts-status-badge" class="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-mono">준비 완료</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <select id="tts-voice-select" class="px-2 py-1 bg-slate-900 border border-purple-700/50 rounded-lg text-xs text-purple-200 focus:outline-none focus:border-purple-400">
+              <option value="injoon">인준 (차분한 남성 톤)</option>
+              <option value="sunhi">선희 (지적인 여성 톤)</option>
+              <option value="hyunsu">현수 (다국어 남성 톤)</option>
+            </select>
+            <select id="tts-speed-select" class="px-2 py-1 bg-slate-900 border border-purple-700/50 rounded-lg text-xs text-purple-200 focus:outline-none focus:border-purple-400">
+              <option value="1.0">1.0x</option>
+              <option value="1.25">1.25x</option>
+              <option value="1.5">1.5x</option>
+            </select>
+            <a id="tts-download-btn" href="#" download class="hidden px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs rounded-lg transition flex items-center space-x-1" title="MP3 오디오 파일 다운로드">
+              <span>📥 MP3</span>
+            </a>
+            <button id="close-tts-player-btn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+            </button>
+          </div>
+        </div>
+        <audio id="tts-audio-element" controls class="w-full h-8 rounded-lg outline-none"></audio>
+      </div>
+
+      <!-- 구독 AI 답변 인라인 붙여넣기 카드 -->
+      <div id="inline-paste-card" class="hidden p-4 bg-indigo-950/40 border-b border-indigo-800/40 flex-shrink-0 space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-bold text-indigo-300 flex items-center space-x-1.5">
+            <span>📋 ChatGPT / Claude 답변 붙여넣기</span>
+          </span>
+          <span class="text-[11px] text-slate-400">복사한 마크다운 답변을 아래에 넣고 적용하세요</span>
+        </div>
+        <textarea 
+          id="inline-paste-textarea" 
+          rows="5" 
+          placeholder="ChatGPT 또는 Claude의 답변을 여기에 붙여넣으세요 (Ctrl+V)..."
+          class="w-full p-3 bg-slate-800/90 border border-indigo-700/50 rounded-xl text-xs text-white font-mono focus:outline-none focus:border-indigo-400 leading-relaxed"
+        ></textarea>
+        <div class="flex justify-end space-x-2">
+          <button 
+            type="button" 
+            id="inline-paste-apply-btn" 
+            class="px-4 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold shadow transition"
+          >
+            노트 적용 및 영구 저장
+          </button>
+        </div>
+      </div>
+
+      <!-- 실시간 직접 수정 에디터 영역 (기본 숨김) -->
+      <div id="editor-container" class="hidden flex-1 flex flex-col p-4 bg-slate-950/80 overflow-hidden">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800 mb-2">
+          <span class="text-xs text-amber-300 font-bold">📝 마크다운 직접 수정 중</span>
+          <button id="save-edited-note-btn" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow">
+            💾 저장 및 적용
+          </button>
+        </div>
+        <textarea 
+          id="note-editor-textarea" 
+          class="flex-1 w-full p-4 bg-slate-900 border border-slate-700 rounded-xl text-xs text-slate-100 font-mono focus:outline-none focus:border-sky-500 leading-relaxed resize-none"
+          placeholder="마크다운 내용을 수정하세요..."
+        ></textarea>
+      </div>
+
+      <!-- 분석 진행 상태 로딩 오버레이 -->
+      <div id="loading-overlay" class="hidden absolute inset-0 z-30 bg-slate-900/95 backdrop-blur-sm flex flex-col items-center justify-center p-6 text-center space-y-5">
+        <div class="relative w-16 h-16">
+          <div class="absolute inset-0 rounded-full border-4 border-slate-800"></div>
+          <div class="absolute inset-0 rounded-full border-4 border-sky-500 border-t-transparent animate-spin"></div>
+        </div>
+        
+        <div>
+          <h3 id="loading-title" class="text-base font-bold text-white mb-2">유튜브 영상 분석 중...</h3>
+          <p id="loading-desc" class="text-xs text-slate-400 max-w-sm leading-relaxed">
+            자막을 추출하고 학습 노트를 구성하고 있습니다.
+          </p>
+        </div>
+
+        <div class="w-full max-w-xs bg-slate-950/80 border border-slate-800 rounded-xl p-3 space-y-2 text-left text-xs">
+          <div id="step-1" class="flex items-center space-x-2 text-sky-400 font-medium">
+            <span class="step-icon w-4 h-4 rounded-full bg-sky-500/20 text-sky-300 flex items-center justify-center text-[10px]">1</span>
+            <span>자막 및 메타데이터 추출</span>
+          </div>
+          <div id="step-2" class="flex items-center space-x-2 text-slate-500">
+            <span class="step-icon w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[10px]">2</span>
+            <span>문맥 오류 교정 및 지식 확장 (Deep Dive)</span>
+          </div>
+          <div id="step-3" class="flex items-center space-x-2 text-slate-500">
+            <span class="step-icon w-4 h-4 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[10px]">3</span>
+            <span>타임라인 렌더링 및 로컬 저장</span>
+          </div>
+        </div>
+
+        <button 
+          id="cancel-analysis-btn" 
+          type="button" 
+          class="px-4 py-2 bg-rose-600/90 hover:bg-rose-600 text-white rounded-xl text-xs font-semibold flex items-center space-x-1.5 transition shadow-lg shadow-rose-950/50 active:scale-95 border border-rose-500/30"
+        >
+          <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+          </svg>
+          <span>분석 중단하기</span>
+        </button>
+      </div>
+
+      <!-- 노트 본문 렌더링 영역 (독립 스크롤) -->
+      <div id="markdown-container" class="flex-1 p-6 md:p-8 overflow-y-auto markdown-body">
+        <div id="empty-note-placeholder" class="h-full flex flex-col items-center justify-center text-center text-slate-500 py-16">
+          <div class="w-16 h-16 rounded-2xl bg-slate-800/50 flex items-center justify-center mb-4 text-slate-600">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+            </svg>
+          </div>
+          <h4 class="text-sm font-semibold text-slate-300 mb-1">학습 노트를 생성하거나 불러오세요</h4>
+          <p class="text-xs text-slate-500 max-w-sm leading-relaxed">
+            상단에서 <strong>[⚡ Gemini 자동 분석]</strong> 또는 <strong>[📋 구독 AI 연동]</strong>을 선택한 뒤 URL을 입력하거나 로컬 영상을 불러오세요.
+          </p>
+        </div>
+        <article id="note-content" class="hidden"></article>
+      </div>
+
+      <!-- 인터랙티브 자막 뷰어 영역 (기본 숨김) -->
+      <div id="subtitle-container" class="hidden flex-1 flex flex-col overflow-hidden bg-slate-900/30">
+        <!-- 자막 옵션 툴바: 언어 선택 & 검색 & 통계 -->
+        <div class="p-3 bg-slate-950/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
+          <!-- 언어 선택 토글 버튼 및 번역 요청 버튼 -->
+          <div class="flex items-center space-x-2">
+            <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-lg text-xs">
+              <button type="button" id="sub-lang-original" class="px-2.5 py-1 rounded-md font-bold transition bg-sky-600 text-white shadow">
+                🇺🇸 원문
+              </button>
+              <button type="button" id="sub-lang-ko" class="px-2.5 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
+                <span>🇰🇷 한국어 번역</span>
+              </button>
+              <button type="button" id="sub-lang-bilingual" class="px-2.5 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
+                <span>🌐 한/영 병기</span>
+              </button>
+            </div>
+
+            <!-- 명시적 한국어 번역 요청 버튼 (Gemini 사용량 제한 방지) -->
+            <button 
+              type="button" 
+              id="request-sub-translate-btn" 
+              class="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
+              title="Gemini를 호출하여 한국어 번역을 명시적으로 생성합니다 (API 사용)"
+            >
+              <span id="trans-btn-icon">⚡</span>
+              <span id="trans-btn-text">한국어 번역 요청</span>
+              <span id="trans-loading-spinner" class="hidden w-3 h-3 border-2 border-amber-300 border-t-transparent rounded-full animate-spin"></span>
+            </button>
+
+            <!-- 자동 스크롤 ON/OFF 토글 버튼 -->
+            <button 
+              type="button" 
+              id="sub-autoscroll-toggle-btn" 
+              class="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm"
+              title="영상 재생 시 현재 대사 위치로 자동 스크롤할지 여부를 켜고 끕니다"
+            >
+              <span id="sub-autoscroll-icon">📜</span>
+              <span id="sub-autoscroll-text">자동 스크롤 ON</span>
+            </button>
+          </div>
+
+          <!-- 실시간 자막 검색창 -->
+          <div class="relative flex-1 min-w-[140px] max-w-xs">
+            <input 
+              type="text" 
+              id="subtitle-search-input" 
+              placeholder="자막 키워드 검색..." 
+              class="w-full pl-8 pr-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+            />
+            <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+            </svg>
+          </div>
+          
+          <span id="sub-count-text" class="text-[11px] text-slate-400 font-mono">0개 대사</span>
+        </div>
+
+        <!-- 자막 목록 (클릭 시 해당 시간대로 점프) -->
+        <div id="subtitle-list" class="flex-1 overflow-y-auto p-4 space-y-2">
+          <div id="empty-subtitles-placeholder" class="h-full flex flex-col items-center justify-center text-center text-slate-500 py-16">
+            <div class="w-14 h-14 rounded-2xl bg-slate-800/50 flex items-center justify-center mb-3 text-slate-600">
+              <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
+            </div>
+            <h4 class="text-xs font-semibold text-slate-300 mb-1">자막이 없습니다</h4>
+            <p class="text-[11px] text-slate-500 max-w-xs leading-relaxed">
+              영상을 분석하거나 불러오면 인터랙티브 자막 목록이 표시됩니다. 자막을 클릭하면 해당 시간대로 즉시 이동합니다!
+            </p>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+  </main>
+
+  <!-- 로컬 비디오 & 자막 열기 모달 -->
+  <div id="local-file-modal" class="fixed inset-0 bg-black/75 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-sm text-white flex items-center space-x-2">
+          <span>📁 내 PC 로컬 영상 및 자막 파일 열기</span>
+        </h3>
+        <button id="close-local-modal-btn" class="p-1 text-slate-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <div class="space-y-3 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">1. 비디오 파일 선택 (.mp4, .webm, .mkv)</label>
+          <input type="file" id="local-video-input" accept="video/*" class="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-white hover:file:bg-slate-700 cursor-pointer" />
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">2. 자막 파일 선택 (.srt, .vtt) <span class="text-sky-400 font-normal">(자막이 없으면 비워두세요)</span></label>
+          <input type="file" id="local-subtitle-input" accept=".srt,.vtt,text/plain" class="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-white hover:file:bg-slate-700 cursor-pointer" />
+          <p class="text-[11px] text-slate-400 mt-1">
+            💡 자막 파일이 없으신가요? 비워두시면 <strong>Gemini가 영상의 음성을 직접 귀로 듣고</strong> 분석합니다!
+          </p>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-300 mb-1">3. 영상 제목 (선택)</label>
+          <input type="text" id="local-title-input" placeholder="영상 제목을 입력하세요..." class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500" />
+        </div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-800 flex items-center justify-between">
+        <button id="local-audio-direct-btn" class="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow transition flex items-center space-x-1.5">
+          <span>🎙️ 자막 없이 음성 직접 분석</span>
+        </button>
+        <div class="flex space-x-2">
+          <button id="local-prompt-btn" class="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold">
+            📋 프롬프트 복사
+          </button>
+          <button id="local-analyze-btn" class="px-3 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold">
+            ⚡ 자막으로 분석
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 보관함 사이드바 -->
+  <aside id="library-drawer" class="fixed inset-y-0 right-0 w-80 md:w-96 bg-slate-900 border-l border-slate-800 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
+    <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+      <div class="flex items-center space-x-2">
+        <h3 class="font-bold text-sm text-white">나의 학습 보관함</h3>
+        <span id="drawer-count" class="text-xs text-slate-400">(0개)</span>
+      </div>
+      <button id="close-drawer-btn" class="p-1 text-slate-400 hover:text-white">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
+    </div>
+    <div id="library-list" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+  </aside>
+
+  <!-- 채널 영상 탐색 모달 -->
+  <div id="channel-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-3xl max-h-[85vh] flex flex-col shadow-2xl">
+      <div class="p-4 border-b border-slate-800 flex items-center justify-between">
+        <h3 class="font-bold text-sm text-white flex items-center space-x-2">
+          <span>📺 채널 최근 영상 탐색 및 변환</span>
+        </h3>
+        <button id="close-channel-modal-btn" class="p-1 text-slate-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      <div class="p-4 border-b border-slate-800 bg-slate-950/40">
+        <div class="flex space-x-2">
+          <input 
+            type="text" 
+            id="channel-url-input" 
+            placeholder="예: https://www.youtube.com/@3blue1brown 또는 채널 URL..." 
+            class="flex-1 px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500"
+          />
+          <button id="fetch-channel-videos-btn" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold">
+            영상 불러오기
+          </button>
+        </div>
+      </div>
+      <div id="channel-videos-list" class="flex-1 overflow-y-auto p-4 space-y-2">
+        <p class="text-xs text-slate-500 text-center py-8">채널 URL을 입력하고 [영상 불러오기]를 눌러주세요.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 설정 모달 -->
+  <div id="settings-modal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-md p-6 shadow-2xl space-y-4">
+      <div class="flex items-center justify-between">
+        <h3 class="font-bold text-base text-white">Gemini API 설정</h3>
+        <button id="close-settings-modal-btn" class="p-1 text-slate-400 hover:text-white">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+      
+      <div class="space-y-2">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-semibold text-slate-300">Google Gemini 무료 API 키</label>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" class="text-[11px] text-sky-400 hover:underline">
+            무료 키 발급받기 ↗
+          </a>
+        </div>
+        <input 
+          type="password" 
+          id="api-key-input" 
+          placeholder="AIzaSy..." 
+          class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500"
+        />
+        <p class="text-[11px] text-slate-400">
+          * 신용카드 없이 구글 계정만으로 즉시 발급되며 하루 1,500회 무료입니다.
+        </p>
+      </div>
+
+      <!-- Groq 무료 API 키 (0.1초 칼싱크 Whisper Large-v3) -->
+      <div class="space-y-2 pt-2 border-t border-slate-800">
+        <div class="flex items-center justify-between">
+          <label class="text-xs font-semibold text-amber-300 flex items-center space-x-1.5">
+            <span>⚡ Groq Cloud 무료 API 키</span>
+            <span class="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[10px] font-bold">0.1초 칼싱크</span>
+          </label>
+          <a href="https://console.groq.com/keys" target="_blank" class="text-[11px] text-amber-400 hover:underline flex items-center space-x-0.5">
+            <span>무료 키 발급받기</span>
+            <svg class="w-3 h-3 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
+          </a>
+        </div>
+        <input 
+          type="password" 
+          id="groq-api-key-input" 
+          placeholder="gsk_..." 
+          class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
+        />
+        <p class="text-[11px] text-slate-400 leading-relaxed">
+          * 로컬 영상의 자막을 10초 만에 0.1초 단위 칼싱크(Whisper Large-v3)로 자동 생성합니다. (매일 8시간 완전 무료)
+        </p>
+      </div>
+
+      <div class="pt-2 flex justify-end space-x-2">
+        <button id="save-settings-btn" class="px-4 py-2 bg-sky-600 hover:bg-sky-500 text-white rounded-xl text-xs font-semibold transition shadow-sm">
+          저장하기
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 한국어 자막 번역 진행 상태 팝업 모달 (실시간 진행률 및 로그 창) -->
+  <div id="trans-progress-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center space-x-3">
+          <div class="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold text-lg shadow-inner">
+            ⚡
+          </div>
+          <div>
+            <h3 class="font-bold text-sm text-white">한국어 자막 번역 진행</h3>
+            <p id="trans-modal-subtitle" class="text-xs text-slate-400">Gemini 3.5 Flash Lite (500 RPD) 모델을 통해 자막을 초고속 번역하고 있습니다.</p>
+          </div>
+        </div>
+        <button id="close-trans-modal-btn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+        </button>
+      </div>
+
+      <!-- 프로그레스 바 -->
+      <div class="space-y-1.5 bg-slate-950/60 p-3 rounded-xl border border-slate-800/80">
+        <div class="flex justify-between text-xs text-slate-300">
+          <span id="trans-progress-label" class="font-medium">번역 준비 중...</span>
+          <span id="trans-progress-percent" class="font-mono font-bold text-amber-400">0%</span>
+        </div>
+        <div class="w-full h-2.5 bg-slate-800 rounded-full overflow-hidden border border-slate-700">
+          <div id="trans-progress-bar" class="h-full bg-gradient-to-r from-amber-500 via-sky-500 to-emerald-500 transition-all duration-300 rounded-full" style="width: 0%;"></div>
+        </div>
+      </div>
+
+      <!-- 터미널 스타일 실시간 상태 로그 창 -->
+      <div class="space-y-1.5">
+        <div class="flex items-center justify-between text-[11px] text-slate-400">
+          <span class="flex items-center space-x-1">
+            <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+            <span>실시간 처리 로그</span>
+          </span>
+          <span class="text-slate-500 text-[10px]">자동 스크롤</span>
+        </div>
+        <div id="trans-log-container" class="w-full h-48 bg-slate-950 border border-slate-800 rounded-xl p-3 font-mono text-xs overflow-y-auto space-y-1 text-slate-300 select-text leading-relaxed">
+          <div class="text-slate-500">[대기] 번역 요청 대기 중...</div>
+        </div>
+      </div>
+
+      <!-- 하단 액션 버튼 -->
+      <div class="flex items-center justify-between pt-2 border-t border-slate-800">
+        <div class="text-[11px] text-slate-500" id="trans-footer-hint">
+          * 언제든지 번역을 취소할 수 있습니다.
+        </div>
+        <div class="flex items-center space-x-2">
+          <!-- 번역 진행 중 취소 버튼 -->
+          <button id="abort-trans-btn" class="px-3.5 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 text-xs font-semibold rounded-lg transition flex items-center space-x-1 shadow-sm">
+            <span>🛑 번역 취소</span>
+          </button>
+          <!-- 닫기 버튼 (완료되거나 취소되었을 때) -->
+          <button id="cancel-trans-btn" class="hidden px-3.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold rounded-lg transition">
+            닫기
+          </button>
+          <button id="complete-trans-btn" class="hidden px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow-md flex items-center space-x-1">
+            <span>✓ 적용 및 닫기</span>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 📖 독서 전용 팝업 창 (Reader Popup Modal) -->
+  <div id="reader-popup-modal" class="fixed inset-0 z-50 hidden bg-slate-950/85 backdrop-blur-md flex flex-col animate-in fade-in duration-200">
+    <!-- 팝업 상단 헤더 툴바 -->
+    <header class="h-14 border-b border-slate-800/80 px-4 md:px-8 flex items-center justify-between bg-slate-900/95 backdrop-blur flex-shrink-0 select-none shadow-md">
+      <!-- 좌측: 독서 모드 뱃지 및 제목 -->
+      <div class="flex items-center space-x-3 truncate max-w-sm md:max-w-md lg:max-w-xl">
+        <span class="px-2.5 py-1 bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-bold flex items-center space-x-1 flex-shrink-0">
+          <span>📖</span>
+          <span>집중 독서 모드</span>
+        </span>
+        <h2 id="reader-popup-title" class="text-xs md:text-sm font-bold text-white truncate"></h2>
+      </div>
+
+      <!-- 우측 컨트롤 그룹 -->
+      <div class="flex items-center space-x-2 text-xs">
+        <!-- 3대 테마 스위처 (다크 / 세피아 / 라이트) -->
+        <div class="flex items-center bg-slate-800/90 border border-slate-700/80 rounded-xl p-0.5 shadow-inner">
+          <button type="button" id="reader-theme-dark" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-white bg-slate-700 transition" title="다크 모드">
+            🌙 다크
+          </button>
+          <button type="button" id="reader-theme-sepia" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-amber-300/70 hover:text-amber-200 transition" title="세피아 (눈 편한 종이책 미색 톤)">
+            📜 세피아
+          </button>
+          <button type="button" id="reader-theme-light" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-slate-200 transition" title="라이트 모드">
+            ☀️ 라이트
+          </button>
+        </div>
+
+        <!-- 폰트 크기 조절 (A- / A+) -->
+        <div class="flex items-center bg-slate-800/90 border border-slate-700/80 rounded-xl p-0.5 shadow-inner">
+          <button type="button" id="reader-font-dec" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition" title="글자 축소">
+            A-
+          </button>
+          <span id="reader-font-badge" class="px-1.5 text-xs font-mono text-sky-400 select-none">100%</span>
+          <button type="button" id="reader-font-inc" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg text-xs font-bold transition" title="글자 확대">
+            A+
+          </button>
+        </div>
+
+        <!-- 📑 목차 버튼 (클릭 시 좌측 고정 사이드바 열기/닫기) -->
+        <button 
+          type="button" 
+          id="reader-toc-toggle-btn" 
+          class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl transition flex items-center space-x-1.5 font-semibold shadow-sm active:scale-95" 
+          title="좌측 목차 패널 열기/닫기"
+        >
+          <span>📑 목차</span>
+          <span id="reader-toc-badge" class="ml-1 px-1.5 py-0.5 bg-sky-500/20 text-sky-300 rounded-full text-[10px] font-mono leading-none hidden">0</span>
+        </button>
+
+        <!-- 오디오북 청취 버튼 -->
+        <button type="button" id="reader-audio-btn" class="px-2.5 py-1.5 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 rounded-xl transition flex items-center space-x-1 font-semibold" title="오디오북 재생">
+          <span>🎧 오디오</span>
+        </button>
+
+        <!-- 인쇄/PDF 저장 버튼 -->
+        <button type="button" id="reader-print-btn" class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-xl transition flex items-center space-x-1" title="인쇄 및 PDF로 저장 (Ctrl+P)">
+          <span>🖨️ 인쇄</span>
+        </button>
+
+        <!-- 팝업 닫기 버튼 -->
+        <button type="button" id="close-reader-popup-btn" class="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 rounded-xl transition flex items-center space-x-1 font-bold active:scale-95 shadow-sm" title="팝업 닫기 (Esc)">
+          <span>✕ 닫기</span>
+        </button>
+      </div>
+    </header>
+
+    <!-- 팝업 본문 영역 (사이드 목차 + 중앙 마크다운 스크롤) -->
+    <div class="flex-1 flex overflow-hidden relative">
+      <!-- 좌측 사이드 목차 패널 -->
+      <aside id="reader-popup-toc-panel" class="hidden w-64 md:w-72 bg-slate-900/90 border-r border-slate-800/80 backdrop-blur p-4 overflow-y-auto space-y-2 flex-shrink-0 shadow-lg">
+        <div class="flex items-center justify-between pb-2 border-b border-slate-800">
+          <span class="text-xs font-bold text-sky-400 flex items-center space-x-1.5">
+            <span>📑 목차 목록</span>
+          </span>
+          <button type="button" id="close-reader-toc-panel-btn" class="text-slate-400 hover:text-white text-xs p-1">✕</button>
+        </div>
+        <div id="reader-sidebar-toc-list" class="space-y-1 pr-1"></div>
+      </aside>
+
+      <!-- 중앙 책 레이아웃 마크다운 독서 영역 -->
+      <main id="reader-popup-scroll-container" class="flex-1 overflow-y-auto p-6 md:p-12 scroll-smooth">
+        <article id="reader-popup-article" class="max-w-4xl mx-auto markdown-body leading-relaxed">
+          <!-- 렌더링된 마크다운 내용이 여기에 표시됨 -->
+        </article>
+      </main>
+    </div>
+  </div>
+
+  <script src="/static/app.js?v=3.4.1"></script>
+</body>
+
+</html>
+

@@ -1,0 +1,632 @@
+import os
+import sys
+import time
+import json
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+from dotenv import load_dotenv
+import threading
+import subprocess
+import tempfile
+import shutil
+import imageio_ffmpeg
+
+# Google GenAI SDK의 무해한 AFC 권고 logger.warning 원천 차단
+try:
+    from google.genai.models import Models
+    Models._logged_afc_warning = True
+except Exception:
+    pass
+
+if getattr(sys, 'frozen', False):
+    BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+    USER_DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TubeScholar")
+    os.makedirs(USER_DATA_DIR, exist_ok=True)
+    ENV_PATH = os.path.join(USER_DATA_DIR, ".env")
+    BASE_DIR = BUNDLE_DIR
+else:
+    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    BUNDLE_DIR = BASE_DIR
+    ENV_PATH = os.path.join(BASE_DIR, ".env")
+
+sys.path.append(os.path.join(BUNDLE_DIR, "backend"))
+load_dotenv(ENV_PATH)
+
+from extractor import (
+    extract_video_id, 
+    get_video_info, 
+    get_video_transcript, 
+    get_channel_videos, 
+    parse_srt_vtt_text,
+    convert_to_srt,
+    convert_to_txt
+)
+from analyzer import (
+    generate_study_note_gemini,
+    generate_clipboard_prompt,
+    generate_study_note_from_audio,
+    translate_subtitles_gemini,
+    translate_subtitles_stream,
+    DEFAULT_NOTE_MODEL,
+    DEFAULT_TRANSLATE_MODEL
+)
+from storage import save_note, get_note, list_saved_notes, delete_note, update_note, update_note_subtitles
+from stt import transcribe_audio_groq
+from tts import generate_note_audio, list_available_voices, AUDIO_DIR
+from typing import List, Dict, Any
+import re
+
+app = FastAPI(title="TubeScholar API")
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": f"서버 처리 중 오류가 발생했습니다: {str(exc)}"}
+    )
+
+class AnalyzeRequest(BaseModel):
+    url: str
+    engine: Optional[str] = "gemini"
+    api_key: Optional[str] = None
+    gemini_model: Optional[str] = DEFAULT_NOTE_MODEL
+
+class LocalAnalyzeRequest(BaseModel):
+    title: str
+    subtitle_text: str
+    engine: Optional[str] = "gemini"
+
+class LocalPromptRequest(BaseModel):
+    title: str
+    subtitle_text: str
+
+class PromptRequest(BaseModel):
+    url: str
+
+class ManualSaveRequest(BaseModel):
+    url: Optional[str] = ""
+    title: Optional[str] = ""
+    markdown: str
+    video_type: Optional[str] = "youtube"
+    note_id: Optional[str] = None
+
+class UpdateNoteRequest(BaseModel):
+    markdown: str
+
+class ChannelRequest(BaseModel):
+    channel_url: str
+    max_results: Optional[int] = 15
+
+class SubtitlesRequest(BaseModel):
+    url: Optional[str] = ""
+    video_id: Optional[str] = ""
+    translate_ko: Optional[bool] = False
+    subtitles: Optional[List[Dict[str, Any]]] = None
+    note_id: Optional[str] = None
+
+class SubtitleDownloadRequest(BaseModel):
+    subtitles: List[Dict[str, Any]]
+    format: Optional[str] = "srt"
+    lang_mode: Optional[str] = "original"
+    title: Optional[str] = "자막"
+    auto_translate: Optional[bool] = False
+    sync_offset: Optional[float] = 0.0  # 초 단위, +값 = 자막을 더 빨리 표시
+
+class ConfigRequest(BaseModel):
+    api_key: Optional[str] = None
+    groq_api_key: Optional[str] = None
+
+class TTSRequest(BaseModel):
+    note_id: Optional[str] = "temp_note"
+    markdown: Optional[str] = ""
+    voice: Optional[str] = "injoon"
+    speed: Optional[str] = "+0%"
+
+@app.get("/api/config")
+def get_config():
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+    has_gemini = bool(gemini_key.strip())
+    masked_gemini = f"{gemini_key[:4]}...{gemini_key[-4:]}" if len(gemini_key) >= 8 else ("configured" if has_gemini else "")
+
+    groq_key = os.environ.get("GROQ_API_KEY") or ""
+    has_groq = bool(groq_key.strip())
+    masked_groq = f"{groq_key[:4]}...{groq_key[-4:]}" if len(groq_key) >= 8 else ("configured" if has_groq else "")
+
+    return {
+        "has_api_key": has_gemini,
+        "masked_key": masked_gemini,
+        "has_groq_key": has_groq,
+        "masked_groq_key": masked_groq
+    }
+
+@app.post("/api/config")
+def set_config(req: ConfigRequest):
+    env_lines = {}
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, "r", encoding="utf-8") as f:
+            for line in f:
+                if "=" in line:
+                    parts = line.strip().split("=", 1)
+                    env_lines[parts[0].strip()] = parts[1].strip()
+
+    if req.api_key is not None:
+        k = req.api_key.strip()
+        os.environ["GEMINI_API_KEY"] = k
+        if k:
+            env_lines["GEMINI_API_KEY"] = k
+        else:
+            env_lines.pop("GEMINI_API_KEY", None)
+
+    if req.groq_api_key is not None:
+        k = req.groq_api_key.strip()
+        os.environ["GROQ_API_KEY"] = k
+        if k:
+            env_lines["GROQ_API_KEY"] = k
+        else:
+            env_lines.pop("GROQ_API_KEY", None)
+
+    with open(ENV_PATH, "w", encoding="utf-8") as f:
+        for k, v in env_lines.items():
+            f.write(f"{k}={v}\n")
+        
+    return {"success": True, "message": "API 키가 성공적으로 저장되었습니다."}
+
+@app.post("/api/prompt")
+def get_prompt_for_ai(req: PromptRequest):
+    """구독 중인 ChatGPT Plus / Claude Pro 대화창에 바로 붙여넣을 수 있는 프롬프트 생성"""
+    video_id = extract_video_id(req.url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="유효한 유튜브 영상 URL이 아닙니다.")
+    
+    video_info = get_video_info(video_id)
+    transcript_result = get_video_transcript(video_id)
+    if not transcript_result.get("success"):
+        raise HTTPException(status_code=400, detail=transcript_result.get("error"))
+
+    prompt_text = generate_clipboard_prompt(video_info, transcript_result)
+    return {
+        "success": True,
+        "video_info": video_info,
+        "prompt": prompt_text
+    }
+
+@app.post("/api/local/prompt")
+def get_local_prompt_for_ai(req: LocalPromptRequest):
+    """로컬 자막 파일로부터 ChatGPT/Claude 복사용 프롬프트 생성"""
+    transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    video_info = {
+        "video_id": f"local_{int(time.time())}",
+        "title": req.title or "로컬 비디오",
+        "channel": "Local Video",
+        "video_type": "local",
+        "duration_str": "로컬 파일"
+    }
+    prompt_text = generate_clipboard_prompt(video_info, transcript_result)
+    return {
+        "success": True,
+        "video_info": video_info,
+        "prompt": prompt_text
+    }
+
+@app.post("/api/local/analyze")
+def analyze_local_video(req: LocalAnalyzeRequest):
+    """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
+    transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    video_info = {
+        "video_id": f"local_{int(time.time())}",
+        "title": req.title or "로컬 비디오",
+        "channel": "Local Video",
+        "video_type": "local",
+        "duration_str": "로컬 파일"
+    }
+    
+    llm_result = generate_study_note_gemini(
+        video_info=video_info,
+        transcript_data=transcript_result
+    )
+
+    if not llm_result.get("success"):
+        raise HTTPException(status_code=500, detail=f"분석 실패: {llm_result.get('error')}")
+
+    save_res = save_note(video_info, llm_result["markdown"], subtitles=transcript_result.get("subtitles", []))
+    return {
+        "success": True,
+        "note_id": save_res["note_id"],
+        "video_info": video_info,
+        "subtitles": transcript_result.get("subtitles", []),
+        "model_used": llm_result.get("model_used"),
+        "markdown": save_res["markdown"],
+        "file_path": save_res["file_path"]
+    }
+
+@app.post("/api/local/video-analyze")
+async def analyze_local_video_audio(
+    video: UploadFile = File(...),
+    title: Optional[str] = Form(None)
+):
+    """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성"""
+    vid_title = title or os.path.splitext(video.filename or "로컬 비디오")[0]
+    
+    temp_dir = tempfile.mkdtemp()
+    temp_video_path = os.path.join(temp_dir, video.filename or "temp_video.mp4")
+    temp_audio_path = os.path.join(temp_dir, "extracted_audio.mp3")
+
+    try:
+        with open(temp_video_path, "wb") as f:
+            shutil.copyfileobj(video.file, f)
+
+        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        cmd = [
+            ffmpeg_exe, "-y",
+            "-i", temp_video_path,
+            "-vn",
+            "-acodec", "libmp3lame",
+            "-ar", "16000",
+            "-ac", "1",
+            "-b:a", "32k",
+            temp_audio_path
+        ]
+        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        if proc.returncode != 0:
+            raise HTTPException(status_code=500, detail="영상에서 오디오를 추출하지 못했습니다.")
+
+        # 1. Groq Whisper Cloud STT 시도 (Groq API 키가 설정되어 있는 경우)
+        groq_key = os.environ.get("GROQ_API_KEY")
+        stt_result = None
+        if groq_key:
+            stt_result = transcribe_audio_groq(temp_audio_path, api_key=groq_key)
+
+        if stt_result and stt_result.get("success") and stt_result.get("subtitles"):
+            # Groq 0.1초 칼싱크 자막 완성 -> Gemini에게 전달하여 최고급 지식 확장 노트 생성
+            subtitles = stt_result["subtitles"]
+            duration_str = subtitles[-1]["timestamp"] if subtitles else "00:00"
+            video_info = {
+                "video_id": f"local_{int(time.time())}",
+                "title": vid_title,
+                "channel": "내 로컬 PC 영상 (Groq Whisper 0.1초 칼싱크)",
+                "video_type": "local",
+                "duration_str": duration_str
+            }
+            transcript_data = {
+                "full_text": "\n".join(f"[{s['timestamp']}] {s['text']}" for s in subtitles),
+                "subtitles": subtitles
+            }
+            llm_result = generate_study_note_gemini(video_info, transcript_data)
+            if not llm_result.get("success"):
+                raise HTTPException(status_code=500, detail=f"Gemini 학습 노트 생성 실패: {llm_result.get('error')}")
+
+            model_used = f"Groq Whisper Large-v3 + Gemini {llm_result.get('model_used')}"
+        else:
+            # Groq 키가 없거나 실패한 경우: 기존 Gemini Multimodal Audio 직접 청취 방식으로 폴백
+            llm_result = generate_study_note_from_audio(
+                audio_path=temp_audio_path,
+                video_title=vid_title
+            )
+            if not llm_result.get("success"):
+                raise HTTPException(status_code=500, detail=f"Gemini 음성 분석 실패: {llm_result.get('error')}")
+
+            video_info = {
+                "video_id": f"local_{int(time.time())}",
+                "title": vid_title,
+                "channel": "내 로컬 PC 영상 (Gemini 음성 직접 청취)",
+                "video_type": "local",
+                "duration_str": "로컬 음성 분석"
+            }
+            subtitles = llm_result.get("subtitles", [])
+            model_used = llm_result.get("model_used")
+
+        save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles)
+        return {
+            "success": True,
+            "note_id": save_res["note_id"],
+            "video_info": video_info,
+            "subtitles": subtitles,
+            "model_used": model_used,
+            "markdown": save_res["markdown"],
+            "file_path": save_res["file_path"]
+        }
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+@app.post("/api/manual-save")
+def manual_save_note(req: ManualSaveRequest):
+    """구독 AI로부터 받은 답변 마크다운을 직접 붙여넣어 새 노트로 저장"""
+    video_id = extract_video_id(req.url) if req.url else None
+    if not video_id:
+        video_id = f"custom_{int(time.time())}"
+        video_info = {
+            "video_id": video_id,
+            "title": req.title or "구독 AI 학습 노트",
+            "channel": "구독 AI 연동",
+            "video_type": req.video_type or "youtube",
+            "url": req.url or ""
+        }
+    else:
+        video_info = get_video_info(video_id)
+        video_info["video_type"] = "youtube"
+
+    # 항상 새로운 note_id로 독립 저장하여 이전 기록을 덮어쓰지 않음
+    save_res = save_note(video_info, req.markdown, note_id=req.note_id, note_title=req.title)
+    return {
+        "success": True,
+        "note_id": save_res["note_id"],
+        "video_info": video_info,
+        "markdown": save_res["markdown"],
+        "file_path": save_res["file_path"]
+    }
+
+@app.post("/api/analyze")
+def analyze_video(req: AnalyzeRequest):
+    video_id = extract_video_id(req.url)
+    if not video_id:
+        raise HTTPException(status_code=400, detail="올바른 유튜브 영상 URL 또는 Video ID가 아닙니다.")
+
+    # 1. 메타데이터 추출
+    video_info = get_video_info(video_id)
+    video_info["video_type"] = "youtube"
+
+    # 2. 자막 추출
+    transcript_result = get_video_transcript(video_id)
+    if not transcript_result.get("success"):
+        raise HTTPException(
+            status_code=400, 
+            detail=f"자막 추출 실패: {transcript_result.get('error', '자막을 찾을 수 없습니다.')}"
+        )
+
+    # 3. Gemini 지식 확장 노트 생성
+    llm_result = generate_study_note_gemini(
+        video_info=video_info,
+        transcript_data=transcript_result,
+        api_key=req.api_key,
+        model_name=req.gemini_model or DEFAULT_NOTE_MODEL
+    )
+
+    if not llm_result.get("success"):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"학습 노트 생성 실패: {llm_result.get('error')}"
+        )
+
+    # 4. 고유 note_id로 로컬 저장 (동일 영상이라도 별도 버전으로 누적 보관)
+    save_res = save_note(video_info, llm_result["markdown"], subtitles=transcript_result.get("subtitles", []))
+
+    return {
+        "success": True,
+        "note_id": save_res["note_id"],
+        "video_info": video_info,
+        "subtitles": transcript_result.get("subtitles", []),
+        "transcript_language": transcript_result.get("language"),
+        "is_generated": transcript_result.get("is_generated"),
+        "is_korean": transcript_result.get("is_korean", False),
+        "model_used": llm_result.get("model_used"),
+        "markdown": save_res["markdown"],
+        "file_path": save_res["file_path"]
+    }
+
+@app.post("/api/subtitles")
+def get_or_translate_subtitles(req: SubtitlesRequest):
+    """
+    영상 자막을 조회하거나 한국어로 번역합니다.
+    """
+    subtitles = req.subtitles or []
+    lang = "en"
+    
+    if not subtitles:
+        v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
+        if not v_id:
+            raise HTTPException(status_code=400, detail="올바른 유튜브 URL 또는 Video ID가 필요합니다.")
+        res = get_video_transcript(v_id)
+        if not res.get("success"):
+            raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
+        subtitles = res.get("subtitles", [])
+        lang = res.get("language", "en")
+
+    if req.translate_ko and subtitles:
+        has_ko = any(s.get("ko_text") for s in subtitles[:5])
+        if not has_ko:
+            subtitles = translate_subtitles_gemini(subtitles)
+        if req.note_id:
+            update_note_subtitles(req.note_id, subtitles)
+
+    return {
+        "success": True,
+        "language": lang,
+        "subtitles": subtitles
+    }
+
+@app.post("/api/subtitles/translate-stream")
+async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Request):
+    """
+    자막을 배치 단위로 번역하며 실시간 진행 상황 및 로그 이벤트를 SSE로 스트리밍합니다.
+    클라이언트가 연결을 끊으면 번역 작업을 즉각 중단합니다.
+    """
+    subtitles = req.subtitles or []
+    
+    # 전달받은 자막이 비어있는 경우 note_id나 video_id/url로 자막 복구
+    if not subtitles and req.note_id:
+        note_data = get_note(req.note_id)
+        if note_data and note_data.get("metadata", {}).get("subtitles"):
+            subtitles = note_data["metadata"]["subtitles"]
+
+    if not subtitles:
+        v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
+        if v_id:
+            res = get_video_transcript(v_id)
+            if res.get("success"):
+                subtitles = res.get("subtitles", [])
+
+    is_cancelled = False
+    def check_cancelled():
+        nonlocal is_cancelled
+        return is_cancelled
+
+    async def event_generator():
+        nonlocal is_cancelled
+        last_subtitles = None
+        for event in translate_subtitles_stream(subtitles, is_cancelled_callback=check_cancelled):
+            if await request.is_disconnected():
+                is_cancelled = True
+                break
+            if event.get("type") in ["complete", "cancelled"]:
+                last_subtitles = event.get("subtitles")
+                if req.note_id and last_subtitles:
+                    try:
+                        update_note_subtitles(req.note_id, last_subtitles)
+                    except Exception:
+                        pass
+            yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
+
+@app.post("/api/subtitles/download")
+def download_subtitles(req: SubtitleDownloadRequest):
+    """
+    자막 목록을 지정된 언어 및 포맷(.srt 또는 .txt)으로 변환하여 반환
+    """
+    if not req.subtitles:
+        raise HTTPException(status_code=400, detail="다운로드할 자막 데이터가 없습니다.")
+
+    fmt = req.format.lower() if req.format else "srt"
+    mode = req.lang_mode.lower() if req.lang_mode else "original"
+    subtitles = req.subtitles
+    
+    if mode in ["ko", "bilingual"]:
+        has_ko = any(s.get("ko_text") for s in subtitles[:5])
+        if not has_ko:
+            if req.auto_translate:
+                subtitles = translate_subtitles_gemini(subtitles)
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="한국어 번역이 아직 생성되지 않았습니다. 먼저 화면의 [한국어 번역 요청] 버튼을 눌러 번역을 완료해주세요."
+                )
+
+    if fmt == "txt":
+        content = convert_to_txt(subtitles, lang_mode=mode)
+        ext = "txt"
+    else:
+        content = convert_to_srt(subtitles, lang_mode=mode, sync_offset=float(req.sync_offset or 0.0))
+        ext = "srt"
+
+    safe_title = re.sub(r'[/\\?%*:|"<> ]+', '_', req.title or "subtitles").strip('_')
+    mode_tag = {"original": "원문", "ko": "한국어번역", "bilingual": "한영병기"}.get(mode, mode)
+    filename = f"{safe_title}_{mode_tag}.{ext}"
+
+    return {
+        "success": True,
+        "filename": filename,
+        "content": content,
+        "subtitles": subtitles
+    }
+
+@app.get("/api/notes")
+def get_notes():
+    return {"notes": list_saved_notes()}
+
+@app.get("/api/notes/{note_id}")
+def get_single_note(note_id: str):
+    note = get_note(note_id)
+    if not note:
+        raise HTTPException(status_code=404, detail="저장된 학습 노트를 찾을 수 없습니다.")
+    return note
+
+@app.put("/api/notes/{note_id}")
+def update_single_note(note_id: str, req: UpdateNoteRequest):
+    """사용자가 직접 편집한 마크다운을 저장"""
+    res = update_note(note_id, req.markdown)
+    if not res:
+        raise HTTPException(status_code=404, detail="수정할 노트를 찾을 수 없습니다.")
+    return {"success": True, "note": res}
+
+@app.delete("/api/notes/{note_id}")
+def remove_note(note_id: str):
+    success = delete_note(note_id)
+    return {"success": success}
+
+@app.post("/api/channel/videos")
+def channel_videos(req: ChannelRequest):
+    if not req.channel_url:
+        raise HTTPException(status_code=400, detail="채널 URL을 입력해주세요.")
+    videos = get_channel_videos(req.channel_url, max_results=req.max_results or 15)
+    return {"videos": videos}
+
+# ============================================================
+# 🎧 edge-tts 오디오북 엔드포인트
+# ============================================================
+@app.get("/api/tts/voices")
+def get_tts_voices():
+    """사용 가능한 한국어 신경망 음성 목록 반환"""
+    return {"voices": list_available_voices()}
+
+@app.post("/api/tts/generate")
+async def generate_tts_endpoint(req: TTSRequest):
+    """마크다운 노트를 자연스러운 한국어 오디오북 MP3로 생성/캐싱"""
+    text = req.markdown or ""
+    if not text.strip() and req.note_id:
+        note = get_note(req.note_id)
+        if note:
+            text = note.get("markdown", "")
+    if not text.strip():
+        raise HTTPException(status_code=400, detail="음성 변환할 노트 내용이 없습니다.")
+    
+    res = await generate_note_audio(
+        note_id=req.note_id or "temp_note",
+        markdown_text=text,
+        voice_key=req.voice or "injoon",
+        speed=req.speed or "+0%"
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "음성 변환 실패"))
+    return res
+
+@app.get("/api/tts/audio/{filename}")
+def get_tts_audio_file(filename: str):
+    """생성된 MP3 파일 스트리밍 서빙"""
+    safe_filename = os.path.basename(filename)
+    filepath = os.path.join(AUDIO_DIR, safe_filename)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail="오디오 파일을 찾을 수 없습니다.")
+    return FileResponse(filepath, media_type="audio/mpeg", filename=safe_filename)
+
+@app.post("/api/system/shutdown")
+def shutdown_app():
+    """웹 UI에서 안전하게 애플리케이션 종료"""
+    def _shutdown():
+        time.sleep(0.5)
+        os._exit(0)
+    threading.Thread(target=_shutdown, daemon=True).start()
+    return {"success": True, "message": "TubeScholar 서버가 종료됩니다."}
+
+# 프론트엔드 정적 파일 서빙
+FRONTEND_DIR = os.path.join(BUNDLE_DIR, "frontend")
+if not os.path.exists(FRONTEND_DIR) and getattr(sys, 'frozen', False):
+    FRONTEND_DIR = os.path.join(os.path.dirname(sys.executable), "frontend")
+
+if os.path.exists(FRONTEND_DIR):
+    app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+    @app.get("/")
+    def serve_index():
+        return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+    @app.get("/favicon.ico")
+    def serve_favicon():
+        fav_path = os.path.join(FRONTEND_DIR, "favicon.ico")
+        if os.path.exists(fav_path):
+            return FileResponse(fav_path, media_type="image/x-icon")
+        return JSONResponse(status_code=404, content={"detail": "Not found"})
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
