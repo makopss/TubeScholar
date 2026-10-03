@@ -66,9 +66,6 @@ def _mark_rate_limit_now():
     with _rate_lock:
         _last_translate_time = time.time()
 
-# 하위 호환성 유지용 기본값
-DEFAULT_GEMINI_MODEL = DEFAULT_NOTE_MODEL
-
 SYSTEM_PROMPT = """당신은 세계 최고 수준의 지식 아키텍트(Knowledge Architect), 교육 설계 전문가(Instructional Designer), 그리고 백과사전적 지식 큐레이터입니다.
 유튜브 영상의 자막(STT 추출 텍스트)과 메타데이터를 분석하여, 시청자가 영상을 보면서 깊이 있게 이해하고 평생 소장할 가치가 있는 '궁극의 마스터 지식 노트(Master Deep Learning Note)'를 작성합니다.
 
@@ -583,7 +580,12 @@ def generate_study_note_from_audio(
         }
     return {"success": False, "error": f"Gemini 음성 분석 실패: {last_error}"}
 
-def _build_translation_prompt(batch: List[Dict[str, Any]]) -> str:
+def _build_translation_prompt(
+    batch: List[Dict[str, Any]],
+    context_before: Optional[List[Dict[str, Any]]] = None,
+    context_after: Optional[List[Dict[str, Any]]] = None,
+    video_title: Optional[str] = None
+) -> str:
     batch_prompt_lines = []
     for idx, s in enumerate(batch):
         ts = s.get("timestamp")
@@ -594,9 +596,18 @@ def _build_translation_prompt(batch: List[Dict[str, Any]]) -> str:
         text = s.get('text', '').strip()
         batch_prompt_lines.append(f"{idx+1} {ts_str}|| {text}")
 
+    # 자동 자막은 문장 조각이므로 앞뒤 대사를 '참고용'으로 제공 (번호 없음 → 파서가 절대 집어가지 않음)
+    def _ctx(items: Optional[List[Dict[str, Any]]]) -> str:
+        return "\n".join(f"- {(c.get('text') or '').strip()}" for c in (items or []) if (c.get('text') or '').strip())
+
+    before_txt = _ctx(context_before)
+    after_txt = _ctx(context_after)
+    header = f"[영상 제목]: {video_title.strip()}\n\n" if video_title and video_title.strip() else ""
+
     return (
         "당신은 영상 자막 실시간 싱크(Timestamp Synchronization) 전문 번역가입니다.\n"
         "각 타임스탬프 번호는 영상에서 해당 초[분:초]에 화면에 출력되는 독립적인 자막 세그먼트입니다.\n\n"
+        + header +
         "[가장 중요한 핵심 규칙: 1:1 행별 엄격 매칭 & 번역 내용 밀림/앞당김 절대 금지]:\n"
         "1. 각 번호(N)의 번역은 **오직 그 번호(N)에 적힌 영어 텍스트 구절만** 번역해야 합니다.\n"
         "2. 영어가 문장 중간에서 끊겨 있더라도, **절대로 다음 번호의 문장을 앞당겨 합치거나, 현재 번호의 내용을 다음 번호로 미루지 마십시오.**\n"
@@ -611,9 +622,12 @@ def _build_translation_prompt(batch: List[Dict[str, Any]]) -> str:
         "   1 || 흥미로운 각도네요. 보지 못했던 건데. (뒤의 'I wrote...'를 누락하고 다음 번호로 미루는 행위 금지!)\n"
         "   2 || 저는 완전히 새로운 공상과학 소설을 썼습니다... (앞 번호의 내용을 받아 뒤로 밀려 전체 자막 싱크가 망가짐!)\n\n"
         f"4. 1번부터 {len(batch)}번까지 단 하나의 번호도 건너뛰지 말고 빠짐없이 번역하십시오.\n"
-        "5. 출력 형식: 반드시 각 행마다 '번호 || 한국어번역' 형식으로만 출력하십시오. (부연설명 금지)\n\n"
-        "[번역 대상 자막]:\n"
+        "5. 출력 형식: 반드시 각 행마다 '번호 || 한국어번역' 형식으로만 출력하십시오. (부연설명 금지)\n"
+        "6. [앞 문맥]/[뒤 문맥]은 문장 흐름과 용어를 파악하기 위한 참고 자료일 뿐입니다. 절대 번역하거나 출력에 포함하지 마십시오.\n\n"
+        + (f"[앞 문맥 (참고용, 번역 금지)]:\n{before_txt}\n\n" if before_txt else "")
+        + "[번역 대상 자막]:\n"
         + "\n".join(batch_prompt_lines)
+        + (f"\n\n[뒤 문맥 (참고용, 번역 금지)]:\n{after_txt}" if after_txt else "")
     )
 
 def _parse_translation_response(raw_text: str, batch_len: int) -> Dict[int, str]:
@@ -640,33 +654,65 @@ def _parse_translation_response(raw_text: str, batch_len: int) -> Dict[int, str]
                 ko_map[idx] = val
     return ko_map
 
+class TranslationFatalError(Exception):
+    """API 키 오류/권한 거부 등 재시도해도 소용없는 오류 (즉시 중단)."""
+
+
+def _is_fatal_api_error(msg: str) -> bool:
+    m = msg or ""
+    return any(kw in m for kw in [
+        "API_KEY_INVALID", "API key not valid", "PERMISSION_DENIED",
+        "UNAUTHENTICATED", "API key expired"
+    ])
+
+
+CONTEXT_BEFORE = 3  # 배치 앞쪽 참고 대사 수
+CONTEXT_AFTER = 2   # 배치 뒤쪽 참고 대사 수
+
+
 def _translate_batch_with_recovery(
     client: genai.Client,
     batch: List[Dict[str, Any]],
-    models_to_try: List[str]
+    models_to_try: List[str],
+    context_before: Optional[List[Dict[str, Any]]] = None,
+    context_after: Optional[List[Dict[str, Any]]] = None,
+    video_title: Optional[str] = None
 ) -> Tuple[Dict[int, str], str, Optional[str]]:
     """
     배치 단위(35개 권장) 번역을 수행하고, 일부 라인이 누락되었을 경우
     누락된 라인만 마이크로 배치로 즉각 재요청하여 100% 완전 번역을 보장합니다.
-    성공 시 (ko_map, used_model_name, None), 실패 시 ({}, "", last_error) 반환.
+    모델별 부분 결과는 버리지 않고 합쳐서(먼저 성공한 모델 우선) 최선의 결과를 반환합니다.
+    반환: (ko_map, used_model_name, last_error) — ko_map 이 일부만 채워졌을 수 있음.
+    API 키 오류 등 치명적 오류는 TranslationFatalError 로 즉시 전파합니다.
     """
     last_err = None
+    best_map: Dict[int, str] = {}
+    used_models: List[str] = []
     for model_name in models_to_try:
         try:
             # 5.0초 간격 보장 (Gemini Free Tier 15 RPM 한도 완벽 보호: 분당 최대 12회)
             _wait_for_rate_limit()
 
-            prompt = _build_translation_prompt(batch)
+            # 이미 확보한 줄은 다시 요청하지 않음 (이전 모델의 부분 결과 재활용)
+            pending = [i for i in range(len(batch)) if i not in best_map]
+            if len(pending) == len(batch):
+                prompt = _build_translation_prompt(batch, context_before, context_after, video_title)
+            else:
+                prompt = _build_translation_prompt([batch[i] for i in pending], context_before, context_after, video_title)
             resp = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
                 config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=8192)
             )
-            raw_text = resp.text or ""
-            ko_map = _parse_translation_response(raw_text, len(batch))
+            raw_map = _parse_translation_response(resp.text or "", len(pending))
+            ko_map = {pending[k]: v for k, v in raw_map.items()}
+            if ko_map:
+                used_models.append(model_name)
+            for k, v in ko_map.items():
+                best_map.setdefault(k, v)
 
             # 누락된 대사 인덱스 확인
-            missing_indices = [i for i in range(len(batch)) if i not in ko_map]
+            missing_indices = [i for i in range(len(batch)) if i not in best_map]
 
             # 누락 대사가 일부 발생한 경우, 누락된 항목만 즉각 마이크로 재요청하여 100% 보충
             if missing_indices and len(missing_indices) <= int(len(batch) * 0.6):
@@ -674,7 +720,7 @@ def _translate_batch_with_recovery(
                     # 마이크로 보충 요청 전에도 5.0초 안전 간격 유지
                     _wait_for_rate_limit()
                     missing_items = [batch[i] for i in missing_indices]
-                    m_prompt = _build_translation_prompt(missing_items)
+                    m_prompt = _build_translation_prompt(missing_items, context_before, context_after, video_title)
                     m_resp = client.models.generate_content(
                         model=model_name,
                         contents=m_prompt,
@@ -683,18 +729,23 @@ def _translate_batch_with_recovery(
                     m_map = _parse_translation_response(m_resp.text or "", len(missing_items))
                     for m_i, orig_i in enumerate(missing_indices):
                         if m_i in m_map:
-                            ko_map[orig_i] = m_map[m_i]
-                except Exception:
-                    pass
+                            best_map.setdefault(orig_i, m_map[m_i])
+                except Exception as me:
+                    if _is_fatal_api_error(str(me)):
+                        raise TranslationFatalError(str(me))
 
             # 누락 대사가 남아있다면 다음 모델로 재시도하여 100% 번역 추구
-            if len(ko_map) < len(batch):
-                raise ValueError(f"자막 일부 미번역 ({len(ko_map)}/{len(batch)}개만 파싱됨, 다음 모델 시도)")
+            if len(best_map) < len(batch):
+                raise ValueError(f"자막 일부 미번역 ({len(best_map)}/{len(batch)}개만 파싱됨, 다음 모델 시도)")
 
-            return ko_map, model_name, None
+            return best_map, "+".join(dict.fromkeys(used_models)) or model_name, None
 
+        except TranslationFatalError:
+            raise
         except Exception as e:
             last_err = str(e)
+            if _is_fatal_api_error(last_err):
+                raise TranslationFatalError(last_err)
             if "429" in last_err or "RESOURCE_EXHAUSTED" in last_err:
                 time.sleep(8.0)
                 _mark_rate_limit_now()
@@ -702,16 +753,23 @@ def _translate_batch_with_recovery(
                 time.sleep(2.0)
             continue
 
-    return {}, "", last_err
+    return best_map, "+".join(dict.fromkeys(used_models)), last_err
+
+
+def _batch_context(items: List[Dict[str, Any]], start_i: int, end_i: int):
+    return items[max(0, start_i - CONTEXT_BEFORE):start_i], items[end_i:end_i + CONTEXT_AFTER]
+
 
 def translate_subtitles_gemini(
     subtitles: List[Dict[str, Any]],
     target_lang: str = "ko",
-    api_key: Optional[str] = None
+    api_key: Optional[str] = None,
+    video_title: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
     자막 목록(원문)을 Gemini를 이용해 한국어로 고속 번역하고,
     각 자막 객체에 'ko_text' 필드를 추가하여 반환합니다.
+    (번역에 실패한 줄은 ko_text 를 비워 두며, 화면/내보내기에서 원문으로 대체 표시됩니다)
     """
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key or not subtitles:
@@ -724,14 +782,17 @@ def translate_subtitles_gemini(
     models_to_try = [DEFAULT_TRANSLATE_MODEL] + [m for m in FALLBACK_TRANSLATE_MODELS if m != DEFAULT_TRANSLATE_MODEL]
 
     for start_i in range(0, len(translated_subtitles), batch_size):
-        batch = translated_subtitles[start_i:start_i + batch_size]
-        ko_map, _, _ = _translate_batch_with_recovery(client, batch, models_to_try)
+        end_i = start_i + batch_size
+        batch = translated_subtitles[start_i:end_i]
+        ctx_b, ctx_a = _batch_context(translated_subtitles, start_i, end_i)
+        try:
+            ko_map, _, _ = _translate_batch_with_recovery(client, batch, models_to_try, ctx_b, ctx_a, video_title)
+        except TranslationFatalError:
+            break
 
         for idx, item in enumerate(batch):
             if idx in ko_map:
                 item["ko_text"] = ko_map[idx]
-            elif not item.get("ko_text"):
-                item["ko_text"] = item.get("text", "")
 
     return translated_subtitles
 
@@ -739,7 +800,8 @@ def translate_subtitles_stream(
     subtitles: List[Dict[str, Any]],
     target_lang: str = "ko",
     api_key: Optional[str] = None,
-    is_cancelled_callback: Optional[Any] = None
+    is_cancelled_callback: Optional[Any] = None,
+    video_title: Optional[str] = None
 ):
     """
     자막 목록을 Gemini를 이용해 배치 단위로 번역하면서
@@ -808,7 +870,22 @@ def translate_subtitles_stream(
             "message": f"[{b_idx + 1}/{total_batches}] {start_num}~{end_num}번 대사 번역 요청 중... ({DEFAULT_TRANSLATE_MODEL})"
         }
 
-        ko_map, used_model_name, last_err = _translate_batch_with_recovery(client, batch, models_to_try)
+        ctx_b, ctx_a = _batch_context(translated_subtitles, start_i, start_i + batch_size)
+        try:
+            ko_map, used_model_name, last_err = _translate_batch_with_recovery(
+                client, batch, models_to_try, ctx_b, ctx_a, video_title
+            )
+        except TranslationFatalError as fe:
+            yield {
+                "type": "error",
+                "message": f"Gemini API 키/권한 오류로 번역을 중단합니다. [⚙️ 설정]에서 API 키를 확인해주세요. ({str(fe)[:120]})"
+            }
+            return
+
+        # 번역 실패 줄은 ko_text 를 비워 둠 → 화면은 원문 + '번역 대기' 표시, 재번역 시 다시 시도됨
+        for idx, item in enumerate(batch):
+            if idx in ko_map:
+                item["ko_text"] = ko_map[idx]
 
         if not ko_map:
             yield {
@@ -816,21 +893,14 @@ def translate_subtitles_stream(
                 "level": "warn",
                 "message": f"[{b_idx + 1}/{total_batches}] 번역 재시도 실패: {str(last_err)[:80]}... (원문 유지)"
             }
-            for item in batch:
-                if not item.get("ko_text"):
-                    item["ko_text"] = item.get("text", "")
         else:
-            for idx, item in enumerate(batch):
-                if idx in ko_map:
-                    item["ko_text"] = ko_map[idx]
-                elif not item.get("ko_text"):
-                    item["ko_text"] = item.get("text", "")
-
             parsed_cnt = len(ko_map)
+            level = "info" if parsed_cnt == len(batch) else "warn"
+            mark = "✓" if parsed_cnt == len(batch) else "(일부 원문 유지)"
             yield {
                 "type": "log",
-                "level": "info",
-                "message": f"[{b_idx + 1}/{total_batches}] {start_num}~{end_num}번 대사 번역 완료 ({parsed_cnt}/{len(batch)}개, {used_model_name}) ✓"
+                "level": level,
+                "message": f"[{b_idx + 1}/{total_batches}] {start_num}~{end_num}번 대사 번역 완료 ({parsed_cnt}/{len(batch)}개, {used_model_name}) {mark}"
             }
 
     yield {

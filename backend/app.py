@@ -123,6 +123,7 @@ class SubtitlesRequest(BaseModel):
     translate_ko: Optional[bool] = False
     subtitles: Optional[List[Dict[str, Any]]] = None
     note_id: Optional[str] = None
+    title: Optional[str] = None  # 번역 프롬프트 문맥용 영상 제목
 
 class SubtitleDownloadRequest(BaseModel):
     subtitles: List[Dict[str, Any]]
@@ -456,7 +457,7 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
     if req.translate_ko and subtitles:
         has_ko = any(s.get("ko_text") for s in subtitles[:5])
         if not has_ko:
-            subtitles = translate_subtitles_gemini(subtitles)
+            subtitles = translate_subtitles_gemini(subtitles, video_title=req.title)
         if req.note_id:
             update_note_subtitles(req.note_id, subtitles)
 
@@ -496,7 +497,7 @@ async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Re
         nonlocal is_cancelled
         # 번역(Gemini 호출 + 속도 제한 대기)은 블로킹 작업이므로 작업 스레드에서 실행
         # → 번역 중에도 노트 목록/오디오북/종료 등 다른 요청이 멈추지 않음
-        gen = translate_subtitles_stream(subtitles, is_cancelled_callback=check_cancelled)
+        gen = translate_subtitles_stream(subtitles, is_cancelled_callback=check_cancelled, video_title=req.title)
         try:
             async for event in iterate_in_threadpool(gen):
                 if await request.is_disconnected():
@@ -539,7 +540,7 @@ def download_subtitles(req: SubtitleDownloadRequest):
         has_ko = any(s.get("ko_text") for s in subtitles[:5])
         if not has_ko:
             if req.auto_translate:
-                subtitles = translate_subtitles_gemini(subtitles)
+                subtitles = translate_subtitles_gemini(subtitles, video_title=req.title)
             else:
                 raise HTTPException(
                     status_code=400,

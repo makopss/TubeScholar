@@ -318,54 +318,49 @@ def get_channel_videos(channel_url: str, max_results: int = 15) -> List[Dict[str
 def parse_srt_vtt_text(sub_text: str) -> Dict[str, Any]:
     """로컬 SRT 또는 VTT 자막 텍스트를 분석하여 타임스탬프 청크로 변환합니다."""
     lines = sub_text.replace('\r\n', '\n').split('\n')
-    time_pattern = re.compile(r'(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{1,2}):(\d{2}):(\d{2})[,.](\d{3})')
-    time_short_pattern = re.compile(r'(\d{2}):(\d{2})[,.](\d{3})\s*-->\s*(\d{2}):(\d{2})[,.](\d{3})')
+    # HH:MM:SS,mmm 또는 MM:SS.mmm (VTT 단축형) 모두 허용, 밀리초·종료 시각까지 보존
+    ts = r'(?:(\d{1,2}):)?(\d{1,2}):(\d{2})[,.](\d{1,3})'
+    cue_pattern = re.compile(ts + r'\s*-->\s*' + ts)
+
+    def _secs(h, mi, s, ms) -> float:
+        return int(h or 0) * 3600 + int(mi) * 60 + int(s) + int(ms.ljust(3, '0')) / 1000.0
 
     chunks = []
     current_start = 0.0
+    current_end: Optional[float] = None
     current_texts = []
-    
+
+    def _flush():
+        if current_texts:
+            item = {
+                "start": round(current_start, 3),
+                "timestamp": format_timestamp(current_start),
+                "text": " ".join(current_texts)
+            }
+            if current_end is not None and current_end > current_start:
+                item["end"] = round(current_end, 3)
+                item["duration"] = round(current_end - current_start, 3)
+            chunks.append(item)
+
     for line in lines:
         line = line.strip()
         if not line or line.isdigit() or line.startswith('WEBVTT') or line.startswith('NOTE'):
             continue
-        
-        m = time_pattern.search(line)
+
+        m = cue_pattern.search(line)
         if m:
-            if current_texts:
-                chunks.append({
-                    "start": current_start,
-                    "timestamp": format_timestamp(current_start),
-                    "text": " ".join(current_texts)
-                })
-                current_texts = []
-            h, mi, s = int(m.group(1)), int(m.group(2)), int(m.group(3))
-            current_start = h * 3600 + mi * 60 + s
-            continue
-            
-        m2 = time_short_pattern.search(line)
-        if m2:
-            if current_texts:
-                chunks.append({
-                    "start": current_start,
-                    "timestamp": format_timestamp(current_start),
-                    "text": " ".join(current_texts)
-                })
-                current_texts = []
-            mi, s = int(m2.group(1)), int(m2.group(2))
-            current_start = mi * 60 + s
+            _flush()
+            current_texts = []
+            g = m.groups()
+            current_start = _secs(g[0], g[1], g[2], g[3])
+            current_end = _secs(g[4], g[5], g[6], g[7])
             continue
 
         clean_text = re.sub(r'<[^>]+>', '', line)
         if clean_text:
             current_texts.append(clean_text)
 
-    if current_texts:
-        chunks.append({
-            "start": current_start,
-            "timestamp": format_timestamp(current_start),
-            "text": " ".join(current_texts)
-        })
+    _flush()
 
     # 35초 단위로 병합
     merged_chunks = []

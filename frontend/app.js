@@ -502,7 +502,8 @@ async function requestKoreanTranslation(force = false) {
         subtitles: currentSubtitles,
         translate_ko: true,
         note_id: currentNoteId,
-        video_id: currentVideoId
+        video_id: currentVideoId,
+        title: currentVideoInfo?.title || ""
       })
     });
 
