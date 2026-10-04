@@ -3115,6 +3115,19 @@ function initZenModeEvents() {
       }
     });
   }
+
+  // 브라우저 탭 활성 생존 신호 (브라우저 창을 닫았을 때 백그라운드 프로세스가 자동 종료되도록 함)
+  function initHeartbeat() {
+    const ping = () => {
+      fetch("/api/system/heartbeat", { method: "POST" }).catch(() => {});
+    };
+    setInterval(ping, 5000);
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) ping();
+    });
+    ping();
+  }
+  initHeartbeat();
 }
 
 

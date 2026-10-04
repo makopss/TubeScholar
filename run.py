@@ -48,11 +48,42 @@ elif sys.platform == "win32":
     except Exception:
         pass
 
+import urllib.request
+
+def check_already_running(port=8000):
+    """서버가 이미 다른 프로세스에서 구동 중인지 확인"""
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/notes", headers={"x-tubescholar": "1"})
+        with urllib.request.urlopen(req, timeout=1.0) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
 def open_browser():
     time.sleep(1.2)
     webbrowser.open("http://127.0.0.1:8000")
 
+def heartbeat_watchdog():
+    """브라우저가 모두 닫혀 하트비트가 일정 시간 이상 끊기면 백그라운드 프로세스 자동 종료"""
+    # 최초 기동 시 브라우저가 열리고 첫 신호를 보낼 때까지 충분한 여유(35초) 제공
+    time.sleep(35)
+    while True:
+        time.sleep(5)
+        try:
+            import app as app_module
+            last_hb = getattr(app_module, "_last_heartbeat", time.time())
+            if time.time() - last_hb > 25:
+                # 25초 이상 브라우저 탭으로부터 신호가 없으면 사용자 브라우저 종료로 간주하고 안전 종료
+                os._exit(0)
+        except Exception:
+            pass
+
 if __name__ == "__main__":
+    # 이미 백그라운드에서 TubeScholar 서버가 실행 중이면 브라우저 창만 새로 띄우고 즉시 종료
+    if check_already_running(8000):
+        webbrowser.open("http://127.0.0.1:8000")
+        sys.exit(0)
+
     if getattr(sys, 'frozen', False):
         base_dir = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
     else:
@@ -73,6 +104,9 @@ if __name__ == "__main__":
 
     # 브라우저 자동 실행 쓰레드
     threading.Thread(target=open_browser, daemon=True).start()
+
+    # 브라우저 종료 감지 워치독 쓰레드
+    threading.Thread(target=heartbeat_watchdog, daemon=True).start()
 
     # FastAPI 서버 구동
     uvicorn.run(app, host="127.0.0.1", port=8000, reload=False, log_level="info")

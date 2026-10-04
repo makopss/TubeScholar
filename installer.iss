@@ -39,6 +39,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=app_icon.ico
 UninstallDisplayIcon={app}\app_icon.ico
 ChangesAssociations=yes
+CloseApplications=no
 
 [Languages]
 Name: "korean"; MessagesFile: "compiler:Languages\Korean.isl"
@@ -58,3 +59,34 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// 설치 시작 전 실행 중인 TubeScholar.exe 자동 강제 종료
+function InitializeSetup(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM TubeScholar.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(300);
+  Result := True;
+end;
+
+// 설치 준비 단계(파일 복사 직전)에서도 확실히 종료
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM TubeScholar.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(300);
+  Result := '';
+end;
+
+// 프로그램 삭제(Uninstall) 시에도 실행 중인 프로세스 먼저 종료
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Exec('taskkill.exe', '/F /IM TubeScholar.exe /T', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Sleep(300);
+  Result := True;
+end;

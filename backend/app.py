@@ -751,6 +751,15 @@ def get_tts_audio_file(filename: str):
         raise HTTPException(status_code=404, detail="오디오 파일을 찾을 수 없습니다.")
     return FileResponse(filepath, media_type="audio/mpeg", filename=safe_filename)
 
+_last_heartbeat = time.time()
+
+@app.post("/api/system/heartbeat")
+def system_heartbeat():
+    """브라우저 활성 생존 신호 수신 (브라우저 창 종료 감지용)"""
+    global _last_heartbeat
+    _last_heartbeat = time.time()
+    return {"status": "ok"}
+
 @app.post("/api/system/shutdown")
 def shutdown_app():
     """웹 UI에서 안전하게 애플리케이션 종료"""
