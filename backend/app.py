@@ -116,10 +116,12 @@ class LocalAnalyzeRequest(BaseModel):
     title: str
     subtitle_text: str
     engine: Optional[str] = "gemini"
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG
 
 class LocalPromptRequest(BaseModel):
     title: str
     subtitle_text: str
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG
 
 class PromptRequest(BaseModel):
     url: str
@@ -264,15 +266,16 @@ def get_prompt_for_ai(req: PromptRequest):
     if not video_id:
         raise HTTPException(status_code=400, detail="유효한 유튜브 영상 URL이 아닙니다.")
     
+    target = normalize_target_lang(req.target_lang)
     video_info = get_video_info(video_id)
     transcript_result = get_video_transcript(
-        video_id, source_lang=req.source_lang, target_lang=req.target_lang,
+        video_id, source_lang=req.source_lang, target_lang=target,
         ytdlp_lang=video_info.get("language")
     )
     if not transcript_result.get("success"):
         raise HTTPException(status_code=400, detail=transcript_result.get("error"))
 
-    prompt_text = generate_clipboard_prompt(video_info, transcript_result)
+    prompt_text = generate_clipboard_prompt(video_info, transcript_result, target_lang=target)
     return {
         "success": True,
         "video_info": video_info,
@@ -286,6 +289,7 @@ def get_prompt_for_ai(req: PromptRequest):
 def get_local_prompt_for_ai(req: LocalPromptRequest):
     """로컬 자막 파일로부터 ChatGPT/Claude 복사용 프롬프트 생성"""
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    target = normalize_target_lang(req.target_lang)
     video_info = {
         "video_id": f"local_{int(time.time())}",
         "title": req.title or "로컬 비디오",
@@ -293,7 +297,7 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
         "video_type": "local",
         "duration_str": "로컬 파일"
     }
-    prompt_text = generate_clipboard_prompt(video_info, transcript_result)
+    prompt_text = generate_clipboard_prompt(video_info, transcript_result, target_lang=target)
     return {
         "success": True,
         "video_info": video_info,
@@ -304,6 +308,7 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
 def analyze_local_video(req: LocalAnalyzeRequest):
     """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    target = normalize_target_lang(req.target_lang)
     video_info = {
         "video_id": f"local_{int(time.time())}",
         "title": req.title or "로컬 비디오",
@@ -314,7 +319,8 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     
     llm_result = generate_study_note_gemini(
         video_info=video_info,
-        transcript_data=transcript_result
+        transcript_data=transcript_result,
+        target_lang=target
     )
 
     if not llm_result.get("success"):
@@ -477,9 +483,11 @@ def analyze_video(req: AnalyzeRequest):
     video_info = get_video_info(video_id)
     video_info["video_type"] = "youtube"
 
+    target = normalize_target_lang(req.target_lang)
+
     # 2. 자막 추출 (원문 = 실제 발화 언어, 번역 언어의 공식 자막이 있으면 함께 정렬)
     transcript_result = get_video_transcript(
-        video_id, source_lang=req.source_lang, target_lang=req.target_lang,
+        video_id, source_lang=req.source_lang, target_lang=target,
         ytdlp_lang=video_info.get("language")
     )
     if not transcript_result.get("success"):
@@ -493,7 +501,8 @@ def analyze_video(req: AnalyzeRequest):
         video_info=video_info,
         transcript_data=transcript_result,
         api_key=req.api_key,
-        model_name=req.gemini_model or DEFAULT_NOTE_MODEL
+        model_name=req.gemini_model or DEFAULT_NOTE_MODEL,
+        target_lang=target
     )
 
     if not llm_result.get("success"):
@@ -734,9 +743,9 @@ def channel_videos(req: ChannelRequest):
 # 🎧 edge-tts 오디오북 엔드포인트
 # ============================================================
 @app.get("/api/tts/voices")
-def get_tts_voices():
-    """사용 가능한 한국어 신경망 음성 목록 반환"""
-    return {"voices": list_available_voices()}
+def get_tts_voices(lang: Optional[str] = None):
+    """사용 가능한 신경망 음성 목록 반환 (언어별 필터링 지원)"""
+    return {"voices": list_available_voices(lang=lang)}
 
 @app.post("/api/tts/generate")
 async def generate_tts_endpoint(req: TTSRequest):

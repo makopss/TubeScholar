@@ -16,6 +16,8 @@
   <!-- Tailwind CSS (로컬 정적 빌드: npm run build:css / 설정은 tailwind.config.js)
        기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에 둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
+  <!-- i18n 다국어 지원 시스템 (ko, en, ja) -->
+  <script src="/static/i18n.js?v=1.0.0"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -25,7 +27,7 @@
       <img src="/static/icon.png" class="w-10 h-10 rounded-xl shadow-lg shadow-sky-500/30 object-cover flex-shrink-0 border border-sky-500/30" alt="TubeScholar Logo">
       <div>
         <h1 class="text-lg font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">TubeScholar</h1>
-        <p class="text-[11px] text-slate-400 hidden sm:block">유튜브 & 로컬 비디오 LLM 심층 학습기</p>
+        <p class="text-[11px] text-slate-400 hidden sm:block" data-i18n="brand_subtitle">유튜브 & 로컬 비디오 LLM 심층 학습기</p>
       </div>
     </div>
 
@@ -40,14 +42,14 @@
             id="tab-gemini" 
             class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow"
           >
-            <span>⚡ Gemini 자동 분석</span>
+            <span data-i18n="tab_gemini">⚡ Gemini 자동 분석</span>
           </button>
           <button 
             type="button" 
             id="tab-subscription" 
             class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white"
           >
-            <span>📋 구독 AI 연동</span>
+            <span data-i18n="tab_subscription">📋 구독 AI 연동</span>
           </button>
         </div>
 
@@ -57,6 +59,7 @@
             type="text" 
             id="url-input"
             placeholder="유튜브 영상 URL 또는 채널 URL 입력..." 
+            data-i18n-placeholder="url_placeholder"
             class="w-full pl-9 pr-32 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition shadow-inner placeholder-slate-500 text-white"
           />
           <svg class="w-4 h-4 absolute left-3 top-2.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -69,15 +72,16 @@
               id="header-cancel-btn"
               class="hidden px-2.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 animate-pulse"
               title="분석 중단하기"
+              data-i18n-title="btn_cancel"
             >
-              <span>⏹️ 중단</span>
+              <span data-i18n="btn_cancel">⏹️ 중단</span>
             </button>
             <button 
               type="submit" 
               id="submit-btn"
               class="px-3.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95"
             >
-              <span id="submit-btn-text">⚡ 분석 및 생성</span>
+              <span id="submit-btn-text" data-i18n="btn_analyze">⚡ 분석 및 생성</span>
             </button>
           </div>
         </div>
@@ -90,44 +94,60 @@
       <button 
         id="local-file-btn" 
         title="내 PC 로컬 영상 및 자막 열기" 
+        data-i18n-title="btn_local_video_title"
         class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-amber-300 flex items-center space-x-1 transition"
       >
         <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
         </svg>
-        <span class="hidden md:inline">로컬 영상</span>
+        <span class="hidden md:inline" data-i18n="btn_local_video">로컬 영상</span>
       </button>
 
       <!-- 채널 탐색 모달 버튼 -->
       <button 
         id="channel-btn" 
         title="채널 영상 탐색" 
+        data-i18n-title="btn_channel_title"
         class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 flex items-center space-x-1 transition"
       >
         <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
         </svg>
-        <span class="hidden md:inline">채널 탐색</span>
+        <span class="hidden md:inline" data-i18n="btn_channel">채널 탐색</span>
       </button>
 
       <!-- 보관함 열기 버튼 -->
       <button 
         id="library-toggle-btn" 
         title="저장된 학습 보관함" 
+        data-i18n-title="btn_library_title"
         class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 flex items-center space-x-1 transition relative"
       >
         <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path>
         </svg>
-        <span class="hidden md:inline">보관함</span>
+        <span class="hidden md:inline" data-i18n="btn_library">보관함</span>
         <span id="library-count-badge" class="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold">0</span>
       </button>
 
+      <!-- UI 언어 선택 드롭다운 -->
+      <div class="relative">
+        <select 
+          id="ui-lang-select" 
+          title="UI 언어 변경 / Switch UI Language / 言語切替" 
+          class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-sky-500 cursor-pointer font-medium transition"
+        >
+          <option value="ko">🇰🇷 한국어</option>
+          <option value="en">🇺🇸 English</option>
+          <option value="ja">🇯🇵 日本語</option>
+        </select>
+      </div>
 
       <!-- 설정 버튼 -->
       <button 
         id="settings-btn" 
         title="Gemini 무료 API 키 설정" 
+        data-i18n-title="btn_settings_title"
         class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-400 hover:text-white transition"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -140,6 +160,7 @@
       <button 
         id="shutdown-btn" 
         title="TubeScholar 프로그램 종료" 
+        data-i18n-title="btn_shutdown_title"
         class="p-2 bg-slate-800 hover:bg-rose-900/60 border border-slate-700 hover:border-rose-700 rounded-lg text-slate-400 hover:text-rose-300 transition"
       >
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

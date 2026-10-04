@@ -17,20 +17,108 @@ AUDIO_DIR = os.path.join(DATA_DIR, "audio")
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 VOICES = {
+    # 한국어 (Korean)
     'injoon': {
-        'name': '인준 (차분한 남성 다큐 톤)',
+        'name': '인준 (한국어 차분한 남성 다큐 톤)',
         'id': 'ko-KR-InJoonNeural',
-        'gender': 'male'
+        'gender': 'male',
+        'lang': 'ko'
     },
     'sunhi': {
-        'name': '선희 (명확하고 지적인 여성 톤)',
+        'name': '선희 (한국어 명확한 지적 여성 톤)',
         'id': 'ko-KR-SunHiNeural',
-        'gender': 'female'
+        'gender': 'female',
+        'lang': 'ko'
     },
     'hyunsu': {
-        'name': '현수 (다국어 지원 남성 톤)',
+        'name': '현수 (한국어 다국어 남성 톤)',
         'id': 'ko-KR-HyunsuMultilingualNeural',
-        'gender': 'male'
+        'gender': 'male',
+        'lang': 'ko'
+    },
+    # 영어 (English)
+    'christopher': {
+        'name': 'Christopher (US Warm & Authoritative Male)',
+        'id': 'en-US-ChristopherNeural',
+        'gender': 'male',
+        'lang': 'en'
+    },
+    'jenny': {
+        'name': 'Jenny (US Natural & Clear Female)',
+        'id': 'en-US-JennyNeural',
+        'gender': 'female',
+        'lang': 'en'
+    },
+    'guy': {
+        'name': 'Guy (US Friendly & Casual Male)',
+        'id': 'en-US-GuyNeural',
+        'gender': 'male',
+        'lang': 'en'
+    },
+    # 일본어 (Japanese)
+    'keita': {
+        'name': 'Keita / 啓太 (日本語 落ち着いた男性 語り)',
+        'id': 'ja-JP-KeitaNeural',
+        'gender': 'male',
+        'lang': 'ja'
+    },
+    'nanami': {
+        'name': 'Nanami / 七海 (日本語 知的で明瞭な女性)',
+        'id': 'ja-JP-NanamiNeural',
+        'gender': 'female',
+        'lang': 'ja'
+    },
+    # 중국어 (Chinese)
+    'yunxi': {
+        'name': 'Yunxi / 云希 (中文 男声 沉稳生动)',
+        'id': 'zh-CN-YunxiNeural',
+        'gender': 'male',
+        'lang': 'zh'
+    },
+    'xiaoxiao': {
+        'name': 'Xiaoxiao / 晓晓 (中文 女声 清晰自然)',
+        'id': 'zh-CN-XiaoxiaoNeural',
+        'gender': 'female',
+        'lang': 'zh'
+    },
+    # 스페인어 (Spanish)
+    'alvaro': {
+        'name': 'Alvaro (Español Voz Masculina)',
+        'id': 'es-ES-AlvaroNeural',
+        'gender': 'male',
+        'lang': 'es'
+    },
+    'elvira': {
+        'name': 'Elvira (Español Voz Femenina)',
+        'id': 'es-ES-ElviraNeural',
+        'gender': 'female',
+        'lang': 'es'
+    },
+    # 프랑스어 (French)
+    'henri': {
+        'name': 'Henri (Français Voix Masculine)',
+        'id': 'fr-FR-HenriNeural',
+        'gender': 'male',
+        'lang': 'fr'
+    },
+    'denise': {
+        'name': 'Denise (Français Voix Féminine)',
+        'id': 'fr-FR-DeniseNeural',
+        'gender': 'female',
+        'lang': 'fr'
+    },
+    # 독일어 (German)
+    'conrad': {
+        'name': 'Conrad (Deutsch Männliche Stimme)',
+        'id': 'de-DE-ConradNeural',
+        'gender': 'male',
+        'lang': 'de'
+    },
+    'katja': {
+        'name': 'Katja (Deutsch Weibliche Stimme)',
+        'id': 'de-DE-KatjaNeural',
+        'gender': 'female',
+        'lang': 'de'
     }
 }
 DEFAULT_VOICE = 'injoon'
@@ -91,7 +179,13 @@ def clean_markdown_for_tts(markdown_text: str, max_chars: int = 15000) -> str:
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
 
     if len(cleaned) > max_chars:
-        cleaned = cleaned[:max_chars] + '... 이상으로 주요 요약 청취를 마칩니다.'
+        # 다국어 요약 마무리 문구 처리
+        if re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', cleaned[:300]) and not re.search(r'[\uac00-\ud7a3]', cleaned[:300]):
+            cleaned = cleaned[:max_chars] + '... 以上で主要な要約の聴取を終了します。'
+        elif not re.search(r'[\uac00-\ud7a3]', cleaned[:300]):
+            cleaned = cleaned[:max_chars] + '... This concludes the audio summary.'
+        else:
+            cleaned = cleaned[:max_chars] + '... 이상으로 주요 요약 청취를 마칩니다.'
 
     return cleaned
 
@@ -153,8 +247,18 @@ async def generate_note_audio(
             'error': f'edge-tts 실행 실패: {str(e)}'
         }
 
-def list_available_voices() -> List[Dict[str, Any]]:
-    return [
-        {'key': k, 'name': v['name'], 'gender': v['gender']}
-        for k, v in VOICES.items()
-    ]
+def list_available_voices(lang: Optional[str] = None) -> List[Dict[str, Any]]:
+    voices_list = []
+    base_lang = (lang or "").split("-")[0].lower() if lang else None
+    for k, v in VOICES.items():
+        if base_lang and v.get('lang') != base_lang and 'multilingual' not in v['id'].lower():
+            continue
+        voices_list.append({
+            'key': k,
+            'name': v['name'],
+            'gender': v['gender'],
+            'lang': v.get('lang', 'ko')
+        })
+    if not voices_list and base_lang:
+        return list_available_voices(None)
+    return voices_list

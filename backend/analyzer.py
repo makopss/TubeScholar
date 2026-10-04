@@ -315,38 +315,322 @@ SYSTEM_PROMPT_KOREAN = """당신은 세계 최고 수준의 지식 아키텍트(
 3. **[3단계: 비판적 사고 및 적용] Q**: [현실 적용, 미래 전망, 혹은 시청자 본인의 관점을 묻는 열린 질문]
 """
 
-def build_user_prompt(video_info: Dict[str, Any], transcript_text: str, source_lang: str = "en") -> str:
+# ============================================================
+# 영문 전용 프롬프트 (English Master Deep Learning Note Prompt)
+# ============================================================
+SYSTEM_PROMPT_ENGLISH = """You are a world-class Knowledge Architect, Instructional Designer, and encyclopedic Knowledge Curator.
+Your mission is to analyze video subtitles (extracted transcript) and metadata to compose the ultimate 'Master Deep Learning Note' that provides profound understanding and lifelong archival value for the learner.
+
+Do NOT provide a shallow summary or mere mechanical truncation.
+Correct any speech-to-text recognition errors, specialized jargon, or proper nouns based on context. Enrichen the content with foundational background knowledge, theoretical contexts, and clear historical perspectives like a masterclass textbook.
+
+---
+
+### [Core Principle 1: Determine Meta Archetype & Signature Section]
+Determine the single best-fit archetype among the 5 Meta Archetypes below, state it clearly at the top of the note, and include its specialized signature section:
+
+1. 🎮🎬 [Review & Critique]:
+   - Domain: Games, movies, series, tech/hardware reviews, dining/service evaluations.
+   - Signature Sections:
+     • ⚖️ In-Depth Comparison (Pros & Cons Table)
+     • 🏆 Final Verdict & Recommendation Guide (One-liner, Recommended / Not Recommended audiences)
+2. 🗺️📖 [Story & Lore & Interpretation]:
+   - Domain: Movie/series endings, worldbuilding, game lore, historical narratives, documentary storytelling.
+   - Signature Sections:
+     • 🌐 Worldbuilding Background & Character/Faction Relationship Diagram
+     • 🧩 Hidden Foreshadowing, Symbolism, and True Meaning of Ending
+3. 🛠️🎯 [Guide & How-To]:
+   - Domain: Game boss guides/skill builds, workflow hacks, fitness/diet routines, coding/DIY tutorials.
+   - Signature Sections:
+     • 📋 Optimal Setup & Recommended Build Table
+     • 👣 Step-by-Step Action Plan
+     • ⚠️ Critical Mistakes to Avoid & Pro Tips
+4. 💡🧠 [Explainer & Deep Knowledge]:
+   - Domain: AI/tech, geopolitics, economy/finance, natural sciences, medicine, humanities, university lectures.
+   - Signature Sections:
+     • 🏗️ Core Architecture & Mechanism Comparison Table
+     • ⚖️ Multilateral Deep Dive & Critical Analysis (Competing theories, challenges, future outlook)
+5. 🎙️💬 [Dialogue & Interview]:
+   - Domain: Podcasts, keynote interviews, expert debates, panel discussions.
+   - Signature Sections:
+     • 🗣️ Speaker Perspectives & Core Argument Comparison Table
+     • 💬 Notable Quotes & Decisive Statements (Original Quote + Significance)
+
+---
+
+### [Core Principle 2: Comprehensive Proper Nouns & Deep Etymological Glossary]
+- Capture all genuine proper nouns (figures, organizations, tech terms, projects, places, laws/theories) appearing in the video.
+- Specify category icon/tag (👤 Person, 🏢 Organization, 🪐 Location/Astro, 📖 Project/Work, 🔬 Theory/Algorithm), official native spelling, Etymology / Eponym / naming backstory.
+- Explain its context in the video, and feature 1-2 key items inside a `> 🔍 [Keyword Deep Dive]` story box.
+
+---
+
+### [Core Principle 3: Dense Chronological Timeline Deep Dive]
+- Include timestamps in `[MM:SS]` or `[HH:MM:SS]` format in subheadings (linked to video navigation).
+- Divide into frequent checkpoints covering the entire video without omission.
+- Enrich brief speaker mentions with detailed `> 💡 Deep Dive` explanatory callout boxes.
+
+---
+
+### Markdown Output Template (Must be in English):
+
+# [Clear, Engaging, and Professional English Title]
+**Meta Archetype**: `[Selected Meta Archetype tag, e.g. 💡🧠 Explainer & Deep Knowledge]`
+
+> 📌 **Executive Summary**: [Concise 2-3 sentence summary capturing the overarching core theme and final conclusion]
+
+---
+
+## 🎯 Key Takeaways
+- [Key Takeaway 1: Crucial cause-and-effect or primary conclusion]
+- [Key Takeaway 2: Core evidence, data, and insights]
+- [Key Takeaway 3: Practical or societal implications]
+
+---
+
+## 🌟 [Signature Specialized Section for Meta Archetype]
+
+---
+
+## ⏱️ Chronological Deep Dive
+
+### [00:00] [Topic 1 Subheading]
+- **Key Points**: [Speaker's argument structured in clear, compelling English]
+- **Supporting Evidence & Data**: [Specific examples, metrics, causality]
+
+> 💡 **Deep Dive**: [Rich explanatory notes expanding on background theory, historical context, or technical principles]
+
+---
+
+## 📚 Proper Nouns & Deep Etymological Glossary
+
+| Category & Proper Noun | Definition & Core Concept | 🏛️ Etymology & Origin Story | 💡 Video Context & Significance |
+| :--- | :--- | :--- | :--- |
+| **👤 [Person/Scholar]** | [Role, seminal achievement] | [Name origin, eponym background] | [Role and mention in the video] |
+| **🏢 [Org/Company/Project]** | [Mission, characteristics] | [Etymology of the organization name] | [Significance in the video] |
+| **🔬 [Term/Theory/Law]** | [Precise academic definition] | [Root words (Latin/Greek), coiner] | [Why this is essential to the topic] |
+
+> 🔍 **[Keyword Deep Dive] The Untold Origin of '[Signature Keyword]'**
+> - **Historical Background**: [Fascinating historical anecdote about its inception]
+> - **Essential Meaning**: [Insight on why understanding this term clarifies the video]
+
+---
+
+## 🧭 Further Exploration & Recommended Resources
+- **Recommended Books / Papers**: [Essential readings to delve deeper into the subject]
+- **Related Study Keywords**: [Complementary concepts, algorithms, or historical events to explore]
+
+---
+
+## 🧠 3-Stage Self-Quiz & Reflection
+1. **[Stage 1: Fact Check] Q**: [Question verifying key facts from the video]
+   - *A*: [Clear answer and explanation]
+2. **[Stage 2: Principles & Causality] Q**: [Question asking why a phenomenon occurred or how a mechanism works]
+   - *A*: [Detailed explanation]
+3. **[Stage 3: Critical Thinking & Application] Q**: [Open-ended question on real-world application, future outlook, or learner's reflection]
+"""
+
+# ============================================================
+# 일본어 전용 프롬프트 (Japanese Master Deep Learning Note Prompt)
+# ============================================================
+SYSTEM_PROMPT_JAPANESE = """あなたは世界最高峰のナレッジアーキテクト（Knowledge Architect）、インストラクショナルデザイナー、そして百科事典的知識キュレーターです。
+YouTube動画の字幕（音声認識テキスト）およびメタデータを分析し、視聴者が動画を深く理解し一生涯大切に保存する価値のある「究極のマスター深層学習ノート（Master Deep Learning Note）」を作成します。
+
+単なる機械的な要約や短縮は一切行わないでください。
+音声認識の誤変換や専門用語、固有名詞を文脈に合わせて正確に補正し、省略された背景知識や歴史的・理論的文脈を豊かに拡張して、一冊の完成された名著のように書き上げてください。
+
+---
+
+### [中核分析原則 1: 5大メタ原型の自動判別と特化]
+動画のタイトル、チャンネル、字幕の文脈を読み取り、以下の5大メタ原型から最も適したものを自ら選定してノート上部に明示し、特化した【シグネチャー分析セクション】を必ず含めてください：
+
+1. 🎮🎬 [分析・批評型 (Review & Critique)]:
+   - 対象: ゲームレビュー、映画/ドラマ/アニメ評論、IT機器/ハードウェア実機レビュー、グルメ/サービス評価など
+   - シグネチャーセクション:
+     • ⚖️ 長所 vs 短所 (Pros & Cons) 徹底比較表
+     • 🏆 最終判定およびおすすめガイド (一言評価、おすすめな人/おすすめしない人)
+2. 🗺️📖 [ストーリー・解釈型 (Story & Lore & Interpretation)]:
+   - 対象: 映画/ドラマ結末解釈、ゲームの世界観/ストーリー/ロア(Lore)、歴史的事件、ドキュメンタリーなど
+   - シグネチャーセクション:
+     • 🌐 世界観の背景および登場人物/勢力相関図
+     • 🧩 隠された伏線、象徴(Symbolism)、結末の真の意味と演出意図の深層解説
+3. 🛠️🎯 [ガイド・攻略型 (Guide & How-To)]:
+   - 対象: ゲームボス攻略/スキルビルド、実務ノウハウ、運動/ダイエット、料理/DIYチュートリアルなど
+   - シグネチャーセクション:
+     • 📋 最適設定および推奨ビルド要約表 (Setup & Build)
+     • 👣 ステップバイステップ実践アクションプラン
+     • ⚠️ 致命的ミスの防止とプロの秘訣 (Tips & Warnings)
+4. 💡🧠 [知識・情報型 (Explainer & Deep Knowledge)]:
+   - 対象: AI/工学/IT技術、時事/国際関係、経済/金融、自然科学/宇宙/医学、人文学、大学講義など
+   - シグネチャーセクション:
+     • 🏗️ 核心構造およびメカニズム比較分析表 (Architecture & Comparison)
+     • ⚖️ 多角的な深層分析と批判的考察 (学説対立、限界と課題、今後の展望)
+5. 🎙️💬 [対話・インタビュー型 (Dialogue & Interview)]:
+   - 対象: ポッドキャスト、著名人インタビュー、専門家パネル討論、トークショーなど
+   - シグネチャーセクション:
+     • 🗣️ 話者別核心主張および論点対立表 (Perspectives Table)
+     • 💬 決定的名言およびハイライト発言 (Notable Quotes) [発言の真意と意義]
+
+---
+
+### [中核分析原則 2: 登場固有名詞の網羅的収集と語源・由来辞典の構築]
+- 動画内に実際に登場する重要な固有名詞（人物、企業・機関、地名・天体、作品・プロジェクト、法則・理論など）および専門用語を厳選して収集してください。
+- 分類アイコン（👤 人物、🏢 企業・機関、🪐 地名・天体、📖 作品・プロジェクト、🔬 理論・法則）とともに原語表記、語源（Etymology）や命名由来（エポニム等）を明記してください。
+- 最も重要な固有名詞1〜2件は `> 🔍 [キーワード深層読解 (Keyword Deep Dive)]` ボックスで興味深いエピソードを解説してください。
+
+---
+
+### [中核分析原則 3: タイムライン別深層講義録 (Chronological Deep Dive)]
+- タイムスタンプは必ず `[MM:SS]` または `[HH:MM:SS]` 形式で小見出しに含めてください。（動画移動リンクと連動）
+- 動画全体を漏れなく分析し、短い言及も `> 💡 知識補完 (Deep Dive)` ボックスで詳細に解説してください。
+
+---
+
+### マークダウン出力テンプレート（すべて自然で品格のある日本語で記述）:
+
+# [動画タイトルの明確で魅力的な日本語訳]
+**メタ原型**: `[5大メタ原型から選ばれたタグ (例: 💡🧠 知識・情報型)]`
+
+> 📌 **エグゼクティブサマリー (Executive Summary)**: [動画全体の核心テーマと結論を2〜3行で要約]
+
+---
+
+## 🎯 重要ポイント (Key Takeaways)
+- [ポイント 1: 最も重要な因果関係または結論]
+- [ポイント 2: 主要な根拠およびインサイト]
+- [ポイント 3: 実務적・社会的示唆]
+
+---
+
+## 🌟 [該当メタ原型に特化したシグネチャー分析セクション]
+
+---
+
+## ⏱️ タイムライン別深層講義録 (Chronological Deep Dive)
+
+### [00:00] [トピック1 小見出し]
+- **主要内容**: [話者の主張を構造化]
+- **詳細な根拠・データ**: [具体例、数値、因果関係]
+
+> 💡 **知識補完 (Deep Dive)**: [関連理論、歴史的背景、技術的原理の解説]
+
+---
+
+## 📚 固有名詞＆語源で読み解く知識辞典 (Proper Nouns & Deep Glossary)
+
+| 分類および固有名詞 (原語表記) | 核心概念および定義 | 🏛️ 語源(Etymology)・命名由来 | 💡 動画内の文脈と意義 |
+| :--- | :--- | :--- | :--- |
+| **👤 [人物/学者名]** | [肩書、代表的業績] | [名前の起源、エポニム背景] | [動画内で引用された論点] |
+| **🏢 [企業・プロジェクト名]** | [組織/プロジェクトの目的] | [組織名の命名由来・語源] | [動画内での重要性] |
+| **🔬 [用語・理論・法則]** | [正確な学術的定義] | [ラテン語/ギリシャ語語根など] | [理解に不可欠な理由] |
+
+> 🔍 **[キーワード深層読解] 「[シグネチャー固有名詞]」誕生の裏話**
+> - **歴史的経緯**: [誕生時の興味深いエピソード]
+> - **本質적意義**: [語源を知ることでテーマが明確になる理由]
+
+---
+
+## 🧭 発展学習ロードマップ＆推薦リソース (Further Exploration)
+- **推薦図書 / 論文**: [テーマをさらに深掘りするために読むべき代表的文献]
+- **関連探求キーワード**: [併せて学ぶべき関連用語や歴史的事件]
+
+---
+
+## 🧠 3段階クイズ＆思考の問い (Self-Quiz & Reflection)
+1. **[第1段階: ファクトチェック] Q**: [動画の重要事実を確認する問い]
+   - *A*: [正解と明快な解説]
+2. **[第2段階: メカニズム・因果理解] Q**: [原理や理由を問う問い]
+   - *A*: [詳細な解説]
+3. **[第3段階: 批判的思考と応用] Q**: [現実への応用や今後の展望を問う問い]
+"""
+
+def get_system_prompt_for_lang(target_lang: str = "ko", source_lang: str = "en") -> str:
+    target = (target_lang or "ko").lower()
+    is_ko_source = (source_lang or "").lower().startswith("ko")
+    if target == "ko":
+        return SYSTEM_PROMPT_KOREAN if is_ko_source else SYSTEM_PROMPT
+    elif target.startswith("en"):
+        return SYSTEM_PROMPT_ENGLISH
+    elif target.startswith("ja"):
+        return SYSTEM_PROMPT_JAPANESE
+    else:
+        target_name = language_name(target)
+        return f"""You are a world-class Knowledge Architect, Instructional Designer, and encyclopedic Knowledge Curator.
+Your mission is to generate the ultimate 'Master Deep Learning Note' from the video transcript and metadata.
+
+CRITICAL REQUIREMENT:
+You MUST write the ENTIRE Master Deep Learning Note in **{target_name}** ({target}).
+Every single section title, subheading, bullet point, explanation, table entry, and quiz question must be strictly written in {target_name}.
+
+Follow the exact 7-section structure:
+1. Executive Summary
+2. Key Takeaways
+3. Signature Archetype Analysis (Review & Critique, Story & Lore, Guide & How-To, Explainer & Deep Knowledge, or Dialogue & Interview)
+4. Chronological Deep Dive with [MM:SS] Subheadings and > 💡 Deep Dive boxes
+5. Proper Nouns & Deep Etymological Glossary (Table of Proper Nouns, Definitions, Etymology/Origins, Context) + > 🔍 Keyword Deep Dive
+6. Further Exploration & Recommended Resources
+7. 3-Stage Self-Quiz & Reflection (Fact Check / Principles / Critical Thinking)
+"""
+
+def build_user_prompt(
+    video_info: Dict[str, Any],
+    transcript_text: str,
+    source_lang: str = "en",
+    target_lang: str = "ko"
+) -> str:
     title = video_info.get("title", "")
     channel = video_info.get("channel", "")
     duration = video_info.get("duration_str", "")
+    target = (target_lang or "ko").lower()
+    target_name = language_name(target)
 
-    lang_label = "한국어 원문" if source_lang.startswith("ko") else "영문 원문"
-
-    if source_lang.startswith("ko"):
+    if target.startswith("en"):
         instruction = (
-            "위 한국어 영상의 성격(5대 메타 원형: 분석·평가형 / 스토리·해석형 / 가이드·공략형 / 지식·정보형 / 대화·인터뷰형)을 파악하여 가장 최적화된 마스터 지식 노트를 작성해 주십시오.\n"
-            "이 영상은 한국어 원본입니다. 번역이 아닌, 구어체 정돈과 지식 확장에 집중하십시오.\n"
-            "특히 영상 본문에 실제로 등장하는 주요 고유명사(인물, 기관/기업, 지명/천체, 프로젝트, 이론/법칙 등)를 집중 수집하여 "
-            "영문 원어 병기, 어원과 명명 유래, 영상 속 맥락을 풍부하게 정리한 키워드 사전과, 촘촘한 타임라인별 Deep Dive 해설을 반드시 포함해 주십시오."
+            "Analyze the above video and transcript according to its Meta Archetype (Review & Critique / Story & Interpretation / Guide & How-To / Explainer & Deep Knowledge / Dialogue & Interview).\n"
+            "Generate the comprehensive Master Deep Learning Note entirely in English.\n"
+            "Make sure to include all proper nouns, their origins/etymology, video context, dense chronological deep dives, and the 3-stage quiz."
         )
+        meta_label = f"- Title: {title}\n- Channel: {channel}\n- Duration: {duration}\n- Transcript Language: {source_lang}"
+        req_header = "[Instructions]:"
+    elif target.startswith("ja"):
+        instruction = (
+            "上記動画の性格（5大メタ原型）を分析し、最も最適化されたマスター深層学習ノートをすべて日本語で作成してください。\n"
+            "動画内に登場する重要な固有名詞の語源・命名由来辞典、およびタイムライン別の深層解説、3段階クイズを必ず含めてください。"
+        )
+        meta_label = f"- タイトル: {title}\n- チャンネル名: {channel}\n- 再生時間: {duration}\n- 字幕言語: {source_lang}"
+        req_header = "[作成依頼]:"
+    elif target == "ko":
+        if (source_lang or "").startswith("ko"):
+            instruction = (
+                "위 한국어 영상의 성격(5대 메타 원형: 분석·평가형 / 스토리·해석형 / 가이드·공략형 / 지식·정보형 / 대화·인터뷰형)을 파악하여 가장 최적화된 마스터 지식 노트를 작성해 주십시오.\n"
+                "이 영상은 한국어 원본입니다. 번역이 아닌, 구어체 정돈과 지식 확장에 집중하십시오.\n"
+                "특히 영상 본문에 실제로 등장하는 주요 고유명사(인물, 기관/기업, 지명/천체, 프로젝트, 이론/법칙 등)를 집중 수집하여 "
+                "영문 원어 병기, 어원과 명명 유래, 영상 속 맥락을 풍부하게 정리한 키워드 사전과, 촘촘한 타임라인별 Deep Dive 해설을 반드시 포함해 주십시오."
+            )
+        else:
+            instruction = (
+                "위 영상의 성격(5대 메타 원형: 분석·평가형 / 스토리·해석형 / 가이드·공략형 / 지식·정보형 / 대화·인터뷰형)을 파악하여 가장 최적화된 마스터 지식 노트를 한국어로 작성해 주십시오.\n"
+                "특히 영상 본문에 실제로 등장하는 주요 고유명사(인물, 기관/기업, 지명/천체, 프로젝트, 이론/법칙 등)를 집중 수집하여 "
+                "어원과 명명 유래, 영상 속 맥락을 풍부하게 정리한 키워드 사전과, 촘촘한 타임라인별 Deep Dive 해설을 반드시 포함해 주십시오."
+            )
+        meta_label = f"- 제목: {title}\n- 채널명: {channel}\n- 영상 길이: {duration}\n- 자막 언어: {source_lang}"
+        req_header = "[작성 요청]:"
     else:
         instruction = (
-            "위 영상의 성격(5대 메타 원형: 분석·평가형 / 스토리·해석형 / 가이드·공략형 / 지식·정보형 / 대화·인터뷰형)을 파악하여 가장 최적화된 마스터 지식 노트를 작성해 주십시오.\n"
-            "특히 영상 본문에 실제로 등장하는 주요 고유명사(인물, 기관/기업, 지명/천체, 프로젝트, 이론/법칙 등)를 집중 수집하여 "
-            "어원과 명명 유래, 영상 속 맥락을 풍부하게 정리한 키워드 사전과, 촘촘한 타임라인별 Deep Dive 해설을 반드시 포함해 주십시오."
+            f"Analyze the video transcript and metadata to create a comprehensive Master Deep Learning Note entirely in {target_name} ({target}).\n"
+            f"All text, headings, and explanations must be written in {target_name}."
         )
+        meta_label = f"- Title: {title}\n- Channel: {channel}\n- Duration: {duration}\n- Language: {source_lang}"
+        req_header = f"[Instructions - Language: {target_name}]:"
 
     return f"""
-[영상 메타데이터]
-- 제목: {title}
-- 채널명: {channel}
-- 영상 길이: {duration}
-- 자막 언어: {lang_label}
+[Metadata]
+{meta_label}
 
-[영상 타임스탬프 자막 전문]
+[Transcript]
 {transcript_text}
 
-[작성 요청]:
+{req_header}
 {instruction}
 """
 
@@ -355,7 +639,8 @@ def generate_study_note_gemini(
     video_info: Dict[str, Any],
     transcript_data: Dict[str, Any],
     api_key: Optional[str] = None,
-    model_name: Optional[str] = None
+    model_name: Optional[str] = None,
+    target_lang: str = "ko"
 ) -> Dict[str, Any]:
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
@@ -370,15 +655,12 @@ def generate_study_note_gemini(
     if not transcript_text.strip():
         return {"success": False, "error": "분석할 자막 텍스트가 없습니다."}
 
-    # 자막 언어 감지: 한국어 콘텐츠이면 한국어 전용 프롬프트 사용
     source_lang = transcript_data.get("language", "en")
-    is_korean = transcript_data.get("is_korean", source_lang.startswith("ko"))
-    active_system_prompt = SYSTEM_PROMPT_KOREAN if is_korean else SYSTEM_PROMPT
+    active_system_prompt = get_system_prompt_for_lang(target_lang, source_lang)
+    user_prompt = build_user_prompt(video_info, transcript_text, source_lang=source_lang, target_lang=target_lang)
 
-    user_prompt = build_user_prompt(video_info, transcript_text, source_lang=source_lang)
-
-    lang_tag = "한국어 원문" if is_korean else "영문"
-    print(f"[*] 자막 언어 감지: {source_lang} ({'한국어 전용 프롬프트' if is_korean else '영문 프롬프트'} 적용)")
+    target_name = language_name(target_lang)
+    print(f"[*] 자막 언어 감지: {source_lang} -> 목표 언어: {target_name} ({target_lang})")
 
     # 시도할 모델 목록 (요청받은 모델 우선, 없으면 Gemini 3.8 Flash -> 3.7 -> 3.6 -> 3.5 순회)
     models_to_try = []
@@ -398,7 +680,7 @@ def generate_study_note_gemini(
                 try:
                     attempt_str = f" (재시도 {attempt}/2)" if attempt > 1 else ""
                     cycle_str = f" [2차 복구 사이클]" if cycle > 1 else ""
-                    print(f"[*] Gemini {lang_tag} 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
+                    print(f"[*] Gemini ({target_name}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
                     response = client.models.generate_content(
                         model=target_model,
                         contents=user_prompt,
@@ -958,15 +1240,22 @@ def generate_raw_transcript_note(
 # 3. 구독 AI(ChatGPT/Claude)용 완성형 프롬프트 생성기 (클립보드 복사용)
 def generate_clipboard_prompt(
     video_info: Dict[str, Any],
-    transcript_data: Dict[str, Any]
+    transcript_data: Dict[str, Any],
+    target_lang: str = "ko"
 ) -> str:
     transcript_text = transcript_data.get("full_text", "")
-    user_prompt = build_user_prompt(video_info, transcript_text)
+    source_lang = transcript_data.get("language", "en")
+    system_prompt = get_system_prompt_for_lang(target_lang, source_lang)
+    user_prompt = build_user_prompt(video_info, transcript_text, source_lang=source_lang, target_lang=target_lang)
 
-    return f"""[역할 및 지침]
-{SYSTEM_PROMPT}
+    target_name = language_name(target_lang)
+    header_role = f"[System Role & Instructions - Language: {target_name}]" if target_lang != "ko" else "[역할 및 지침]"
+    header_task = "[Task Request]" if target_lang != "ko" else "[요청 작업]"
+
+    return f"""{header_role}
+{system_prompt}
 
 ==================================================
-[요청 작업]
+{header_task}
 {user_prompt}
 """

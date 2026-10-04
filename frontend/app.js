@@ -354,30 +354,32 @@ function renderTargetLangSelect() {
   const sel = document.getElementById("sub-target-lang");
   if (!sel) return;
   const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
+  const prefix = typeof t === "function" ? t("label_target_lang") : "번역";
   
   sel.innerHTML = list.map(item => {
     const isSel = item.code === currentTargetLang ? "selected" : "";
-    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>번역: ${escapeHtmlStr(item.name)}</option>`;
+    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(item.name)}</option>`;
   }).join("");
 }
 
 function renderSourceLangSelect() {
   const sel = document.getElementById("sub-source-lang");
   if (!sel) return;
+  const srcLabel = typeof t === "function" ? t("label_source_track") : "원문";
 
   if (isLocalVideo || !currentTracks || currentTracks.length === 0) {
     if (isLocalVideo) {
-      sel.innerHTML = `<option value="">원문: 로컬 자막</option>`;
+      sel.innerHTML = `<option value="">${srcLabel}: Local</option>`;
       sel.disabled = true;
     } else {
-      sel.innerHTML = `<option value="">원문: 자동 감지</option>`;
+      sel.innerHTML = `<option value="">${srcLabel}: Auto</option>`;
       sel.disabled = false;
     }
     return;
   }
 
   sel.disabled = false;
-  let html = `<option value="">원문: 자동 (${escapeHtmlStr(currentOriginalLang || "감지")})</option>`;
+  let html = `<option value="">${srcLabel}: Auto (${escapeHtmlStr(currentOriginalLang || "detect")})</option>`;
   currentTracks.forEach(t => {
     const isSel = (currentSourceLang && (currentSourceLang === t.value || currentSourceLang === t.code)) ? "selected" : "";
     html += `<option value="${escapeHtmlStr(t.value)}" ${isSel}>${escapeHtmlStr(t.name)}</option>`;
@@ -391,9 +393,9 @@ function updateLangLabels() {
   const biLabel = document.getElementById("sub-lang-bi-label");
   const ctrlKo = document.getElementById("ctrl-sub-ko-label");
 
-  if (koLabel) koLabel.textContent = `${targetName} 번역`;
-  if (biLabel) biLabel.textContent = targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`;
-  if (ctrlKo) ctrlKo.textContent = targetName === "한국어" ? "한글" : (targetName.length > 3 ? targetName.slice(0, 3) : targetName);
+  if (koLabel) koLabel.textContent = typeof t === "function" ? t("mode_translated", { lang: targetName }) : `${targetName} 번역`;
+  if (biLabel) biLabel.textContent = typeof t === "function" ? t("mode_bilingual", { lang: targetName }) : (targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`);
+  if (ctrlKo) ctrlKo.textContent = targetName.length > 3 ? targetName.slice(0, 3) : targetName;
 }
 
 function applyLanguageState(payload) {
@@ -527,7 +529,7 @@ function updateTranslationButtonState() {
   if (isTranslatingSubtitles) {
     btn.disabled = true;
     btn.className = "px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold cursor-wait flex items-center space-x-1.5 shadow-sm";
-    if (text) text.textContent = `${targetName} 번역 진행 중...`;
+    if (text) text.textContent = `${targetName}...`;
     if (icon) icon.textContent = "⏳";
     if (spinner) spinner.classList.remove("hidden");
     return;
@@ -536,7 +538,7 @@ function updateTranslationButtonState() {
   if (isSameLanguage || currentTranslationSource === "same") {
     btn.disabled = true;
     btn.className = "px-2.5 py-1 bg-sky-500/15 text-sky-400 border border-sky-500/30 rounded-lg text-xs font-semibold cursor-default flex items-center space-x-1.5 shadow-sm opacity-80";
-    if (text) text.textContent = "원문 = 번역 언어";
+    if (text) text.textContent = typeof t === "function" ? t("btn_translate_same") : "자막 준비 완료";
     if (icon) icon.textContent = "🆗";
     if (spinner) spinner.classList.add("hidden");
     btn.title = `원문과 번역 대상 언어가 ${targetName}(으)로 동일합니다.`;
@@ -546,7 +548,7 @@ function updateTranslationButtonState() {
   if (!currentSubtitles || currentSubtitles.length === 0) {
     btn.disabled = true;
     btn.className = "px-2.5 py-1 bg-slate-800 text-slate-500 border border-slate-700 rounded-lg text-xs font-semibold cursor-not-allowed flex items-center space-x-1.5 shadow-sm opacity-60";
-    if (text) text.textContent = "자막 없음";
+    if (text) text.textContent = typeof t === "function" ? t("no_subtitles_found") : "자막 없음";
     if (icon) icon.textContent = "⚡";
     if (spinner) spinner.classList.add("hidden");
     return;
@@ -555,7 +557,7 @@ function updateTranslationButtonState() {
   if (currentTranslationSource === "youtube") {
     btn.disabled = false;
     btn.className = "px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
-    if (text) text.textContent = `📺 YouTube 공식 ${targetName} 자막`;
+    if (text) text.textContent = `📺 YouTube ${targetName}`;
     if (icon) icon.textContent = "📺";
     if (spinner) spinner.classList.add("hidden");
     btn.title = `YouTube 공식 ${targetName} 자막이 적용되었습니다. 클릭하면 Gemini로 다시 번역할 수 있습니다.`;
@@ -566,14 +568,14 @@ function updateTranslationButtonState() {
   if (hasKo || currentTranslationSource === "gemini") {
     btn.disabled = false;
     btn.className = "px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
-    if (text) text.textContent = `${targetName} 재번역`;
+    if (text) text.textContent = typeof t === "function" ? t("btn_translate_retranslate", { lang: targetName }) : `${targetName} 재번역`;
     if (icon) icon.textContent = "🔄";
     if (spinner) spinner.classList.add("hidden");
     btn.title = `${targetName} 번역이 완료된 상태입니다. 클릭하면 새로 다시 번역합니다.`;
   } else {
     btn.disabled = false;
     btn.className = "px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
-    if (text) text.textContent = `${targetName} 번역 요청`;
+    if (text) text.textContent = typeof t === "function" ? t("btn_translate_request", { lang: targetName }) : `${targetName} 번역 요청`;
     if (icon) icon.textContent = "⚡";
     if (spinner) spinner.classList.add("hidden");
     btn.title = `Gemini를 호출하여 ${targetName} 번역을 명시적으로 생성합니다 (API 사용)`;
@@ -1995,12 +1997,12 @@ function switchMode(mode) {
   if (mode === "gemini") {
     tabGemini.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow";
     tabSub.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white";
-    submitText.textContent = "⚡ 분석 및 생성";
+    submitText.textContent = typeof t === "function" ? t("btn_analyze") : "⚡ 분석 및 생성";
     inlinePasteCard.classList.add("hidden");
   } else {
     tabSub.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-indigo-600 text-white shadow";
     tabGemini.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white";
-    submitText.textContent = "📋 프롬프트 복사";
+    submitText.textContent = typeof t === "function" ? t("btn_copy_prompt") : "📋 프롬프트 복사";
     inlinePasteCard.classList.remove("hidden");
   }
 }
@@ -2030,6 +2032,29 @@ async function checkConfig() {
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  // UI 다국어 언어 선택 셀렉트박스 바인딩
+  const uiLangSelect = document.getElementById("ui-lang-select");
+  if (uiLangSelect && typeof getUiLang === "function") {
+    uiLangSelect.value = getUiLang();
+    uiLangSelect.addEventListener("change", (e) => {
+      const newLang = e.target.value;
+      if (typeof setUiLang === "function") {
+        setUiLang(newLang);
+      }
+    });
+  }
+
+  window.addEventListener("tubescholar:lang_change", (e) => {
+    const lang = e.detail?.lang || "ko";
+    if (uiLangSelect) uiLangSelect.value = lang;
+    switchMode(currentMode);
+    updateLangLabels();
+    renderTargetLangSelect();
+    renderSourceLangSelect();
+    updateTranslationButtonState();
+    loadTtsVoices();
+  });
+
   const form = document.getElementById("analyze-form");
   const tabGemini = document.getElementById("tab-gemini");
   const tabSub = document.getElementById("tab-subscription");
@@ -2739,11 +2764,67 @@ function initTtsEvents() {
 
   const voiceSelect = document.getElementById("tts-voice-select");
   if (voiceSelect) {
-    voiceSelect.addEventListener("change", () => {
+    voiceSelect.addEventListener("change", (e) => {
+      try { localStorage.setItem("tubescholar_tts_voice", e.target.value); } catch (err) {}
       if (audioEl && audioEl.src) {
         triggerAudiobookPlay();
       }
     });
+  }
+
+  loadTtsVoices();
+}
+
+async function loadTtsVoices() {
+  const voiceSelect = document.getElementById("tts-voice-select");
+  if (!voiceSelect) return;
+  try {
+    const res = await fetch("/api/tts/voices");
+    if (!res.ok) return;
+    const data = await res.json();
+    if (data.voices && Array.isArray(data.voices)) {
+      const savedVoice = localStorage.getItem("tubescholar_tts_voice");
+      voiceSelect.innerHTML = "";
+
+      const langGroups = {
+        ko: "🇰🇷 한국어 (Korean)",
+        en: "🇺🇸 English",
+        ja: "🇯🇵 日本語 (Japanese)",
+        zh: "🇨🇳 中文 (Chinese)",
+        es: "🇪🇸 Español",
+        fr: "🇫🇷 Français",
+        de: "🇩🇪 Deutsch"
+      };
+
+      const groups = {};
+      data.voices.forEach(v => {
+        const grp = v.lang || "ko";
+        if (!groups[grp]) groups[grp] = [];
+        groups[grp].push(v);
+      });
+
+      for (const [lang, gVoices] of Object.entries(groups)) {
+        const optgroup = document.createElement("optgroup");
+        optgroup.label = langGroups[lang] || lang.toUpperCase();
+        gVoices.forEach(v => {
+          const opt = document.createElement("option");
+          opt.value = v.key;
+          opt.textContent = v.name;
+          if (savedVoice === v.key) opt.selected = true;
+          optgroup.appendChild(opt);
+        });
+        voiceSelect.appendChild(optgroup);
+      }
+
+      if (!savedVoice) {
+        const uiLang = typeof getUiLang === "function" ? getUiLang() : "ko";
+        if (uiLang === "en") voiceSelect.value = "christopher";
+        else if (uiLang === "ja") voiceSelect.value = "keita";
+        else voiceSelect.value = "injoon";
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to load TTS voices:", e);
   }
 }
 
@@ -3102,14 +3183,15 @@ function initZenModeEvents() {
   const shutdownBtn = document.getElementById("shutdown-btn");
   if (shutdownBtn) {
     shutdownBtn.addEventListener("click", async () => {
-      if (confirm("TubeScholar 프로그램을 종료하시겠습니까?\n(서버가 중단되며 이 브라우저 탭을 닫으셔도 됩니다)")) {
+      const msg = typeof t === "function" ? t("shutdown_confirm") : "TubeScholar 프로그램을 종료하시겠습니까?";
+      if (confirm(msg)) {
         try {
           await fetch("/api/system/shutdown", { method: "POST" });
         } catch (e) {}
         document.body.innerHTML = `
           <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;background:#0f172a;color:#94a3b8;font-family:sans-serif;text-align:center;">
-            <h1 style="color:#f8fafc;font-size:24px;margin-bottom:12px;">👋 TubeScholar가 안전하게 종료되었습니다.</h1>
-            <p style="font-size:14px;">브라우저 창을 닫으셔도 좋습니다. 이용해 주셔서 감사합니다.</p>
+            <h1 style="color:#f8fafc;font-size:24px;margin-bottom:12px;">👋 TubeScholar</h1>
+            <p style="font-size:14px;">Server stopped. You may close this tab.</p>
           </div>
         `;
       }
