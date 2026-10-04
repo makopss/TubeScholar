@@ -185,16 +185,48 @@ def _track_info(t) -> Dict[str, Any]:
 def detect_original_language(tracks: List[Any], ytdlp_lang: Optional[str] = None) -> Optional[str]:
     """
     영상의 실제(말하는) 언어를 추정합니다.
-    1) 유튜브 음성 인식(ASR) 자동 자막의 언어 = 실제 발화 언어
-    2) yt-dlp 가 알려주는 영상 기본 언어
-    3) 첫 번째 자막 트랙
+    1) yt-dlp 메타데이터의 기본 영상 언어가 있고 트랙 목록에 매칭되는 것이 있는 경우:
+       - 다국어 더빙 영상(ASR이 여러 개인 경우)에서는 메타데이터 언어가 원본 언어
+    2) 자동 생성 자막(ASR)이 단 1개만 존재하는 경우:
+       - 단일 음성 영상에서는 YouTube가 실제 발화 언어로만 유일한 ASR을 생성하므로 그 언어 채택
+    3) 자동 생성 자막이 여러 개(다국어 더빙)이고 ytdlp_lang과 일치하는 트랙이 없는 경우:
+       - 영어(en) 트랙 우선, 없으면 첫 번째 ASR 트랙
+    4) 자동 생성 자막이 없는 경우:
+       - ytdlp_lang 일치 트랙 -> 첫 번째 자막 트랙
     """
+    if not tracks:
+        return ytdlp_lang
+
     gen = [t for t in tracks if getattr(t, "is_generated", False)]
-    if gen:
+
+    # 1. yt-dlp 메타데이터의 언어가 있고, 자막 트랙 중 매칭되는 것이 있는 경우
+    if ytdlp_lang:
+        for level in (2, 1):
+            matching = [t for t in tracks if lang_match_level(t.language_code, ytdlp_lang) == level]
+            if matching:
+                # 공식 자막 우선, 없으면 자동 생성 자막
+                manual = [t for t in matching if not getattr(t, "is_generated", False)]
+                chosen = manual[0] if manual else matching[0]
+                return chosen.language_code
+
+    # 2. ASR 자동 생성 자막이 딱 1개인 경우 (단일 음성 영상: TED 등)
+    if len(gen) == 1:
         return gen[0].language_code
+
+    # 3. ASR이 여러 개(다국어 오디오)이지만 ytdlp_lang 매칭이 안 된 경우: 영어(en) 트랙 우선
+    if len(gen) > 1:
+        for level in (2, 1):
+            en_tracks = [t for t in gen if lang_match_level(t.language_code, "en") == level]
+            if en_tracks:
+                return en_tracks[0].language_code
+        return gen[0].language_code
+
+    # 4. ytdlp_lang 은 있지만 매칭 트랙이 없는 경우
     if ytdlp_lang:
         return ytdlp_lang
-    return tracks[0].language_code if tracks else None
+
+    # 5. 마지막 fallback: 첫 번째 트랙
+    return tracks[0].language_code
 
 
 def pick_track(tracks: List[Any], lang: Optional[str], prefer_generated: bool = False):
