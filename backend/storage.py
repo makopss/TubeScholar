@@ -155,7 +155,7 @@ def _normalize_subs(subtitles: Optional[List[Dict[str, Any]]]) -> List[Dict[str,
     except Exception:
         return subtitles
 
-_LANG_META_KEYS = ("source_lang", "target_lang", "translation_source")
+_LANG_META_KEYS = ("source_lang", "target_lang", "translation_source", "note_target_lang")
 
 
 def _clean_lang_meta(lang_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:

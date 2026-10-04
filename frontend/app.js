@@ -40,6 +40,7 @@ let transAbortController = null;
 let isKoreanContent = false; // 호환용 (isSameLanguage와 동기화)
 let isSameLanguage = false; // 원문 언어와 번역 대상 언어가 동일한지 여부
 let currentTargetLang = localStorage.getItem("tubescholar_target_lang") || "ko";
+let currentNoteTargetLang = localStorage.getItem("tubescholar_note_target_lang") || (typeof getUiLang === "function" ? getUiLang() : "ko");
 let currentSourceLang = null;
 let currentOriginalLang = null;
 let currentTranslationSource = null; // 'same' | 'youtube' | 'gemini' | null
@@ -265,6 +266,8 @@ function renderMarkdownNote(markdownText, engineInfo = "", noteId = null) {
       seekVideo(seconds);
     });
   });
+
+  updateRegenerateNoteButtonState();
 }
 
 function displayVideoMetadata(info) {
@@ -344,6 +347,7 @@ function setSubtitles(subs) {
 
   // 번역 요청 버튼 상태 동기화 (자동 프리페치는 제거하여 Gemini API 소모 방지)
   updateTranslationButtonState();
+  updateRegenerateNoteButtonState();
 }
 
 async function initLanguages() {
@@ -362,8 +366,10 @@ async function initLanguages() {
     supportedTargetLanguages = FALLBACK_TARGET_LANGUAGES;
   }
   renderTargetLangSelect();
+  renderNoteTargetLangSelect();
   renderSourceLangSelect();
   updateLangLabels();
+  updateRegenerateNoteButtonState();
 }
 
 function renderTargetLangSelect() {
@@ -377,6 +383,126 @@ function renderTargetLangSelect() {
     const name = getTargetLangName(item.code);
     return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(name)}</option>`;
   }).join("");
+}
+
+function renderNoteTargetLangSelect() {
+  const sel = document.getElementById("note-target-lang");
+  if (!sel) return;
+  const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
+  const prefix = typeof t === "function" ? t("label_note_lang") : "노트";
+  
+  sel.innerHTML = list.map(item => {
+    const isSel = item.code === currentNoteTargetLang ? "selected" : "";
+    const name = getTargetLangName(item.code);
+    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(name)}</option>`;
+  }).join("");
+}
+
+function updateRegenerateNoteButtonState() {
+  const btn = document.getElementById("regenerate-note-btn");
+  if (!btn) return;
+  const hasData = (currentSubtitles && currentSubtitles.length > 0) || !!currentNoteId || !!currentMarkdown;
+  if (hasData) {
+    btn.classList.remove("hidden");
+  } else {
+    btn.classList.add("hidden");
+  }
+}
+
+async function regenerateStudyNote() {
+  if (!currentSubtitles || currentSubtitles.length === 0) {
+    if (currentVideoId || currentNoteId) {
+      try {
+        const fetchRes = await fetch("/api/subtitles", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            video_id: currentVideoId,
+            note_id: currentNoteId,
+            target_lang: currentTargetLang
+          })
+        });
+        const d = await fetchRes.json();
+        if (d.success && d.subtitles && d.subtitles.length > 0) {
+          setSubtitles(d.subtitles);
+        }
+      } catch (err) {}
+    }
+  }
+
+  if (!currentSubtitles || currentSubtitles.length === 0) {
+    alert(typeof t === "function" ? t("alert_no_subs_to_regen") : "학습 노트를 재작성할 자막 데이터가 없습니다.");
+    return;
+  }
+
+  const targetName = getTargetLangName(currentNoteTargetLang);
+  const confirmMsg = typeof t === "function" 
+    ? t("confirm_regenerate_note", { lang: targetName }) 
+    : `학습 노트를 '${targetName}' 언어로 다시 생성하시겠습니까?\n(Gemini API 호출이 발생합니다)`;
+  
+  if (!confirm(confirmMsg)) return;
+
+  const regenBtn = document.getElementById("regenerate-note-btn");
+  const origBtnContent = regenBtn ? regenBtn.innerHTML : "";
+  if (regenBtn) {
+    regenBtn.disabled = true;
+    regenBtn.innerHTML = `<span>⏳</span><span>${typeof t === "function" ? t("tts_status_generating") : "생성 중..."}</span>`;
+  }
+
+  const loadingOverlay = document.getElementById("loading-overlay");
+  const loadingTitle = document.getElementById("loading-title");
+  const loadingDesc = document.getElementById("loading-desc");
+  const headerCancelBtn = document.getElementById("header-cancel-btn");
+
+  currentAbortController = new AbortController();
+  loadingOverlay.classList.remove("hidden");
+  headerCancelBtn.classList.remove("hidden");
+
+  setAnalysisStep(2);
+  loadingTitle.textContent = typeof t === "function" 
+    ? t("note_regenerating_title", { lang: targetName }) 
+    : `[${targetName}] 학습 노트 재작성 중...`;
+  loadingDesc.textContent = typeof t === "function" 
+    ? t("note_regenerating", { lang: targetName }) 
+    : `Gemini가 ${targetName} 언어로 학습 노트를 재작성하고 있습니다...`;
+
+  try {
+    const res = await fetch("/api/note/regenerate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: currentAbortController.signal,
+      body: JSON.stringify({
+        video_id: currentVideoId,
+        title: currentVideoInfo?.title || "",
+        channel: currentVideoInfo?.channel || "",
+        duration_str: currentVideoInfo?.duration_str || "",
+        video_type: currentVideoInfo?.video_type || (isLocalVideo ? "local" : "youtube"),
+        url: currentVideoInfo?.url || "",
+        note_id: currentNoteId,
+        subtitles: currentSubtitles,
+        note_target_lang: currentNoteTargetLang
+      })
+    });
+
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "학습 노트 재작성 실패");
+
+    setAnalysisStep(3);
+    renderMarkdownNote(data.markdown, `Gemini: ${data.model_used}`, data.note_id);
+    if (isEditing) toggleEditor(false);
+    loadLibrary();
+  } catch (err) {
+    if (err.name === 'AbortError') return;
+    alert(typeof t === "function" ? t("alert_note_regen_error", { err: err.message }) : (`학습 노트 재작성 실패: ${err.message}`));
+  } finally {
+    currentAbortController = null;
+    loadingOverlay.classList.add("hidden");
+    headerCancelBtn.classList.add("hidden");
+    if (regenBtn) {
+      regenBtn.disabled = false;
+      regenBtn.innerHTML = origBtnContent;
+    }
+  }
 }
 
 function renderSourceLangSelect() {
@@ -1744,7 +1870,8 @@ async function runGeminiAnalysis(url) {
         url: url,
         engine: "gemini",
         source_lang: currentSourceLang,
-        target_lang: currentTargetLang
+        target_lang: currentTargetLang,
+        note_target_lang: currentNoteTargetLang
       })
     });
 
@@ -1802,7 +1929,8 @@ async function runSubscriptionPrompt(url) {
       body: JSON.stringify({
         url: url,
         source_lang: currentSourceLang,
-        target_lang: currentTargetLang
+        target_lang: currentTargetLang,
+        note_target_lang: currentNoteTargetLang
       })
     });
     const data = await res.json();
@@ -1988,6 +2116,12 @@ async function loadSingleSavedNote(noteIdOrVid) {
       is_generated: meta.is_generated || false
     });
 
+    if (meta.note_target_lang) {
+      currentNoteTargetLang = meta.note_target_lang;
+      renderNoteTargetLangSelect();
+    }
+    updateRegenerateNoteButtonState();
+
     // 4. 화면 재생 위치에 따른 자막 동기화
     let curTime = -1;
     if (isLocalVideo) {
@@ -2097,11 +2231,16 @@ document.addEventListener("DOMContentLoaded", () => {
   window.addEventListener("tubescholar:lang_change", (e) => {
     const lang = e.detail?.lang || "ko";
     if (uiLangSelect) uiLangSelect.value = lang;
+    if (localStorage.getItem("tubescholar_note_target_lang_explicit") !== "true") {
+      currentNoteTargetLang = lang;
+    }
     switchMode(currentMode);
     updateLangLabels();
     renderTargetLangSelect();
+    renderNoteTargetLangSelect();
     renderSourceLangSelect();
     updateTranslationButtonState();
+    updateRegenerateNoteButtonState();
     loadTtsVoices();
     refreshSyncBadge(true);
     updateSubtitleAutoScrollUI();
@@ -2132,6 +2271,24 @@ document.addEventListener("DOMContentLoaded", () => {
     }
     loadLibrary();
   });
+
+  // 학습 노트 작성 언어 셀렉트박스 & 재작성 버튼 이벤트 바인딩
+  const noteLangSelect = document.getElementById("note-target-lang");
+  if (noteLangSelect) {
+    noteLangSelect.addEventListener("change", (e) => {
+      currentNoteTargetLang = e.target.value;
+      try {
+        localStorage.setItem("tubescholar_note_target_lang", currentNoteTargetLang);
+        localStorage.setItem("tubescholar_note_target_lang_explicit", "true");
+      } catch (err) {}
+      updateRegenerateNoteButtonState();
+    });
+  }
+
+  const regenNoteBtn = document.getElementById("regenerate-note-btn");
+  if (regenNoteBtn) {
+    regenNoteBtn.addEventListener("click", () => regenerateStudyNote());
+  }
 
   const form = document.getElementById("analyze-form");
   const tabGemini = document.getElementById("tab-gemini");
@@ -2337,7 +2494,8 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({
             title: title,
             subtitle_text: subText,
-            target_lang: currentTargetLang
+            target_lang: currentTargetLang,
+            note_target_lang: currentNoteTargetLang
           })
         });
         const d = await res.json();
@@ -2360,7 +2518,8 @@ document.addEventListener("DOMContentLoaded", () => {
             title: title,
             subtitle_text: subText,
             engine: "gemini",
-            target_lang: currentTargetLang
+            target_lang: currentTargetLang,
+            note_target_lang: currentNoteTargetLang
           })
         });
         let d = null;
@@ -2435,6 +2594,7 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("video", videoFile);
     formData.append("title", title);
     formData.append("target_lang", currentTargetLang);
+    formData.append("note_target_lang", currentNoteTargetLang);
 
     try {
       const res = await fetch("/api/local/video-analyze", {

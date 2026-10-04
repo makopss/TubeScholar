@@ -110,23 +110,39 @@ class AnalyzeRequest(BaseModel):
     api_key: Optional[str] = None
     gemini_model: Optional[str] = DEFAULT_NOTE_MODEL
     source_lang: Optional[str] = None   # 원문 자막 트랙 ('en', 'en:auto'), 없으면 자동 감지
-    target_lang: Optional[str] = DEFAULT_TARGET_LANG  # 번역 언어
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG  # 번역 언어 (자막)
+    note_target_lang: Optional[str] = None  # 학습 노트 작성 언어
 
 class LocalAnalyzeRequest(BaseModel):
     title: str
     subtitle_text: str
     engine: Optional[str] = "gemini"
     target_lang: Optional[str] = DEFAULT_TARGET_LANG
+    note_target_lang: Optional[str] = None
 
 class LocalPromptRequest(BaseModel):
     title: str
     subtitle_text: str
     target_lang: Optional[str] = DEFAULT_TARGET_LANG
+    note_target_lang: Optional[str] = None
 
 class PromptRequest(BaseModel):
     url: str
     source_lang: Optional[str] = None
     target_lang: Optional[str] = DEFAULT_TARGET_LANG
+    note_target_lang: Optional[str] = None
+
+class RegenerateNoteRequest(BaseModel):
+    video_id: Optional[str] = None
+    title: Optional[str] = None
+    channel: Optional[str] = None
+    duration_str: Optional[str] = None
+    video_type: Optional[str] = "youtube"
+    url: Optional[str] = ""
+    note_id: Optional[str] = None
+    subtitles: List[Dict[str, Any]]
+    note_target_lang: Optional[str] = DEFAULT_TARGET_LANG
+    gemini_model: Optional[str] = DEFAULT_NOTE_MODEL
 
 class ManualSaveRequest(BaseModel):
     url: Optional[str] = ""
@@ -241,13 +257,16 @@ def _lang_payload(tr: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _lang_meta(tr: Dict[str, Any]) -> Dict[str, Any]:
+def _lang_meta(tr: Dict[str, Any], note_target_lang: Optional[str] = None) -> Dict[str, Any]:
     """노트에 저장할 언어 정보."""
-    return {
+    meta = {
         "source_lang": tr.get("source_lang"),
         "target_lang": tr.get("target_lang"),
         "translation_source": tr.get("translation_source"),
     }
+    if note_target_lang:
+        meta["note_target_lang"] = note_target_lang
+    return meta
 
 
 @app.get("/api/languages")
@@ -267,6 +286,7 @@ def get_prompt_for_ai(req: PromptRequest):
         raise HTTPException(status_code=400, detail="유효한 유튜브 영상 URL이 아닙니다.")
     
     target = normalize_target_lang(req.target_lang)
+    note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
     video_info = get_video_info(video_id)
     transcript_result = get_video_transcript(
         video_id, source_lang=req.source_lang, target_lang=target,
@@ -275,13 +295,14 @@ def get_prompt_for_ai(req: PromptRequest):
     if not transcript_result.get("success"):
         raise HTTPException(status_code=400, detail=transcript_result.get("error"))
 
-    prompt_text = generate_clipboard_prompt(video_info, transcript_result, target_lang=target)
+    prompt_text = generate_clipboard_prompt(video_info, transcript_result, target_lang=note_target)
     return {
         "success": True,
         "video_info": video_info,
         "prompt": prompt_text,
         "subtitles": transcript_result.get("subtitles", []),
         "is_generated": transcript_result.get("is_generated"),
+        "note_target_lang": note_target,
         **_lang_payload(transcript_result)
     }
 
@@ -289,7 +310,7 @@ def get_prompt_for_ai(req: PromptRequest):
 def get_local_prompt_for_ai(req: LocalPromptRequest):
     """로컬 자막 파일로부터 ChatGPT/Claude 복사용 프롬프트 생성"""
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
-    target = normalize_target_lang(req.target_lang)
+    note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
     video_info = {
         "video_id": f"local_{int(time.time())}",
         "title": req.title or "로컬 비디오",
@@ -297,11 +318,12 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
         "video_type": "local",
         "duration_str": "로컬 파일"
     }
-    prompt_text = generate_clipboard_prompt(video_info, transcript_result, target_lang=target)
+    prompt_text = generate_clipboard_prompt(video_info, transcript_result, target_lang=note_target)
     return {
         "success": True,
         "video_info": video_info,
-        "prompt": prompt_text
+        "prompt": prompt_text,
+        "note_target_lang": note_target
     }
 
 @app.post("/api/local/analyze")
@@ -309,6 +331,7 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
     target = normalize_target_lang(req.target_lang)
+    note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
     video_info = {
         "video_id": f"local_{int(time.time())}",
         "title": req.title or "로컬 비디오",
@@ -320,13 +343,18 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     llm_result = generate_study_note_gemini(
         video_info=video_info,
         transcript_data=transcript_result,
-        target_lang=target
+        target_lang=note_target
     )
 
     if not llm_result.get("success"):
         raise HTTPException(status_code=500, detail=f"분석 실패: {llm_result.get('error')}")
 
-    save_res = save_note(video_info, llm_result["markdown"], subtitles=transcript_result.get("subtitles", []))
+    save_res = save_note(
+        video_info, 
+        llm_result["markdown"], 
+        subtitles=transcript_result.get("subtitles", []),
+        lang_meta={"target_lang": target, "note_target_lang": note_target}
+    )
     return {
         "success": True,
         "note_id": save_res["note_id"],
@@ -334,19 +362,22 @@ def analyze_local_video(req: LocalAnalyzeRequest):
         "subtitles": transcript_result.get("subtitles", []),
         "model_used": llm_result.get("model_used"),
         "markdown": save_res["markdown"],
-        "file_path": save_res["file_path"]
+        "file_path": save_res["file_path"],
+        "note_target_lang": note_target
     }
 
 @app.post("/api/local/video-analyze")
 def analyze_local_video_audio(
     video: UploadFile = File(...),
     title: Optional[str] = Form(None),
-    target_lang: Optional[str] = Form(None)
+    target_lang: Optional[str] = Form(None),
+    note_target_lang: Optional[str] = Form(None)
 ):
     """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성
     (일반 def: FastAPI 가 작업 스레드에서 실행하므로 분석 중에도 다른 요청이 멈추지 않음)"""
     vid_title = title or os.path.splitext(os.path.basename(video.filename or "") or "로컬 비디오")[0]
     target = normalize_target_lang(target_lang)
+    note_target = normalize_target_lang(note_target_lang or target_lang)
     
     temp_dir = tempfile.mkdtemp()
     # 클라이언트 파일명은 경로로 쓰지 않음 (경로 탈출 방지) → 고정 이름 + 검증된 확장자만 사용
@@ -396,7 +427,7 @@ def analyze_local_video_audio(
                 "full_text": "\n".join(f"[{s['timestamp']}] {s['text']}" for s in subtitles),
                 "subtitles": subtitles
             }
-            llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=target)
+            llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=note_target)
             if not llm_result.get("success"):
                 raise HTTPException(status_code=500, detail=f"Gemini 학습 노트 생성 실패: {llm_result.get('error')}")
 
@@ -406,7 +437,7 @@ def analyze_local_video_audio(
             llm_result = generate_study_note_from_audio(
                 audio_path=temp_audio_path,
                 video_title=vid_title,
-                target_lang=target
+                target_lang=note_target
             )
             if not llm_result.get("success"):
                 raise HTTPException(status_code=500, detail=f"Gemini 음성 분석 실패: {llm_result.get('error')}")
@@ -421,7 +452,7 @@ def analyze_local_video_audio(
             subtitles = llm_result.get("subtitles", [])
             model_used = llm_result.get("model_used")
 
-        save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles, lang_meta={"target_lang": target})
+        save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles, lang_meta={"target_lang": target, "note_target_lang": note_target})
         subtitles = save_res["metadata"].get("subtitles", subtitles)
         return {
             "success": True,
@@ -430,7 +461,8 @@ def analyze_local_video_audio(
             "subtitles": subtitles,
             "model_used": model_used,
             "markdown": save_res["markdown"],
-            "file_path": save_res["file_path"]
+            "file_path": save_res["file_path"],
+            "note_target_lang": note_target
         }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -487,6 +519,7 @@ def analyze_video(req: AnalyzeRequest):
     video_info["video_type"] = "youtube"
 
     target = normalize_target_lang(req.target_lang)
+    note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
 
     # 2. 자막 추출 (원문 = 실제 발화 언어, 번역 언어의 공식 자막이 있으면 함께 정렬)
     transcript_result = get_video_transcript(
@@ -505,7 +538,7 @@ def analyze_video(req: AnalyzeRequest):
         transcript_data=transcript_result,
         api_key=req.api_key,
         model_name=req.gemini_model or DEFAULT_NOTE_MODEL,
-        target_lang=target
+        target_lang=note_target
     )
 
     if not llm_result.get("success"):
@@ -518,7 +551,7 @@ def analyze_video(req: AnalyzeRequest):
     save_res = save_note(
         video_info, llm_result["markdown"],
         subtitles=transcript_result.get("subtitles", []),
-        lang_meta=_lang_meta(transcript_result)
+        lang_meta=_lang_meta(transcript_result, note_target_lang=note_target)
     )
 
     return {
@@ -531,7 +564,63 @@ def analyze_video(req: AnalyzeRequest):
         "model_used": llm_result.get("model_used"),
         "markdown": save_res["markdown"],
         "file_path": save_res["file_path"],
+        "note_target_lang": note_target,
         **_lang_payload(transcript_result)
+    }
+
+@app.post("/api/note/regenerate")
+def regenerate_study_note(req: RegenerateNoteRequest):
+    """기존 자막 데이터를 바탕으로 선택된 언어로 Gemini 학습 노트를 즉시 재작성"""
+    if not req.subtitles:
+        raise HTTPException(status_code=400, detail="학습 노트 재작성을 위한 자막 데이터가 없습니다.")
+
+    note_target = normalize_target_lang(req.note_target_lang)
+
+    video_info = {
+        "video_id": req.video_id or f"custom_{int(time.time())}",
+        "title": req.title or "학습 영상",
+        "channel": req.channel or "",
+        "duration_str": req.duration_str or "",
+        "video_type": req.video_type or "youtube",
+        "url": req.url or (f"https://www.youtube.com/watch?v={req.video_id}" if req.video_id and not req.video_id.startswith("local_") else "")
+    }
+
+    transcript_data = {
+        "full_text": "\n".join(f"[{s.get('timestamp', '00:00')}] {s.get('text', '')}" for s in req.subtitles),
+        "subtitles": req.subtitles
+    }
+
+    llm_result = generate_study_note_gemini(
+        video_info=video_info,
+        transcript_data=transcript_data,
+        model_name=req.gemini_model or DEFAULT_NOTE_MODEL,
+        target_lang=note_target
+    )
+
+    if not llm_result.get("success"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"학습 노트 재작성 실패: {llm_result.get('error')}"
+        )
+
+    # 기존 note_id가 있으면 덮어써서 갱신, 없으면 신규 생성
+    save_res = save_note(
+        video_info=video_info,
+        markdown_content=llm_result["markdown"],
+        note_id=req.note_id,
+        note_title=req.title,
+        subtitles=req.subtitles,
+        lang_meta={"note_target_lang": note_target}
+    )
+
+    return {
+        "success": True,
+        "note_id": save_res["note_id"],
+        "video_info": video_info,
+        "model_used": llm_result.get("model_used"),
+        "markdown": save_res["markdown"],
+        "file_path": save_res["file_path"],
+        "note_target_lang": note_target
     }
 
 @app.post("/api/subtitles")

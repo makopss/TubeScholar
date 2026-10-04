@@ -378,6 +378,16 @@
         <div class="flex items-center space-x-2">
           <!-- 1) 학습 노트용 버튼들 -->
           <div id="note-toolbar-buttons" class="flex items-center space-x-2">
+            <!-- 학습 노트 언어 선택 & 즉시 재작성 버튼 -->
+            <div id="note-lang-container" class="flex items-center space-x-1">
+              <select id="note-target-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer" title="학습 노트 작성 언어 선택" data-i18n-title="note_target_lang_title">
+                <option value="ko">노트: 한국어</option>
+              </select>
+              <button id="regenerate-note-btn" type="button" class="hidden px-2 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs rounded-lg transition flex items-center space-x-1 font-semibold" title="현재 선택된 언어로 학습 노트를 새로 작성합니다" data-i18n-title="btn_regenerate_note_title">
+                <span>🔄</span>
+                <span data-i18n="btn_regenerate_note">재작성</span>
+              </button>
+            </div>
             <button id="toggle-edit-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs rounded-lg transition flex items-center space-x-1">
               <span id="edit-btn-text" data-i18n="btn_edit">✏️ 편집</span>
             </button>
