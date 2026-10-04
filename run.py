@@ -20,7 +20,26 @@ warnings.filterwarnings("ignore", category=UserWarning, module="google.genai.*")
 # PyInstaller 윈도우 멀티프로세싱 지원 필수
 multiprocessing.freeze_support()
 
-if sys.platform == "win32":
+# 윈도우 no-console (GUI) 모드로 실행 시 stdout/stderr가 None이 되어 uvicorn/logging 등에서 충돌하는 현상 방지
+if sys.stdout is None or sys.stderr is None:
+    try:
+        log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TubeScholar")
+        os.makedirs(log_dir, exist_ok=True)
+        log_file = open(os.path.join(log_dir, "tubescholar.log"), "a", encoding="utf-8", buffering=1)
+        if sys.stdout is None:
+            sys.stdout = log_file
+        if sys.stderr is None:
+            sys.stderr = log_file
+    except Exception:
+        try:
+            devnull = open(os.devnull, "w", encoding="utf-8")
+            if sys.stdout is None:
+                sys.stdout = devnull
+            if sys.stderr is None:
+                sys.stderr = devnull
+        except Exception:
+            pass
+elif sys.platform == "win32":
     try:
         if sys.stdout is not None:
             sys.stdout.reconfigure(encoding="utf-8")
