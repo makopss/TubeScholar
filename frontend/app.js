@@ -70,6 +70,11 @@ const FALLBACK_TARGET_LANGUAGES = [
 
 function getTargetLangName(code) {
   const c = code || currentTargetLang || "ko";
+  const normKey = "lang_name_" + c.replace(/-/g, "_");
+  if (typeof t === "function") {
+    const localized = t(normKey);
+    if (localized && localized !== normKey) return localized;
+  }
   const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
   const found = list.find(l => l.code === c);
   return found ? found.name : c;
@@ -197,7 +202,8 @@ function processMarkdownHtml(html) {
         const span = document.createElement('span');
         span.innerHTML = escapeHtmlStr(node.nodeValue).replace(timeRegex, (match, p1) => {
           const secs = parseTimeToSeconds(p1);
-          return `<button type="button" class="timestamp-tag" data-seconds="${secs}" title="${p1} 구간으로 이동">${p1}</button>`;
+          const jumpTitle = typeof t === "function" ? t("sub_jump_tooltip", { time: p1 }) : `${p1} 구간으로 이동`;
+          return `<button type="button" class="timestamp-tag" data-seconds="${secs}" title="${jumpTitle}">${p1}</button>`;
         });
         parent.replaceChild(span, node);
       }
@@ -242,7 +248,7 @@ function renderMarkdownNote(markdownText, engineInfo = "", noteId = null) {
   // 집중 독서 팝업 모달이 켜져 있을 경우 본문, 목차 및 문서 제목 자동 갱신
   if (typeof isReaderPopupOpen !== 'undefined' && isReaderPopupOpen) {
     const docTitle = document.getElementById("reader-popup-title");
-    if (docTitle) docTitle.textContent = currentVideoInfo?.title || "학습 노트 집중 독서";
+    if (docTitle) docTitle.textContent = currentVideoInfo?.title || (typeof t === "function" ? t("reader_title_default") : "학습 노트 집중 독서");
     const popupArticle = document.getElementById("reader-popup-article");
     if (popupArticle) popupArticle.innerHTML = processedHtml;
     if (typeof generateReaderPopupToc === 'function') generateReaderPopupToc();
@@ -264,8 +270,18 @@ function renderMarkdownNote(markdownText, engineInfo = "", noteId = null) {
 function displayVideoMetadata(info) {
   currentVideoInfo = info;
   document.getElementById("video-meta-card").classList.remove("hidden");
-  document.getElementById("meta-channel").textContent = info.channel || "영상 정보";
-  document.getElementById("meta-title").textContent = info.title || "제목 없음";
+  let channelText = info.channel;
+  if (channelText === "내 로컬 PC 영상 (Groq Whisper 0.1초 칼싱크)") {
+    channelText = typeof t === "function" ? t("local_channel_whisper") : channelText;
+  } else if (channelText === "내 로컬 PC 영상 (Gemini 음성 직접 청취)" || channelText === "내 로컬 PC 영상 (음성 직접 청취)") {
+    channelText = typeof t === "function" ? t("local_channel_audio") : channelText;
+  } else if (channelText === "내 로컬 PC 파일" || channelText === "Local Video") {
+    channelText = typeof t === "function" ? t("local_channel_name") : channelText;
+  } else if (channelText === "구독 AI 연동") {
+    channelText = typeof t === "function" ? t("tab_subscription") : channelText;
+  }
+  document.getElementById("meta-channel").textContent = channelText || (typeof t === "function" ? t("meta_channel_default") : "영상 정보");
+  document.getElementById("meta-title").textContent = info.title || (typeof t === "function" ? t("meta_title_default") : "제목 없음");
   document.getElementById("meta-duration").textContent = info.duration_str || "00:00";
   document.getElementById("meta-desc").textContent = info.description || "";
   
@@ -358,7 +374,8 @@ function renderTargetLangSelect() {
   
   sel.innerHTML = list.map(item => {
     const isSel = item.code === currentTargetLang ? "selected" : "";
-    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(item.name)}</option>`;
+    const name = getTargetLangName(item.code);
+    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(name)}</option>`;
   }).join("");
 }
 
@@ -369,20 +386,24 @@ function renderSourceLangSelect() {
 
   if (isLocalVideo || !currentTracks || currentTracks.length === 0) {
     if (isLocalVideo) {
-      sel.innerHTML = `<option value="">${srcLabel}: Local</option>`;
+      const localText = typeof t === "function" ? t("sub_source_local") : "로컬 파일";
+      sel.innerHTML = `<option value="">${srcLabel}: ${localText}</option>`;
       sel.disabled = true;
     } else {
-      sel.innerHTML = `<option value="">${srcLabel}: Auto</option>`;
+      const autoText = typeof t === "function" ? t("sub_source_auto_detect") : "자동 감지";
+      sel.innerHTML = `<option value="">${srcLabel}: ${autoText}</option>`;
       sel.disabled = false;
     }
     return;
   }
 
   sel.disabled = false;
-  let html = `<option value="">${srcLabel}: Auto (${escapeHtmlStr(currentOriginalLang || "detect")})</option>`;
-  currentTracks.forEach(t => {
-    const isSel = (currentSourceLang && (currentSourceLang === t.value || currentSourceLang === t.code)) ? "selected" : "";
-    html += `<option value="${escapeHtmlStr(t.value)}" ${isSel}>${escapeHtmlStr(t.name)}</option>`;
+  const autoDetectLabel = typeof t === "function" ? t("sub_source_auto_detect") : "자동 감지";
+  const origName = currentOriginalLang ? getTargetLangName(currentOriginalLang) : (typeof t === "function" ? t("sub_source_detecting") : "감지 중");
+  let html = `<option value="">${srcLabel}: ${autoDetectLabel} (${escapeHtmlStr(origName)})</option>`;
+  currentTracks.forEach(tr => {
+    const isSel = (currentSourceLang && (currentSourceLang === tr.value || currentSourceLang === tr.code)) ? "selected" : "";
+    html += `<option value="${escapeHtmlStr(tr.value)}" ${isSel}>${escapeHtmlStr(tr.name)}</option>`;
   });
   sel.innerHTML = html;
 }
@@ -394,8 +415,21 @@ function updateLangLabels() {
   const ctrlKo = document.getElementById("ctrl-sub-ko-label");
 
   if (koLabel) koLabel.textContent = typeof t === "function" ? t("mode_translated", { lang: targetName }) : `${targetName} 번역`;
-  if (biLabel) biLabel.textContent = typeof t === "function" ? t("mode_bilingual", { lang: targetName }) : (targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`);
-  if (ctrlKo) ctrlKo.textContent = targetName.length > 3 ? targetName.slice(0, 3) : targetName;
+  if (biLabel) {
+    if (typeof t === "function") {
+      biLabel.textContent = t("mode_bilingual", { lang: targetName });
+    } else {
+      biLabel.textContent = targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`;
+    }
+  }
+  if (ctrlKo) {
+    const short = typeof t === "function" ? t("ctrl_trans_btn_label") : null;
+    if (short && short !== "ctrl_trans_btn_label") {
+      ctrlKo.textContent = short;
+    } else {
+      ctrlKo.textContent = targetName.length > 3 ? targetName.slice(0, 3) : targetName;
+    }
+  }
 }
 
 function applyLanguageState(payload) {
@@ -441,22 +475,22 @@ function applyLanguageState(payload) {
   // 메타데이터 카드 자막 상태 라벨 갱신
   const metaLang = document.getElementById("meta-lang");
   if (metaLang) {
-    const srcName = currentOriginalLang ? getTargetLangName(currentOriginalLang) : (payload.transcript_language || '원문');
-    const genTag = payload.is_generated ? '(자동)' : '(공식)';
+    const srcName = currentOriginalLang ? getTargetLangName(currentOriginalLang) : (payload.transcript_language || (typeof t === "function" ? t("ctrl_orig_label") : '원문'));
+    const genTag = payload.is_generated ? (typeof t === "function" ? t("tag_auto_sub") : '(자동)') : (typeof t === "function" ? t("tag_official_sub") : '(공식)');
     const tgtName = getTargetLangName(currentTargetLang);
 
     if (isSameLanguage) {
-      metaLang.textContent = `자막: ${srcName} ${genTag} (원문과 동일)`;
+      metaLang.textContent = typeof t === "function" ? t("meta_subs_same", { src: srcName, gen: genTag }) : `자막: ${srcName} ${genTag} (원문과 동일)`;
     } else if (currentTranslationSource === "youtube") {
-      metaLang.textContent = `자막: ${srcName} ${genTag} → ${tgtName} (YouTube 공식)`;
+      metaLang.textContent = typeof t === "function" ? t("meta_subs_yt", { src: srcName, gen: genTag, tgt: tgtName }) : `자막: ${srcName} ${genTag} → ${tgtName} (YouTube 공식)`;
     } else if (currentTranslationSource === "gemini") {
-      metaLang.textContent = `자막: ${srcName} ${genTag} → ${tgtName} (Gemini 번역)`;
+      metaLang.textContent = typeof t === "function" ? t("meta_subs_gemini", { src: srcName, gen: genTag, tgt: tgtName }) : `자막: ${srcName} ${genTag} → ${tgtName} (Gemini 번역)`;
     } else {
       const hasKo = currentSubtitles && currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
       if (hasKo) {
-        metaLang.textContent = `자막: ${srcName} ${genTag} → ${tgtName} (번역됨)`;
+        metaLang.textContent = typeof t === "function" ? t("meta_subs_translated", { src: srcName, gen: genTag, tgt: tgtName }) : `자막: ${srcName} ${genTag} → ${tgtName} (번역됨)`;
       } else {
-        metaLang.textContent = `자막: ${srcName} ${genTag} (번역 대기)`;
+        metaLang.textContent = typeof t === "function" ? t("meta_subs_pending", { src: srcName, gen: genTag }) : `자막: ${srcName} ${genTag} (번역 대기)`;
       }
     }
   }
@@ -467,7 +501,7 @@ function applyLanguageState(payload) {
 async function reloadSubtitles(opts = {}) {
   if (!currentVideoId || isLocalVideo) return;
   if (isTranslatingSubtitles) {
-    alert("현재 번역 작업이 진행 중입니다. 완료되거나 취소된 후 언어를 변경해주세요.");
+    alert(typeof t === "function" ? t("alert_translating_wait") : "현재 번역 작업이 진행 중입니다. 완료되거나 취소된 후 언어를 변경해주세요.");
     return;
   }
 
@@ -477,7 +511,7 @@ async function reloadSubtitles(opts = {}) {
 
   const btn = document.getElementById("request-sub-translate-btn");
   const text = document.getElementById("trans-btn-text");
-  if (text) text.textContent = "자막 조회 중...";
+  if (text) text.textContent = typeof t === "function" ? t("btn_sub_fetching") : "자막 조회 중...";
 
   try {
     const res = await fetch("/api/subtitles/reload", {
@@ -513,7 +547,7 @@ async function reloadSubtitles(opts = {}) {
       if (curTime >= 0) updateActiveSubtitle(curTime);
     }
   } catch (err) {
-    alert("자막 언어 갱신 오류: " + err.message);
+    alert(typeof t === "function" ? t("alert_sub_lang_error", { err: err.message }) : ("자막 언어 갱신 오류: " + err.message));
     updateTranslationButtonState();
   }
 }
@@ -541,7 +575,7 @@ function updateTranslationButtonState() {
     if (text) text.textContent = typeof t === "function" ? t("btn_translate_same") : "자막 준비 완료";
     if (icon) icon.textContent = "🆗";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = `원문과 번역 대상 언어가 ${targetName}(으)로 동일합니다.`;
+    btn.title = typeof t === "function" ? t("btn_translate_same_title", { lang: targetName }) : `원문과 번역 대상 언어가 ${targetName}(으)로 동일합니다.`;
     return;
   }
 
@@ -560,7 +594,7 @@ function updateTranslationButtonState() {
     if (text) text.textContent = `📺 YouTube ${targetName}`;
     if (icon) icon.textContent = "📺";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = `YouTube 공식 ${targetName} 자막이 적용되었습니다. 클릭하면 Gemini로 다시 번역할 수 있습니다.`;
+    btn.title = typeof t === "function" ? t("btn_translate_yt_title", { lang: targetName }) : `YouTube 공식 ${targetName} 자막이 적용되었습니다. 클릭하면 Gemini로 다시 번역할 수 있습니다.`;
     return;
   }
 
@@ -571,14 +605,14 @@ function updateTranslationButtonState() {
     if (text) text.textContent = typeof t === "function" ? t("btn_translate_retranslate", { lang: targetName }) : `${targetName} 재번역`;
     if (icon) icon.textContent = "🔄";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = `${targetName} 번역이 완료된 상태입니다. 클릭하면 새로 다시 번역합니다.`;
+    btn.title = typeof t === "function" ? t("btn_translate_done_title", { lang: targetName }) : `${targetName} 번역이 완료된 상태입니다. 클릭하면 새로 다시 번역합니다.`;
   } else {
     btn.disabled = false;
     btn.className = "px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
     if (text) text.textContent = typeof t === "function" ? t("btn_translate_request", { lang: targetName }) : `${targetName} 번역 요청`;
     if (icon) icon.textContent = "⚡";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = `Gemini를 호출하여 ${targetName} 번역을 명시적으로 생성합니다 (API 사용)`;
+    btn.title = typeof t === "function" ? t("btn_translate_req_title", { lang: targetName }) : `Gemini를 호출하여 ${targetName} 번역을 명시적으로 생성합니다 (API 사용)`;
   }
 }
 
@@ -597,8 +631,8 @@ function showTranslationModal() {
 
   if (bar) bar.style.width = "0%";
   if (percent) percent.textContent = "0%";
-  if (label) label.textContent = "번역 작업 초기화 중...";
-  if (logBox) logBox.innerHTML = `<div class="text-slate-500">[시작] 번역 준비 중입니다...</div>`;
+  if (label) label.textContent = typeof t === "function" ? t("trans_init") : "번역 작업 초기화 중...";
+  if (logBox) logBox.innerHTML = `<div class="text-slate-500">${typeof t === "function" ? t("trans_ready_log") : "[시작] 번역 준비 중입니다..."}</div>`;
   if (abortBtn) abortBtn.classList.remove("hidden");
   if (cancelBtn) cancelBtn.classList.add("hidden");
   if (completeBtn) completeBtn.classList.add("hidden");
@@ -606,7 +640,7 @@ function showTranslationModal() {
 
 function closeTranslationModal() {
   if (isTranslatingSubtitles) {
-    const confirmCancel = confirm("현재 번역 작업이 진행 중입니다.\n번역을 취소하고 창을 닫으시겠습니까?");
+    const confirmCancel = confirm(typeof t === "function" ? t("confirm_cancel_trans") : "현재 번역 작업이 진행 중입니다.\n번역을 취소하고 창을 닫으시겠습니까?");
     if (confirmCancel) {
       abortTranslation();
     } else {
@@ -624,7 +658,7 @@ function abortTranslation() {
     } catch (e) {}
     transAbortController = null;
   }
-  appendTransLog("🛑 사용자에 의해 자막 번역 요청이 취소되었습니다.", "warn");
+  appendTransLog(typeof t === "function" ? t("trans_canceled_user") : "🛑 사용자에 의해 자막 번역 요청이 취소되었습니다.", "warn");
   isTranslatingSubtitles = false;
   updateTranslationButtonState();
 
@@ -634,7 +668,7 @@ function abortTranslation() {
   if (cancelBtn) cancelBtn.classList.remove("hidden");
 
   const labelEl = document.getElementById("trans-progress-label");
-  if (labelEl) labelEl.textContent = "번역 작업이 취소되었습니다.";
+  if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_canceled_label") : "번역 작업이 취소되었습니다.";
 }
 
 function appendTransLog(message, type = "info") {
@@ -677,7 +711,7 @@ async function requestTranslation(force = false) {
   if (!currentSubtitles || currentSubtitles.length === 0) {
     if (currentNoteId || currentVideoId) {
       showTranslationModal();
-      appendTransLog("현재 메모리에 자막이 없어 서버에서 자막 데이터를 조회합니다...", "info");
+      appendTransLog(typeof t === "function" ? t("trans_fetch_memory") : "현재 메모리에 자막이 없어 서버에서 자막 데이터를 조회합니다...", "info");
       try {
         const fetchRes = await fetch("/api/subtitles", {
           method: "POST",
@@ -693,33 +727,33 @@ async function requestTranslation(force = false) {
         if (d.success && d.subtitles && d.subtitles.length > 0) {
           setSubtitles(d.subtitles);
           applyLanguageState(d);
-          appendTransLog(`서버에서 자막 ${d.subtitles.length}개를 성공적으로 불러왔습니다.`, "success");
+          appendTransLog(typeof t === "function" ? t("trans_fetch_success", { count: d.subtitles.length }) : `서버에서 자막 ${d.subtitles.length}개를 성공적으로 불러왔습니다.`, "success");
         } else {
-          appendTransLog("해당 영상의 자막 데이터를 찾지 못했습니다.", "error");
-          alert("번역할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 자막을 불러와주세요.");
+          appendTransLog(typeof t === "function" ? t("trans_fetch_not_found") : "해당 영상의 자막 데이터를 찾지 못했습니다.", "error");
+          alert(typeof t === "function" ? t("alert_no_subs_to_trans") : "번역할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 자막을 불러와주세요.");
           closeTranslationModal();
           return false;
         }
       } catch (err) {
-        appendTransLog("자막 조회 실패: " + err.message, "error");
+        appendTransLog(typeof t === "function" ? t("trans_fetch_failed", { err: err.message }) : ("자막 조회 실패: " + err.message), "error");
         closeTranslationModal();
         return false;
       }
     } else {
-      alert("번역할 자막 데이터가 없습니다. 먼저 영상이나 자막을 불러와주세요.");
+      alert(typeof t === "function" ? t("alert_no_subs_to_trans") : "번역할 자막 데이터가 없습니다. 먼저 영상이나 자막을 불러와주세요.");
       return false;
     }
   }
 
   if (isTranslatingSubtitles) {
     showTranslationModal();
-    appendTransLog("이미 번역 작업이 진행 중입니다.", "warn");
+    appendTransLog(typeof t === "function" ? t("trans_already_running") : "이미 번역 작업이 진행 중입니다.", "warn");
     return false;
   }
 
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
   if (hasKo && !force) {
-    const retrans = confirm(`이미 ${targetName} 번역이 생성되어 있습니다.\nGemini에 다시 번역을 요청하시겠습니까? (API 사용량이 발생합니다)`);
+    const retrans = confirm(typeof t === "function" ? t("confirm_retrans", { lang: targetName }) : `이미 ${targetName} 번역이 생성되어 있습니다.\nGemini에 다시 번역을 요청하시겠습니까? (API 사용량이 발생합니다)`);
     if (!retrans) return false;
   }
 
@@ -736,7 +770,7 @@ async function requestTranslation(force = false) {
   const completeBtn = document.getElementById("complete-trans-btn");
 
   try {
-    appendTransLog(`Gemini [${targetName}] 자막 번역 스트리밍 연결을 시작합니다...`, "info");
+    appendTransLog(typeof t === "function" ? t("trans_stream_start", { lang: targetName }) : `Gemini [${targetName}] 자막 번역 스트리밍 연결을 시작합니다...`, "info");
 
     const res = await fetch("/api/subtitles/translate-stream", {
       method: "POST",
@@ -779,19 +813,19 @@ async function requestTranslation(force = false) {
             if (!isCurrentMedia(gen)) continue;
             
             if (data.type === "start") {
-              if (labelEl) labelEl.textContent = `총 ${data.total_count}개 대사 번역 준비 완료 (${data.total_batches}개 배치)`;
+              if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_ready_batches", { count: data.total_count, batches: data.total_batches }) : `총 ${data.total_count}개 대사 번역 준비 완료 (${data.total_batches}개 배치)`;
               appendTransLog(data.message, "info");
             } else if (data.type === "progress") {
               const p = data.percent || 0;
               if (bar) bar.style.width = `${p}%`;
               if (percentEl) percentEl.textContent = `${p}%`;
-              if (labelEl) labelEl.textContent = `번역 진행 중: [${data.batch_index}/${data.total_batches} 배치]`;
+              if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_batch_progress", { curr: data.batch_index, total: data.total_batches }) : `번역 진행 중: [${data.batch_index}/${data.total_batches} 배치]`;
               appendTransLog(data.message, "progress");
             } else if (data.type === "log") {
               appendTransLog(data.message, data.level || "info");
             } else if (data.type === "cancelled") {
               appendTransLog(data.message, "warn");
-              if (labelEl) labelEl.textContent = "번역 작업이 취소되었습니다.";
+              if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_canceled_label") : "번역 작업이 취소되었습니다.";
               if (data.subtitles && data.subtitles.length > 0) {
                 currentSubtitles = data.subtitles;
                 const searchInput = document.getElementById("subtitle-search-input");
@@ -802,7 +836,7 @@ async function requestTranslation(force = false) {
               currentTranslationSource = "gemini";
               if (bar) bar.style.width = "100%";
               if (percentEl) percentEl.textContent = "100%";
-              if (labelEl) labelEl.textContent = "번역 완료!";
+              if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_completed_label") : "번역 완료!";
               appendTransLog(data.message, "success");
 
               if (data.subtitles && data.subtitles.length > 0) {
@@ -839,8 +873,8 @@ async function requestTranslation(force = false) {
               if (cancelBtn) cancelBtn.classList.remove("hidden");
             } else if (data.type === "error") {
               appendTransLog(data.message, "error");
-              if (labelEl) labelEl.textContent = "오류 발생";
-              alert(`${targetName} 자막 번역 중 오류: ` + data.message);
+              if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_error_label") : "오류 발생";
+              alert(typeof t === "function" ? t("trans_error_alert", { lang: targetName, msg: data.message }) : (`${targetName} 자막 번역 중 오류: ` + data.message));
             }
           } catch (e) {
             console.error("SSE JSON 파싱 오류:", e, line);
@@ -852,10 +886,10 @@ async function requestTranslation(force = false) {
     return translationDone;
   } catch (err) {
     if (err.name === "AbortError" || transAbortController === null) {
-      appendTransLog("🛑 번역 요청이 취소되었습니다.", "warn");
+      appendTransLog(typeof t === "function" ? t("trans_canceled_user") : "🛑 번역 요청이 취소되었습니다.", "warn");
     } else {
-      appendTransLog("네트워크 또는 번역 처리 오류: " + err.message, "error");
-      alert(`${targetName} 자막 번역 오류: ` + err.message);
+      appendTransLog(typeof t === "function" ? t("trans_net_error_log", { err: err.message }) : ("네트워크 또는 번역 처리 오류: " + err.message), "error");
+      alert(typeof t === "function" ? t("trans_error_alert", { lang: targetName, msg: err.message }) : (`${targetName} 자막 번역 오류: ` + err.message));
     }
     return false;
   } finally {
@@ -922,9 +956,11 @@ function getSyncOffset() {
 }
 
 function formatSyncOffset(sec) {
-  if (Math.abs(sec) < 0.05) return "싱크 0.0s";
+  if (Math.abs(sec) < 0.05) return typeof t === "function" ? t("sync_osd_zero") : "싱크 0.0s";
   const abs = Math.abs(sec).toFixed(1);
-  return sec > 0 ? `${abs}s 빠르게` : `${abs}s 늦게`;
+  return sec > 0
+    ? (typeof t === "function" ? t("sync_osd_faster", { sec: abs }) : `${abs}s 빠르게`)
+    : (typeof t === "function" ? t("sync_osd_slower", { sec: abs }) : `${abs}s 늦게`);
 }
 
 function refreshSyncBadge(force = false) {
@@ -942,7 +978,7 @@ function refreshSyncBadge(force = false) {
 function showSyncOsd(text) {
   const osd = document.getElementById("sync-osd");
   if (!osd) return;
-  osd.textContent = `⏱ 자막 ${text}`;
+  osd.textContent = typeof t === "function" ? t("sync_osd_format", { text }) : `⏱ 자막 ${text}`;
   osd.classList.remove("hidden");
   if (syncOsdTimer) clearTimeout(syncOsdTimer);
   syncOsdTimer = setTimeout(() => osd.classList.add("hidden"), 1200);
@@ -1126,7 +1162,7 @@ function updateFullscreenUI() {
   }
 
   if (floatBtn) {
-    floatBtn.title = inFs ? "기본 화면으로 복원 (단축키: ESC 또는 F)" : "자막과 함께 전체화면 전환 (단축키: F)";
+    floatBtn.title = inFs ? (typeof t === "function" ? t("fs_restore_title") : "기본 화면으로 복원 (단축키: ESC 또는 F)") : (typeof t === "function" ? t("fs_enter_floating_title") : "자막과 함께 전체화면 전환 (단축키: F)");
     if (inFs) {
       floatBtn.classList.add("bg-sky-600/90", "border-sky-400");
     } else {
@@ -1138,8 +1174,8 @@ function updateFullscreenUI() {
     const icon = playerFsBtn.querySelector(".fullscreen-icon");
     const label = playerFsBtn.querySelector(".fullscreen-label");
     if (icon) icon.textContent = inFs ? "🗗" : "⛶";
-    if (label) label.textContent = inFs ? "창 모드" : "전체화면";
-    playerFsBtn.title = inFs ? "기본 화면으로 복원 (단축키: ESC 또는 F)" : "자막과 함께 전체화면 시청 (단축키: F)";
+    if (label) label.textContent = inFs ? (typeof t === "function" ? t("fs_window_mode") : "창 모드") : (typeof t === "function" ? t("fs_fullscreen_mode") : "전체화면");
+    playerFsBtn.title = inFs ? (typeof t === "function" ? t("fs_restore_title") : "기본 화면으로 복원 (단축키: ESC 또는 F)") : (typeof t === "function" ? t("fs_enter_title") : "자막과 함께 전체화면 시청 (단축키: F)");
     if (inFs) {
       playerFsBtn.classList.add("bg-sky-700", "text-white");
     } else {
@@ -1250,14 +1286,14 @@ function updateSubtitleAutoScrollUI() {
 
   if (isSubtitleAutoScroll) {
     btn.className = "px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm";
-    btn.title = "자동 스크롤이 켜져 있습니다 (클릭 시 끄기)";
+    btn.title = typeof t === "function" ? t("autoscroll_on_title") : "자동 스크롤이 켜져 있습니다 (클릭 시 끄기)";
     if (icon) icon.textContent = "📜";
-    if (text) text.textContent = "자동 스크롤 ON";
+    if (text) text.textContent = typeof t === "function" ? t("sub_autoscroll_on") : "자동 스크롤 ON";
   } else {
     btn.className = "px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm";
-    btn.title = "자동 스크롤이 꺼져 있습니다 (자막 자유 탐색 중, 클릭 시 켜기)";
+    btn.title = typeof t === "function" ? t("autoscroll_off_title") : "자동 스크롤이 꺼져 있습니다 (자막 자유 탐색 중, 클릭 시 켜기)";
     if (icon) icon.textContent = "⏸️";
-    if (text) text.textContent = "자동 스크롤 OFF";
+    if (text) text.textContent = typeof t === "function" ? t("sub_autoscroll_off") : "자동 스크롤 OFF";
   }
 }
 
@@ -1375,22 +1411,28 @@ function renderSubtitlesList(filterKeyword = "") {
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
   let noticeHtml = "";
   if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !hasKo && !isSameLanguage) {
-    const modeName = currentSubLang === "ko" ? `${targetName} 번역` : (targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`);
+    const modeName = currentSubLang === "ko" ? (typeof t === "function" ? t("mode_translated", { lang: targetName }) : `${targetName} 번역`) : (typeof t === "function" ? t("mode_bilingual", { lang: targetName }) : `${targetName} 병기`);
+    const noticeTitle = typeof t === "function" ? t("sub_notice_title", { mode: modeName, lang: targetName }) : `${modeName} 안내: ${targetName} 번역이 아직 요청되지 않았습니다.`;
+    const noticeDesc = typeof t === "function" ? t("sub_notice_desc") : "Gemini API 사용량을 절약하기 위해 번역 요청 시에만 수동으로 번역합니다.";
+    const noticeBtnText = typeof t === "function" ? t("sub_notice_btn", { lang: targetName }) : `⚡ 지금 ${targetName} 번역 요청`;
     noticeHtml = `
       <div class="mb-3 p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
         <div class="flex items-center space-x-2">
           <span class="text-base">⚡</span>
           <div class="text-xs">
-            <span class="font-bold">${modeName} 안내: ${targetName} 번역이 아직 요청되지 않았습니다.</span>
-            <p class="text-[11px] text-amber-300/80 mt-0.5">Gemini API 사용량을 절약하기 위해 번역 요청 시에만 수동으로 번역합니다.</p>
+            <span class="font-bold">${noticeTitle}</span>
+            <p class="text-[11px] text-amber-300/80 mt-0.5">${noticeDesc}</p>
           </div>
         </div>
         <button type="button" id="inline-request-trans-btn" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs transition flex-shrink-0 flex items-center space-x-1 shadow">
-          <span>⚡ 지금 ${targetName} 번역 요청</span>
+          <span>${noticeBtnText}</span>
         </button>
       </div>
     `;
   }
+
+  const waitingSimpleBadge = typeof t === "function" ? t("sub_waiting_trans_simple") : "(번역 대기)";
+  const waitingTargetBadge = typeof t === "function" ? t("sub_waiting_trans", { lang: targetName }) : `(${targetName} 번역 대기)`;
 
   currentSubtitles.forEach((sub, subIdx) => {
     const origText = sub.text || "";
@@ -1408,7 +1450,7 @@ function renderSubtitlesList(filterKeyword = "") {
       if (koText) {
         displayTextHtml = `<div class="text-slate-100 text-xs leading-relaxed">${escapeHtml(koText)}</div>`;
       } else {
-        displayTextHtml = `<div class="text-slate-300 text-xs leading-relaxed italic">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans not-italic bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">(번역 대기)</span></div>`;
+        displayTextHtml = `<div class="text-slate-300 text-xs leading-relaxed italic">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans not-italic bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">${waitingSimpleBadge}</span></div>`;
       }
     } else if (currentSubLang === "bilingual") {
       if (koText) {
@@ -1418,19 +1460,21 @@ function renderSubtitlesList(filterKeyword = "") {
         `;
       } else {
         displayTextHtml = `
-          <div class="text-slate-200 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans font-normal bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">(${targetName} 번역 대기)</span></div>
+          <div class="text-slate-200 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans font-normal bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">${waitingTargetBadge}</span></div>
         `;
       }
     } else {
       displayTextHtml = `<div class="text-slate-100 text-xs leading-relaxed">${escapeHtml(origText)}</div>`;
     }
 
+    const jumpTooltip = typeof t === "function" ? t("sub_jump_tooltip", { time: timeStr }) : `클릭하여 ${timeStr} 구간으로 이동`;
+
     html += `
       <div 
         class="subtitle-row p-2.5 rounded-xl bg-slate-900/60 hover:bg-slate-800/90 border border-slate-800 hover:border-sky-500/50 cursor-pointer transition flex items-start space-x-3 group"
         data-seconds="${secs}"
         data-idx="${subIdx}"
-        title="클릭하여 ${timeStr} 구간으로 이동"
+        title="${jumpTooltip}"
       >
         <button type="button" class="flex-shrink-0 px-2 py-1 rounded-lg bg-sky-500/10 group-hover:bg-sky-500 text-sky-400 group-hover:text-white font-mono text-[11px] font-bold transition flex items-center space-x-1">
           <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
@@ -1444,9 +1488,10 @@ function renderSubtitlesList(filterKeyword = "") {
   });
 
   if (matchedCount === 0 && keyword) {
+    const noResultMsg = typeof t === "function" ? t("no_search_results", { keyword: escapeHtml(keyword) }) : `'${escapeHtml(keyword)}' 검색 결과가 없습니다.`;
     container.innerHTML = noticeHtml + `
       <div class="text-center py-12 text-slate-500 text-xs">
-        '${escapeHtml(keyword)}' 검색 결과가 없습니다.
+        ${noResultMsg}
       </div>`;
   } else {
     container.innerHTML = noticeHtml + html;
@@ -1539,9 +1584,11 @@ async function changeSubLanguage(newLang, fromPlayerBar = false) {
   // 영상 하단 플레이어 바에서 미번역 상태로 번역/병기 선택 시 명시적 확인창 제공
   if ((newLang === "ko" || newLang === "bilingual") && currentSubtitles.length > 0 && !hasKo && !isSameLanguage) {
     if (fromPlayerBar) {
-      const modeLabel = newLang === "ko" ? `${targetName} 자막` : (targetName === "한국어" ? "한/영 병기 자막" : `${targetName} 병기 자막`);
+      const modeSuffix = newLang === "ko" ? (typeof t === "function" ? t("mode_trans_sub_suffix") : "자막") : (typeof t === "function" ? t("mode_bilingual_sub_suffix") : "병기 자막");
+      const modeLabel = `${targetName} ${modeSuffix}`;
+      const defaultSwitchPrompt = `[${modeLabel}]이 아직 생성되지 않았습니다.\n지금 Gemini에 ${targetName} 번역을 요청하시겠습니까? (API 사용량이 발생합니다)\n\n[확인]을 누르면 번역 후 표시되고, [취소]를 누르면 원문 자막이 유지됩니다.`;
       const wantTranslate = confirm(
-        `[${modeLabel}]이 아직 생성되지 않았습니다.\n지금 Gemini에 ${targetName} 번역을 요청하시겠습니까? (API 사용량이 발생합니다)\n\n[확인]을 누르면 번역 후 표시되고, [취소]를 누르면 원문 자막이 유지됩니다.`
+        typeof t === "function" ? t("confirm_request_trans_before_switch", { mode: modeLabel, lang: targetName }) : defaultSwitchPrompt
       );
       if (wantTranslate) {
         currentSubLang = newLang;
@@ -1574,7 +1621,7 @@ async function changeSubLanguage(newLang, fromPlayerBar = false) {
 
 async function triggerSubtitleDownload(format) {
   if (!currentSubtitles || currentSubtitles.length === 0) {
-    alert("다운로드할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 불러와주세요.");
+    alert(typeof t === "function" ? t("alert_no_subs_to_dl") : "다운로드할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 불러와주세요.");
     return;
   }
 
@@ -1583,9 +1630,10 @@ async function triggerSubtitleDownload(format) {
   let downloadLangMode = currentSubLang;
 
   if ((downloadLangMode === "ko" || downloadLangMode === "bilingual") && !hasKo && !isSameLanguage) {
-    const modeName = downloadLangMode === "ko" ? `${targetName} 번역` : (targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`);
+    const modeName = downloadLangMode === "ko" ? (typeof t === "function" ? t("mode_translated", { lang: targetName }) : `${targetName} 번역`) : (typeof t === "function" ? t("mode_bilingual", { lang: targetName }) : `${targetName} 병기`);
+    const defaultDlPrompt = `${modeName} 자막 데이터가 아직 없습니다.\n지금 Gemini 번역을 요청하여 생성한 후 다운로드하시겠습니까? (API 사용량이 발생합니다)\n\n[취소]를 누르면 번역 없이 원문 자막으로 다운로드합니다.`;
     const wantTranslate = confirm(
-      `${modeName} 자막 데이터가 아직 없습니다.\n지금 Gemini 번역을 요청하여 생성한 후 다운로드하시겠습니까? (API 사용량이 발생합니다)\n\n[취소]를 누르면 번역 없이 원문 자막으로 다운로드합니다.`
+      typeof t === "function" ? t("confirm_request_trans_before_dl", { mode: modeName }) : defaultDlPrompt
     );
     if (wantTranslate) {
       const ok = await requestTranslation(true);
@@ -1624,7 +1672,7 @@ async function triggerSubtitleDownload(format) {
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
   } catch (err) {
-    alert("자막 다운로드 오류: " + err.message);
+    alert(typeof t === "function" ? t("alert_sub_dl_error", { err: err.message }) : ("자막 다운로드 오류: " + err.message));
   }
 }
 
@@ -1660,7 +1708,7 @@ function abortCurrentAnalysis() {
   const submitBtn = document.getElementById("submit-btn");
   submitBtn.disabled = false;
   submitBtn.classList.remove("opacity-50");
-  alert("🛑 분석 작업이 사용자에 의해 즉시 중단되었습니다.");
+  alert(typeof t === "function" ? t("alert_analysis_cancelled") : "🛑 분석 작업이 사용자에 의해 즉시 중단되었습니다.");
 }
 
 // 1. Gemini 자동 분석 실행
@@ -1678,13 +1726,13 @@ async function runGeminiAnalysis(url) {
   submitBtn.classList.add("opacity-50");
 
   setAnalysisStep(1);
-  loadingTitle.textContent = "1단계: 자막 및 영상 정보 추출 중...";
-  loadingDesc.textContent = "유튜브 서버에서 타임스탬프 자막을 가져오고 있습니다.";
+  loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step1_title") : "1단계: 자막 및 영상 정보 추출 중...";
+  loadingDesc.textContent = typeof t === "function" ? t("loading_yt_step1_desc") : "유튜브 서버에서 타임스탬프 자막을 가져오고 있습니다.";
 
   const stepTimer = setTimeout(() => {
     setAnalysisStep(2);
-    loadingTitle.textContent = "2단계: Gemini가 문맥 오류 교정 및 Deep Dive 생성 중...";
-    loadingDesc.textContent = "초대형 컨텍스트 윈도우로 전체 흐름을 정밀 분석하고 지식 해설을 작성합니다.";
+    loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step2_title") : "2단계: Gemini가 문맥 오류 교정 및 Deep Dive 생성 중...";
+    loadingDesc.textContent = typeof t === "function" ? t("loading_yt_step2_desc") : "초대형 컨텍스트 윈도우로 전체 흐름을 정밀 분석하고 지식 해설을 작성합니다.";
   }, 1200);
 
   try {
@@ -1702,7 +1750,7 @@ async function runGeminiAnalysis(url) {
 
     clearTimeout(stepTimer);
     setAnalysisStep(3);
-    loadingTitle.textContent = "3단계: 문서 렌더링 및 로컬 저장 완료 중...";
+    loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step3_title") : "3단계: 문서 렌더링 및 로컬 저장 완료 중...";
 
     let data = null;
     try {
@@ -1730,7 +1778,7 @@ async function runGeminiAnalysis(url) {
     loadLibrary();
   } catch (err) {
     if (err.name === 'AbortError') return;
-    alert("오류: " + err.message);
+    alert(typeof t === "function" ? t("alert_error_prefix", { err: err.message }) : ("오류: " + err.message));
   } finally {
     clearTimeout(stepTimer);
     currentAbortController = null;
@@ -1795,9 +1843,9 @@ async function runSubscriptionPrompt(url) {
     pasteTextarea.value = "";
     pasteTextarea.focus();
 
-    alert("✨ 완성된 심화 프롬프트가 클립보드에 복사되었습니다!\n\n1. 사용 중이신 ChatGPT 또는 Claude 대화창에 붙여넣고(Ctrl+V) 답변을 받으세요.\n2. 받은 답변을 우측 'ChatGPT / Claude 답변 붙여넣기' 창에 넣고 [노트 적용]을 누르면 즉시 연동됩니다.");
+    alert(typeof t === "function" ? t("alert_prompt_copied_detail") : "✨ 완성된 심화 프롬프트가 클립보드에 복사되었습니다!\n\n1. 사용 중이신 ChatGPT 또는 Claude 대화창에 붙여넣고(Ctrl+V) 답변을 받으세요.\n2. 받은 답변을 우측 'ChatGPT / Claude 답변 붙여넣기' 창에 넣고 [노트 적용]을 누르면 즉시 연동됩니다.");
   } catch (e) {
-    alert("오류: " + e.message);
+    alert(typeof t === "function" ? t("alert_error_prefix", { err: e.message }) : ("오류: " + e.message));
   } finally {
     submitBtn.disabled = false;
     submitBtn.classList.remove("opacity-50");
@@ -1852,7 +1900,7 @@ async function loadLibrary() {
       const delBtn = card.querySelector(".delete-note-btn");
       delBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        if (confirm(`'${item.title}' 학습 노트를 삭제하시겠습니까?`)) {
+        if (confirm(typeof t === "function" ? t("confirm_delete_named", { title: item.title }) : `'${item.title}' 학습 노트를 삭제하시겠습니까?`)) {
           await fetch(`/api/notes/${item.note_id || item.video_id}`, { method: "DELETE" });
           loadLibrary();
         }
@@ -1868,7 +1916,7 @@ async function loadLibrary() {
 async function loadSingleSavedNote(noteIdOrVid) {
   try {
     const res = await fetch(`/api/notes/${noteIdOrVid}`);
-    if (!res.ok) throw new Error("노트를 불러올 수 없습니다.");
+    if (!res.ok) throw new Error(typeof t === "function" ? t("alert_note_load_error", { err: "404" }) : "노트를 불러올 수 없습니다.");
     const data = await res.json();
 
     const gen = switchMediaContext(data.metadata.video_id, data.note_id);
@@ -1884,7 +1932,7 @@ async function loadSingleSavedNote(noteIdOrVid) {
       if (lp) lp.pause();
     }
     displayVideoMetadata(data.metadata);
-    renderMarkdownNote(data.markdown, "저장된 보관 노트", currentNoteId);
+    renderMarkdownNote(data.markdown, typeof t === "function" ? t("note_status_saved") : "저장된 보관 노트", currentNoteId);
     document.getElementById("inline-paste-card").classList.add("hidden");
 
     const meta = data.metadata || {};
@@ -1965,7 +2013,7 @@ async function loadSingleSavedNote(noteIdOrVid) {
     // 편집 모드 종료 상태로 복원
     if (isEditing) toggleEditor(false);
   } catch (err) {
-    alert("노트 로드 실패: " + err.message);
+    alert(typeof t === "function" ? t("alert_note_load_error", { err: err.message }) : ("노트 로드 실패: " + err.message));
   }
 }
 
@@ -2020,12 +2068,12 @@ async function checkConfig() {
     const res = await fetch("/api/config");
     const data = await res.json();
     if (data.has_api_key) {
-      document.getElementById("api-key-input").placeholder = `현재 설정됨 (${data.masked_key})`;
+      document.getElementById("api-key-input").placeholder = typeof t === "function" ? t("placeholder_api_key_set", { key: data.masked_key }) : `현재 설정됨 (${data.masked_key})`;
     }
     const groqInput = document.getElementById("groq-api-key-input");
     if (groqInput) {
       if (data.has_groq_key) {
-        groqInput.placeholder = `현재 설정됨 (${data.masked_groq_key})`;
+        groqInput.placeholder = typeof t === "function" ? t("placeholder_api_key_set", { key: data.masked_groq_key }) : `현재 설정됨 (${data.masked_groq_key})`;
       } else {
         groqInput.placeholder = "gsk_...";
       }
@@ -2055,6 +2103,22 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSourceLangSelect();
     updateTranslationButtonState();
     loadTtsVoices();
+    refreshSyncBadge(true);
+    updateSubtitleAutoScrollUI();
+    checkConfig();
+
+    if (currentVideoInfo) {
+      displayVideoMetadata(currentVideoInfo);
+      if (currentSubtitles) {
+        applyLanguageState({
+          subtitles: currentSubtitles,
+          target_lang: currentTargetLang,
+          transcript_language: currentOriginalLang,
+          translation_source: currentTranslationSource
+        });
+      }
+    }
+
     if (isEditing) {
       const editBtnText = document.getElementById("edit-btn-text");
       if (editBtnText) editBtnText.textContent = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
@@ -2113,10 +2177,10 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
       if (!res.ok) throw new Error("저장 실패");
 
-      renderMarkdownNote(editedMd, "수정 및 저장됨", currentNoteId);
+      renderMarkdownNote(editedMd, typeof t === "function" ? t("note_status_modified") : "수정 및 저장됨", currentNoteId);
       toggleEditor(false);
       loadLibrary();
-      alert("💾 수정된 내용이 성공적으로 저장되었습니다!");
+      alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
     } catch (e) {
       // 만약 note_id가 없어서 PUT 실패 시 manual-save로 fallback
       try {
@@ -2124,7 +2188,7 @@ document.addEventListener("DOMContentLoaded", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
-            title: currentVideoInfo ? currentVideoInfo.title : "수정된 학습 노트", 
+            title: currentVideoInfo ? currentVideoInfo.title : (typeof t === "function" ? t("default_modified_title") : "수정된 학습 노트"), 
             markdown: editedMd,
             note_id: currentNoteId,
             subtitles: currentSubtitles,
@@ -2135,12 +2199,12 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         const d2 = await res2.json();
         currentNoteId = d2.note_id;
-        renderMarkdownNote(editedMd, "수정 및 저장됨", currentNoteId);
+        renderMarkdownNote(editedMd, typeof t === "function" ? t("note_status_modified") : "수정 및 저장됨", currentNoteId);
         toggleEditor(false);
         loadLibrary();
-        alert("💾 수정된 내용이 성공적으로 저장되었습니다!");
+        alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
       } catch (err2) {
-        alert("저장 오류: " + err2.message);
+        alert(typeof t === "function" ? t("alert_save_error", { err: err2.message }) : ("저장 오류: " + err2.message));
       }
     }
   });
@@ -2150,7 +2214,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const url = document.getElementById("url-input").value.trim() || (currentVideoInfo ? currentVideoInfo.url : "");
     const rawMd = document.getElementById("inline-paste-textarea").value.trim();
     if (!rawMd) {
-      alert("붙여넣을 마크다운 내용을 입력해 주세요.");
+      alert(typeof t === "function" ? t("alert_paste_empty") : "붙여넣을 마크다운 내용을 입력해 주세요.");
       return;
     }
 
@@ -2179,12 +2243,12 @@ document.addEventListener("DOMContentLoaded", () => {
         currentNoteId = data.note_id;
       }
       displayVideoMetadata(data.video_info);
-      renderMarkdownNote(data.markdown, "구독 AI 연동 노트", data.note_id);
+      renderMarkdownNote(data.markdown, typeof t === "function" ? t("note_status_sub_ai") : "구독 AI 연동 노트", data.note_id);
       loadLibrary();
       document.getElementById("inline-paste-textarea").value = "";
-      alert("✅ 구독 AI 학습 노트가 독립된 새 노트로 영구 저장되었습니다!");
+      alert(typeof t === "function" ? t("alert_paste_applied") : "✅ 구독 AI 학습 노트가 독립된 새 노트로 영구 저장되었습니다!");
     } catch (e) {
-      alert("오류: " + e.message);
+      alert(typeof t === "function" ? t("alert_error_prefix", { err: e.message }) : ("오류: " + e.message));
     }
   });
 
@@ -2200,10 +2264,10 @@ document.addEventListener("DOMContentLoaded", () => {
   async function handleLocalFileAction(isPromptOnly) {
     const videoFile = document.getElementById("local-video-input").files[0];
     const subFile = document.getElementById("local-subtitle-input").files[0];
-    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : "로컬 비디오");
+    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : (typeof t === "function" ? t("default_local_video_title") : "로컬 비디오"));
 
     if (!subFile) {
-      alert("자막 파일(.srt 또는 .vtt)을 선택해 주세요.");
+      alert(typeof t === "function" ? t("alert_select_local_sub") : "자막 파일(.srt 또는 .vtt)을 선택해 주세요.");
       return;
     }
 
@@ -2223,9 +2287,9 @@ document.addEventListener("DOMContentLoaded", () => {
       initLocalVideoPlayer(videoFile);
       displayVideoMetadata({
         title: title,
-        channel: "내 로컬 PC 파일",
+        channel: typeof t === "function" ? t("local_channel_name") : "내 로컬 PC 파일",
         video_type: "local",
-        duration_str: "로컬 영상"
+        duration_str: typeof t === "function" ? t("local_duration_str") : "로컬 영상"
       });
     }
 
@@ -2242,9 +2306,9 @@ document.addEventListener("DOMContentLoaded", () => {
         const d = await res.json();
         await navigator.clipboard.writeText(d.prompt);
         switchMode("subscription");
-        alert("✨ 로컬 자막으로 완성된 심화 프롬프트가 복사되었습니다!\nChatGPT/Claude에 붙여넣은 뒤 우측 '답변 붙여넣기'에 넣어주세요.");
+        alert(typeof t === "function" ? t("alert_local_prompt_copied") : "✨ 로컬 자막으로 완성된 심화 프롬프트가 복사되었습니다!\nChatGPT/Claude에 붙여넣은 뒤 우측 '답변 붙여넣기'에 넣어주세요.");
       } catch (e) {
-        alert("프롬프트 복사 오류: " + e.message);
+        alert(typeof t === "function" ? t("alert_prompt_copy_error", { err: e.message }) : ("프롬프트 복사 오류: " + e.message));
       }
     } else {
       // Gemini 분석
@@ -2267,7 +2331,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (d.subtitles) setSubtitles(d.subtitles);
         loadLibrary();
       } catch (e) {
-        alert("분석 오류: " + e.message);
+        alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
       } finally {
         loadingOverlay.classList.add("hidden");
       }
@@ -2281,7 +2345,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("local-audio-direct-btn").addEventListener("click", async () => {
     const videoFile = document.getElementById("local-video-input").files[0];
     if (!videoFile) {
-      alert("분석할 로컬 비디오 파일(.mp4, .webm, .mkv 등)을 먼저 선택해 주세요.");
+      alert(typeof t === "function" ? t("alert_select_local_video") : "분석할 로컬 비디오 파일(.mp4, .webm, .mkv 등)을 먼저 선택해 주세요.");
       return;
     }
 
@@ -2299,9 +2363,9 @@ document.addEventListener("DOMContentLoaded", () => {
     initLocalVideoPlayer(videoFile);
     displayVideoMetadata({
       title: title,
-      channel: "내 로컬 PC 영상 (음성 직접 청취)",
+      channel: typeof t === "function" ? t("local_channel_audio") : "내 로컬 PC 영상 (음성 직접 청취)",
       video_type: "local",
-      duration_str: "로컬 음성 분석"
+      duration_str: typeof t === "function" ? t("local_audio_duration_str") : "로컬 음성 분석"
     });
 
     document.getElementById("local-file-modal").classList.add("hidden");
@@ -2316,13 +2380,13 @@ document.addEventListener("DOMContentLoaded", () => {
     headerCancelBtn.classList.remove("hidden");
 
     setAnalysisStep(1);
-    loadingTitle.textContent = "1단계: 영상에서 오디오 추출 중...";
-    loadingDesc.textContent = "FFmpeg를 통해 영상에서 고압축 음성 트랙(MP3)을 신속하게 추출하고 있습니다.";
+    loadingTitle.textContent = typeof t === "function" ? t("loading_local_step1_title") : "1단계: 영상에서 오디오 추출 중...";
+    loadingDesc.textContent = typeof t === "function" ? t("loading_local_step1_desc") : "FFmpeg를 통해 영상에서 고압축 음성 트랙(MP3)을 신속하게 추출하고 있습니다.";
 
     const stepTimer = setTimeout(() => {
       setAnalysisStep(2);
-      loadingTitle.textContent = "2단계: Groq Whisper 0.1초 칼싱크 자막 & Gemini 지식 노트 생성 중...";
-      loadingDesc.textContent = "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.";
+      loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: Groq Whisper 0.1초 칼싱크 자막 & Gemini 지식 노트 생성 중...";
+      loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.";
     }, 2200);
 
     const formData = new FormData();
@@ -2344,16 +2408,16 @@ document.addEventListener("DOMContentLoaded", () => {
 
       clearTimeout(stepTimer);
       setAnalysisStep(3);
-      loadingTitle.textContent = "3단계: 노트 렌더링 및 보관함 저장 완료!";
+      loadingTitle.textContent = typeof t === "function" ? t("loading_local_step3_title") : "3단계: 노트 렌더링 및 보관함 저장 완료!";
 
-      renderMarkdownNote(data.markdown, `분석 엔진: ${data.model_used}`, data.note_id);
+      renderMarkdownNote(data.markdown, typeof t === "function" ? t("note_status_model_prefix", { model: data.model_used }) : `분석 엔진: ${data.model_used}`, data.note_id);
       if (data.subtitles) {
         setSubtitles(data.subtitles);
       }
       loadLibrary();
     } catch (e) {
       if (e.name === 'AbortError') return;
-      alert("분석 오류: " + e.message);
+      alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
     } finally {
       clearTimeout(stepTimer);
       currentAbortController = null;
@@ -2413,7 +2477,7 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("copy-markdown-btn").addEventListener("click", () => {
     if (!currentMarkdown) return;
     navigator.clipboard.writeText(currentMarkdown).then(() => {
-      alert("학습 노트 내용이 클립보드에 복사되었습니다!");
+      alert(typeof t === "function" ? t("alert_note_copied") : "학습 노트 내용이 클립보드에 복사되었습니다!");
     });
   });
 
@@ -2434,6 +2498,56 @@ document.addEventListener("DOMContentLoaded", () => {
   // 중단 버튼
   document.getElementById("cancel-analysis-btn").addEventListener("click", abortCurrentAnalysis);
   document.getElementById("header-cancel-btn").addEventListener("click", abortCurrentAnalysis);
+
+  async function fetchChannelVideos(url) {
+    const listEl = document.getElementById("channel-videos-list");
+    if (!listEl) return;
+    listEl.innerHTML = `<div class="text-xs text-slate-400 text-center py-8 flex items-center justify-center space-x-2">
+      <div class="w-4 h-4 border-2 border-sky-400 border-t-transparent rounded-full animate-spin"></div>
+      <span>${typeof t === "function" ? t("channel_loading") : "채널 영상 목록을 조회하고 있습니다..."}</span>
+    </div>`;
+    try {
+      const res = await fetch("/api/channel/videos", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channel_url: url })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.detail || "채널 영상을 가져오지 못했습니다.");
+      }
+      const data = await res.json();
+      const videos = data.videos || [];
+      if (videos.length === 0) {
+        listEl.innerHTML = `<p class="text-xs text-slate-500 text-center py-8">${typeof t === "function" ? t("channel_empty") : "조회된 영상이 없습니다."}</p>`;
+        return;
+      }
+      listEl.innerHTML = "";
+      videos.forEach(v => {
+        const card = document.createElement("div");
+        card.className = "flex items-center space-x-3 p-2 rounded-xl bg-slate-900/60 hover:bg-slate-800/80 border border-slate-800 hover:border-sky-500/50 cursor-pointer transition group";
+        card.innerHTML = `
+          <img src="${escapeHtmlStr(v.thumbnail || '')}" class="w-24 h-14 object-cover rounded-lg bg-black flex-shrink-0" onerror="this.style.display='none'" />
+          <div class="flex-1 min-w-0">
+            <h4 class="text-xs font-medium text-slate-200 group-hover:text-sky-300 truncate">${escapeHtmlStr(v.title || '')}</h4>
+            <p class="text-[11px] text-slate-500 mt-0.5">${escapeHtmlStr(v.duration_str || '')}</p>
+          </div>
+        `;
+        card.addEventListener("click", () => {
+          document.getElementById("channel-modal").classList.add("hidden");
+          document.getElementById("url-input").value = v.url || `https://www.youtube.com/watch?v=${v.id}`;
+          if (currentMode === "gemini") {
+            runGeminiAnalysis(v.url || `https://www.youtube.com/watch?v=${v.id}`);
+          } else {
+            runSubscriptionPrompt(v.url || `https://www.youtube.com/watch?v=${v.id}`);
+          }
+        });
+        listEl.appendChild(card);
+      });
+    } catch (err) {
+      listEl.innerHTML = `<p class="text-xs text-rose-400 text-center py-8">${escapeHtmlStr(err.message)}</p>`;
+    }
+  }
 
   // 보관함 / 채널 / 설정
   document.getElementById("library-toggle-btn").addEventListener("click", () => toggleDrawer(true));
@@ -2462,7 +2576,7 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (res.ok) alert("API 키가 성공적으로 저장되었습니다.");
+      if (res.ok) alert(typeof t === "function" ? t("alert_apikey_saved") : "API 키가 성공적으로 저장되었습니다.");
     }
     document.getElementById("settings-modal").classList.add("hidden");
     checkConfig();
@@ -2485,7 +2599,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (newTarget === currentTargetLang) return;
 
       if (isTranslatingSubtitles) {
-        alert("현재 번역 작업이 진행 중입니다. 번역 완료 또는 취소 후 언어를 변경해주세요.");
+        alert(typeof t === "function" ? t("alert_translating_wait") : "현재 번역 작업이 진행 중입니다. 번역 완료 또는 취소 후 언어를 변경해주세요.");
         subTargetSelect.value = currentTargetLang;
         return;
       }
@@ -2511,7 +2625,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (newSource === currentSourceLang) return;
 
       if (isTranslatingSubtitles) {
-        alert("현재 번역 작업이 진행 중입니다. 번역 완료 또는 취소 후 원문 트랙을 변경해주세요.");
+        alert(typeof t === "function" ? t("alert_translating_wait_track") : "현재 번역 작업이 진행 중입니다. 번역 완료 또는 취소 후 원문 트랙을 변경해주세요.");
         subSourceSelect.value = currentSourceLang || "";
         return;
       }
@@ -2673,7 +2787,7 @@ async function triggerAudiobookPlay() {
 
   const mdText = currentMarkdown || document.getElementById("note-editor-textarea")?.value || "";
   if (!mdText.trim()) {
-    alert("오디오북으로 변환할 학습 노트가 없습니다. 먼저 영상을 분석해주세요.");
+    alert(typeof t === "function" ? t("alert_no_note_for_tts") : "오디오북으로 변환할 학습 노트가 없습니다. 먼저 영상을 분석해주세요.");
     return;
   }
 
@@ -2692,11 +2806,11 @@ async function triggerAudiobookPlay() {
   if (btn) btn.disabled = true;
   if (icon) icon.classList.add("hidden");
   if (spinner) spinner.classList.remove("hidden");
-  if (text) text.textContent = "생성 중...";
+  if (text) text.textContent = typeof t === "function" ? t("tts_generating_short") : "생성 중...";
 
   if (card) card.classList.remove("hidden");
   if (badge) {
-    badge.textContent = "음성 생성 중...";
+    badge.textContent = typeof t === "function" ? t("tts_generating") : "음성 생성 중...";
     badge.className = "px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded text-[10px] font-mono animate-pulse";
   }
 
@@ -2736,13 +2850,13 @@ async function triggerAudiobookPlay() {
     }
 
     if (badge) {
-      badge.textContent = data.cached ? "재생 중 (캐시)" : "재생 중 (새 생성)";
+      badge.textContent = data.cached ? (typeof t === "function" ? t("tts_playing_cached") : "재생 중 (캐시)") : (typeof t === "function" ? t("tts_playing_new") : "재생 중 (새 생성)");
       badge.className = "px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-mono";
     }
   } catch (err) {
-    alert("오디오북 음성 생성 실패: " + err.message);
+    alert(typeof t === "function" ? t("alert_tts_error", { err: err.message }) : ("오디오북 음성 생성 실패: " + err.message));
     if (badge) {
-      badge.textContent = "오류 발생";
+      badge.textContent = typeof t === "function" ? t("tts_error") : "오류 발생";
       badge.className = "px-2 py-0.5 bg-rose-500/20 text-rose-300 rounded text-[10px] font-mono";
     }
   } finally {
@@ -2750,7 +2864,7 @@ async function triggerAudiobookPlay() {
     if (btn) btn.disabled = false;
     if (icon) icon.classList.remove("hidden");
     if (spinner) spinner.classList.add("hidden");
-    if (text) text.textContent = "오디오북";
+    if (text) text.textContent = typeof t === "function" ? t("btn_audiobook") : "오디오북";
   }
 }
 
@@ -2799,14 +2913,14 @@ async function loadTtsVoices() {
       const savedVoice = localStorage.getItem("tubescholar_tts_voice");
       voiceSelect.innerHTML = "";
 
-      const langGroups = {
-        ko: "🇰🇷 한국어 (Korean)",
-        en: "🇺🇸 English",
-        ja: "🇯🇵 日本語 (Japanese)",
-        zh: "🇨🇳 中文 (Chinese)",
-        es: "🇪🇸 Español",
-        fr: "🇫🇷 Français",
-        de: "🇩🇪 Deutsch"
+      const langGroupKeys = {
+        ko: "tts_group_ko",
+        en: "tts_group_en",
+        ja: "tts_group_ja",
+        zh: "tts_group_zh",
+        es: "tts_group_es",
+        fr: "tts_group_fr",
+        de: "tts_group_de"
       };
 
       const groups = {};
@@ -2818,11 +2932,15 @@ async function loadTtsVoices() {
 
       for (const [lang, gVoices] of Object.entries(groups)) {
         const optgroup = document.createElement("optgroup");
-        optgroup.label = langGroups[lang] || lang.toUpperCase();
+        const grpKey = langGroupKeys[lang];
+        const groupLabel = (typeof t === "function" && grpKey && t(grpKey) !== grpKey) ? t(grpKey) : lang.toUpperCase();
+        optgroup.label = groupLabel;
         gVoices.forEach(v => {
           const opt = document.createElement("option");
           opt.value = v.key;
-          opt.textContent = v.name;
+          const vKey = "tts_voice_" + v.key;
+          const vLabel = (typeof t === "function" && t(vKey) !== vKey) ? t(vKey) : v.name;
+          opt.textContent = vLabel;
           if (savedVoice === v.key) opt.selected = true;
           optgroup.appendChild(opt);
         });
@@ -2922,8 +3040,8 @@ function generateReaderPopupToc() {
   }
 
   const emptyHtml = `<div class="text-center py-6 text-slate-500 text-xs space-y-1">
-    <div>📑 감지된 제목(Heading)이 없습니다.</div>
-    <div class="text-[10px] text-slate-600">노트에 # 또는 ## 제목 태그가 있으면 목차가 자동 생성됩니다.</div>
+    <div>${typeof t === "function" ? t("toc_empty_title") : "📑 감지된 제목(Heading)이 없습니다."}</div>
+    <div class="text-[10px] text-slate-600">${typeof t === "function" ? t("toc_empty_desc") : "노트에 # 또는 ## 제목 태그가 있으면 목차가 자동 생성됩니다."}</div>
   </div>`;
 
   if (!headings || count === 0) {
@@ -3040,7 +3158,7 @@ function openReaderPopup() {
   const hasContent = (noteContent && noteContent.innerHTML.trim() && !noteContent.classList.contains("hidden")) || !!mdSource;
 
   if (!hasContent) {
-    alert("읽기 모드를 열기 위한 학습 노트가 없습니다. 먼저 영상을 분석하거나 보관함에서 노트를 불러와주세요.");
+    alert(typeof t === "function" ? t("alert_no_note_for_reader") : "읽기 모드를 열기 위한 학습 노트가 없습니다. 먼저 영상을 분석하거나 보관함에서 노트를 불러와주세요.");
     return;
   }
 
@@ -3049,7 +3167,7 @@ function openReaderPopup() {
   const popupArticle = document.getElementById("reader-popup-article");
 
   if (popupTitle) {
-    popupTitle.textContent = currentVideoInfo?.title || document.getElementById("video-title")?.textContent || "학습 노트 집중 독서";
+    popupTitle.textContent = currentVideoInfo?.title || document.getElementById("video-title")?.textContent || (typeof t === "function" ? t("reader_title_default") : "학습 노트 집중 독서");
   }
 
   if (popupArticle) {
