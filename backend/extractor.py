@@ -1,7 +1,9 @@
 import re
+from bisect import bisect_right
 from typing import List, Dict, Any, Optional
 from youtube_transcript_api import YouTubeTranscriptApi
 import yt_dlp
+from languages import base_lang, lang_match_level, is_same_language, normalize_target_lang, DEFAULT_TARGET_LANG
 
 def extract_video_id(url_or_id: str) -> Optional[str]:
     """유튜브 URL 또는 Video ID에서 11자리 Video ID를 추출합니다."""
@@ -156,7 +158,8 @@ def get_video_info(video_id: str) -> Dict[str, Any]:
                 "duration_str": format_timestamp(info.get("duration", 0)),
                 "view_count": info.get("view_count", 0),
                 "upload_date": info.get("upload_date", ""),
-                "description": (info.get("description") or "")[:500]
+                "description": (info.get("description") or "")[:500],
+                "language": info.get("language") or ""  # 영상 기본 언어 (원문 자막 감지 힌트)
             }
     except Exception as e:
         return {
@@ -169,42 +172,152 @@ def get_video_info(video_id: str) -> Dict[str, Any]:
             "error": str(e)
         }
 
-def get_video_transcript(video_id: str) -> Dict[str, Any]:
+def _track_info(t) -> Dict[str, Any]:
+    return {
+        "code": t.language_code,
+        "name": t.language,
+        "is_generated": bool(getattr(t, "is_generated", False)),
+        # 선택 상자 값: 같은 언어의 공식/자동 자막을 구분
+        "value": f"{t.language_code}:auto" if getattr(t, "is_generated", False) else t.language_code,
+    }
+
+
+def detect_original_language(tracks: List[Any], ytdlp_lang: Optional[str] = None) -> Optional[str]:
+    """
+    영상의 실제(말하는) 언어를 추정합니다.
+    1) 유튜브 음성 인식(ASR) 자동 자막의 언어 = 실제 발화 언어
+    2) yt-dlp 가 알려주는 영상 기본 언어
+    3) 첫 번째 자막 트랙
+    """
+    gen = [t for t in tracks if getattr(t, "is_generated", False)]
+    if gen:
+        return gen[0].language_code
+    if ytdlp_lang:
+        return ytdlp_lang
+    return tracks[0].language_code if tracks else None
+
+
+def pick_track(tracks: List[Any], lang: Optional[str], prefer_generated: bool = False):
+    """원하는 언어의 트랙 선택: 정확 일치 > 같은 언어(지역 다름), 각각 공식 자막 우선(prefer_generated면 자동 우선)."""
+    if not lang:
+        return None
+    for level in (2, 1):
+        pool = [t for t in tracks if lang_match_level(t.language_code, lang) == level]
+        if not pool:
+            continue
+        manual = [t for t in pool if not getattr(t, "is_generated", False)]
+        gen = [t for t in pool if getattr(t, "is_generated", False)]
+        ordered = (gen + manual) if prefer_generated else (manual + gen)
+        return ordered[0]
+    return None
+
+
+def select_source_track(tracks: List[Any], source_lang: Optional[str] = None, ytdlp_lang: Optional[str] = None):
+    """
+    원문 트랙 결정. source_lang 은 'en' (공식 우선) 또는 'en:auto' (자동 자막 지정) 형식.
+    지정이 없으면 실제 발화 언어를 감지하여 그 언어의 공식 자막 → 자동 자막 순으로 고릅니다.
+    """
+    if not tracks:
+        return None
+    if source_lang:
+        code, _, flag = source_lang.partition(":")
+        t = pick_track(tracks, code, prefer_generated=(flag == "auto"))
+        if t:
+            return t
+    t = pick_track(tracks, detect_original_language(tracks, ytdlp_lang))
+    return t or tracks[0]
+
+
+def _cue_list(raw_items) -> List[Dict[str, Any]]:
+    cues = []
+    for item in raw_items:
+        get = (lambda k, d: item.get(k, d)) if isinstance(item, dict) else (lambda k, d: getattr(item, k, d))
+        text = (get("text", "") or "").replace("\n", " ").strip()
+        if not text:
+            continue
+        start = float(get("start", 0.0) or 0.0)
+        dur = float(get("duration", 0.0) or 0.0)
+        cues.append({"start": start, "end": start + (dur if dur > 0 else 2.0), "text": text})
+    cues.sort(key=lambda c: c["start"])
+    return cues
+
+
+def align_track_to_segments(src_rows: List[Dict[str, Any]], tgt_cues: List[Dict[str, Any]]) -> List[str]:
+    """
+    다른 시간표로 만들어진 번역 자막(tgt_cues)을 원문 줄(src_rows)에 시간 기준으로 정렬합니다.
+    - 각 번역 줄은 '가운데 시점'이 속한 원문 줄(start_i <= mid < start_{i+1})에 배정, 같은 줄에 여러 개면 이어붙임
+    - 배정이 없는 원문 줄은 그 줄의 가운데 시점을 덮는 번역 줄로 채움(긴 번역 줄이 여러 원문 줄에 걸칠 때)
+    - 그래도 없으면 '' (화면에서는 원문으로 대체 표시)
+    반환: 원문 줄과 같은 길이의 번역문 리스트
+    """
+    n = len(src_rows)
+    if n == 0:
+        return []
+    starts = [float(r.get("start", 0.0) or 0.0) for r in src_rows]
+    buckets: List[List[str]] = [[] for _ in range(n)]
+    cues = sorted(tgt_cues, key=lambda c: c["start"])
+    for c in cues:
+        mid = (c["start"] + c["end"]) / 2.0
+        i = max(0, bisect_right(starts, mid) - 1)
+        if not buckets[i] or buckets[i][-1] != c["text"]:
+            buckets[i].append(c["text"])
+
+    cue_starts = [c["start"] for c in cues]
+    out = []
+    for i, row in enumerate(src_rows):
+        if buckets[i]:
+            out.append(" ".join(buckets[i]))
+            continue
+        r_start = starts[i]
+        r_end = row.get("end")
+        if r_end is None:
+            r_end = r_start + float(row.get("duration", 2.0) or 2.0)
+        if i + 1 < n:
+            r_end = min(float(r_end), starts[i + 1])
+        m = (r_start + float(r_end)) / 2.0
+        j = bisect_right(cue_starts, m) - 1
+        out.append(cues[j]["text"] if j >= 0 and cues[j]["start"] <= m < cues[j]["end"] else "")
+    return out
+
+
+def list_transcript_tracks(video_id: str, ytdlp_lang: Optional[str] = None) -> Dict[str, Any]:
+    """원문 선택 상자용 자막 트랙 목록 (자막 본문은 받지 않는 가벼운 요청 1회)."""
+    try:
+        tracks = list(YouTubeTranscriptApi().list(video_id))
+        return {
+            "success": True,
+            "tracks": [_track_info(t) for t in tracks],
+            "original_lang": detect_original_language(tracks, ytdlp_lang),
+        }
+    except Exception as e:
+        return {"success": False, "error": f"자막 목록을 불러올 수 없습니다: {str(e)[:200]}", "tracks": []}
+
+
+def get_video_transcript(
+    video_id: str,
+    source_lang: Optional[str] = None,
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG,
+    ytdlp_lang: Optional[str] = None
+) -> Dict[str, Any]:
     """
     영상 자막을 추출하고, 적절한 청크(시간 간격 기준)로 묶어 반환합니다.
-    한국어 자막이 존재하면 우선 선택하고, is_korean 플래그를 함께 반환합니다.
+    - 원문: 영상의 실제 발화 언어 자막 (source_lang 으로 직접 지정 가능)
+    - 번역: target_lang 의 유튜브 공식 자막이 있으면 원문 줄에 시간 정렬하여 각 줄 'ko_text'(=번역문 필드)에 채움
+            원문과 번역 언어가 같으면 translation_source='same' (번역 불필요)
+    is_korean 은 '원문이 한국어'인지를 뜻합니다 (학습 노트 프롬프트 선택용).
     """
+    target_lang = normalize_target_lang(target_lang)
     try:
         ytt_api = YouTubeTranscriptApi()
         transcript_list = ytt_api.list(video_id)
-        
-        # 자막 검색 전략: 한국어 수동 → 영어 수동 → 한국어 자동 → 영어 자동 → 아무거나
-        transcript = None
-        # 1차: 수동 생성 자막 (한국어 우선)
-        for lang_codes in [['ko'], ['en', 'en-US']]:
-            try:
-                transcript = transcript_list.find_manually_created_transcript(lang_codes)
-                break
-            except Exception:
-                continue
-        # 2차: 자동 생성 자막 (한국어 우선)
+        tracks = list(transcript_list)
+        transcript = select_source_track(tracks, source_lang, ytdlp_lang)
         if transcript is None:
-            for lang_codes in [['ko'], ['en', 'en-US']]:
-                try:
-                    transcript = transcript_list.find_generated_transcript(lang_codes)
-                    break
-                except Exception:
-                    continue
-        # 3차: find_transcript 폴백
-        if transcript is None:
-            try:
-                transcript = transcript_list.find_transcript(['ko', 'en'])
-            except Exception:
-                transcript = next(iter(transcript_list))
-        
+            raise ValueError("이 영상에는 자막 트랙이 없습니다.")
+
         raw_items = transcript.fetch()
         language_code = transcript.language_code
-        is_korean = language_code.startswith('ko')
+        is_korean = base_lang(language_code) == 'ko'
         
         raw_subtitles = []
         grouped_chunks = []
@@ -259,11 +372,37 @@ def get_video_transcript(video_id: str) -> Dict[str, Any]:
         # 롤링 캡션 겹침 제거 (다음 대사 지연 표시 방지)
         raw_subtitles = normalize_subtitle_timings(raw_subtitles)
 
+        # 번역문 준비: 같은 언어면 불필요, 아니면 번역 언어의 '공식' 자막을 시간 정렬하여 사용
+        translation_source = None
+        translation_track = None
+        if is_same_language(language_code, target_lang):
+            translation_source = "same"
+        else:
+            tgt = pick_track([t for t in tracks if not getattr(t, "is_generated", False)], target_lang)
+            if tgt is not None and tgt is not transcript:
+                try:
+                    texts = align_track_to_segments(raw_subtitles, _cue_list(tgt.fetch()))
+                    if any(texts):
+                        for row, tx in zip(raw_subtitles, texts):
+                            if tx:
+                                row["ko_text"] = tx  # 'ko_text' = 번역문 필드 (언어는 target_lang)
+                        translation_source = "youtube"
+                        translation_track = tgt.language_code
+                except Exception as te:
+                    # 번역 자막 실패(차단 등)는 원문 제공에 영향 주지 않음 → 사용자는 Gemini 번역 가능
+                    print(f"[!] 공식 번역 자막({target_lang}) 불러오기 실패: {str(te)[:120]}")
+
         return {
             "success": True,
             "language": language_code,
             "is_korean": is_korean,
             "is_generated": getattr(transcript, 'is_generated', False),
+            "source_lang": _track_info(transcript)["value"],
+            "original_lang": detect_original_language(tracks, ytdlp_lang),
+            "target_lang": target_lang,
+            "translation_source": translation_source,
+            "translation_track": translation_track,
+            "tracks": [_track_info(t) for t in tracks],
             "subtitles": raw_subtitles,
             "chunks": grouped_chunks,
             "full_text": full_raw_text

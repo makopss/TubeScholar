@@ -6,6 +6,7 @@ import warnings
 from typing import Dict, Any, Optional, List, Tuple
 from google import genai
 from google.genai import types
+from languages import language_name
 
 # Google GenAI SDK의 무해한 AFC(Automatic Function Calling) 권고 logger.warning 원천 차단
 try:
@@ -584,8 +585,10 @@ def _build_translation_prompt(
     batch: List[Dict[str, Any]],
     context_before: Optional[List[Dict[str, Any]]] = None,
     context_after: Optional[List[Dict[str, Any]]] = None,
-    video_title: Optional[str] = None
+    video_title: Optional[str] = None,
+    target_lang: str = "ko"
 ) -> str:
+    target_name = language_name(target_lang)
     batch_prompt_lines = []
     for idx, s in enumerate(batch):
         ts = s.get("timestamp")
@@ -606,12 +609,13 @@ def _build_translation_prompt(
 
     return (
         "당신은 영상 자막 실시간 싱크(Timestamp Synchronization) 전문 번역가입니다.\n"
-        "각 타임스탬프 번호는 영상에서 해당 초[분:초]에 화면에 출력되는 독립적인 자막 세그먼트입니다.\n\n"
+        "각 타임스탬프 번호는 영상에서 해당 초[분:초]에 화면에 출력되는 독립적인 자막 세그먼트입니다.\n"
+        f"[번역 목표 언어]: **{target_name}** ({target_lang}) — 모든 번역문은 반드시 {target_name}로 작성하십시오.\n\n"
         + header +
         "[가장 중요한 핵심 규칙: 1:1 행별 엄격 매칭 & 번역 내용 밀림/앞당김 절대 금지]:\n"
-        "1. 각 번호(N)의 번역은 **오직 그 번호(N)에 적힌 영어 텍스트 구절만** 번역해야 합니다.\n"
-        "2. 영어가 문장 중간에서 끊겨 있더라도, **절대로 다음 번호의 문장을 앞당겨 합치거나, 현재 번호의 내용을 다음 번호로 미루지 마십시오.**\n"
-        "3. 문장이 여러 행에 분할되어 있을 때 처리 예시 (반드시 이 방식을 따르십시오):\n"
+        "1. 각 번호(N)의 번역은 **오직 그 번호(N)에 적힌 원문 텍스트 구절만** 번역해야 합니다.\n"
+        "2. 원문이 문장 중간에서 끊겨 있더라도, **절대로 다음 번호의 문장을 앞당겨 합치거나, 현재 번호의 내용을 다음 번호로 미루지 마십시오.**\n"
+        f"3. 문장이 여러 행에 분할되어 있을 때 처리 예시 (형식 예시이며 영어→한국어로 보여주지만, 실제 출력 언어는 {target_name}입니다):\n"
         "   [입력 예시]\n"
         "   1 [00:00] || That's an interesting angle. I haven't seen that. I wrote a brand new sci-fi story with\n"
         "   2 [00:04] || Project Hail Mary author Andy Weir. Andy is one of the most popular science fiction writers alive.\n"
@@ -622,7 +626,7 @@ def _build_translation_prompt(
         "   1 || 흥미로운 각도네요. 보지 못했던 건데. (뒤의 'I wrote...'를 누락하고 다음 번호로 미루는 행위 금지!)\n"
         "   2 || 저는 완전히 새로운 공상과학 소설을 썼습니다... (앞 번호의 내용을 받아 뒤로 밀려 전체 자막 싱크가 망가짐!)\n\n"
         f"4. 1번부터 {len(batch)}번까지 단 하나의 번호도 건너뛰지 말고 빠짐없이 번역하십시오.\n"
-        "5. 출력 형식: 반드시 각 행마다 '번호 || 한국어번역' 형식으로만 출력하십시오. (부연설명 금지)\n"
+        f"5. 출력 형식: 반드시 각 행마다 '번호 || {target_name} 번역' 형식으로만 출력하십시오. (부연설명 금지)\n"
         "6. [앞 문맥]/[뒤 문맥]은 문장 흐름과 용어를 파악하기 위한 참고 자료일 뿐입니다. 절대 번역하거나 출력에 포함하지 마십시오.\n\n"
         + (f"[앞 문맥 (참고용, 번역 금지)]:\n{before_txt}\n\n" if before_txt else "")
         + "[번역 대상 자막]:\n"
@@ -676,7 +680,8 @@ def _translate_batch_with_recovery(
     models_to_try: List[str],
     context_before: Optional[List[Dict[str, Any]]] = None,
     context_after: Optional[List[Dict[str, Any]]] = None,
-    video_title: Optional[str] = None
+    video_title: Optional[str] = None,
+    target_lang: str = "ko"
 ) -> Tuple[Dict[int, str], str, Optional[str]]:
     """
     배치 단위(35개 권장) 번역을 수행하고, 일부 라인이 누락되었을 경우
@@ -696,9 +701,9 @@ def _translate_batch_with_recovery(
             # 이미 확보한 줄은 다시 요청하지 않음 (이전 모델의 부분 결과 재활용)
             pending = [i for i in range(len(batch)) if i not in best_map]
             if len(pending) == len(batch):
-                prompt = _build_translation_prompt(batch, context_before, context_after, video_title)
+                prompt = _build_translation_prompt(batch, context_before, context_after, video_title, target_lang)
             else:
-                prompt = _build_translation_prompt([batch[i] for i in pending], context_before, context_after, video_title)
+                prompt = _build_translation_prompt([batch[i] for i in pending], context_before, context_after, video_title, target_lang)
             resp = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
@@ -720,7 +725,7 @@ def _translate_batch_with_recovery(
                     # 마이크로 보충 요청 전에도 5.0초 안전 간격 유지
                     _wait_for_rate_limit()
                     missing_items = [batch[i] for i in missing_indices]
-                    m_prompt = _build_translation_prompt(missing_items, context_before, context_after, video_title)
+                    m_prompt = _build_translation_prompt(missing_items, context_before, context_after, video_title, target_lang)
                     m_resp = client.models.generate_content(
                         model=model_name,
                         contents=m_prompt,
@@ -767,8 +772,8 @@ def translate_subtitles_gemini(
     video_title: Optional[str] = None
 ) -> List[Dict[str, Any]]:
     """
-    자막 목록(원문)을 Gemini를 이용해 한국어로 고속 번역하고,
-    각 자막 객체에 'ko_text' 필드를 추가하여 반환합니다.
+    자막 목록(원문)을 Gemini를 이용해 target_lang(기본 한국어)으로 고속 번역하고,
+    각 자막 객체에 'ko_text'(번역문 필드, 이름은 하위 호환용) 필드를 추가하여 반환합니다.
     (번역에 실패한 줄은 ko_text 를 비워 두며, 화면/내보내기에서 원문으로 대체 표시됩니다)
     """
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
@@ -786,7 +791,7 @@ def translate_subtitles_gemini(
         batch = translated_subtitles[start_i:end_i]
         ctx_b, ctx_a = _batch_context(translated_subtitles, start_i, end_i)
         try:
-            ko_map, _, _ = _translate_batch_with_recovery(client, batch, models_to_try, ctx_b, ctx_a, video_title)
+            ko_map, _, _ = _translate_batch_with_recovery(client, batch, models_to_try, ctx_b, ctx_a, video_title, target_lang)
         except TranslationFatalError:
             break
 
@@ -841,7 +846,7 @@ def translate_subtitles_stream(
         "total_count": total_count,
         "total_batches": total_batches,
         "batch_size": batch_size,
-        "message": f"총 {total_count}개 대사 번역 작업을 시작합니다. (배치: {batch_size}개, 총 {total_batches}회 / 15 RPM 안전 보호 5.0초 주기 / {DEFAULT_TRANSLATE_MODEL})"
+        "message": f"총 {total_count}개 대사 {language_name(target_lang)} 번역 작업을 시작합니다. (배치: {batch_size}개, 총 {total_batches}회 / 15 RPM 안전 보호 5.0초 주기 / {DEFAULT_TRANSLATE_MODEL})"
     }
 
     models_to_try = [DEFAULT_TRANSLATE_MODEL] + [m for m in FALLBACK_TRANSLATE_MODELS if m != DEFAULT_TRANSLATE_MODEL]
@@ -873,7 +878,7 @@ def translate_subtitles_stream(
         ctx_b, ctx_a = _batch_context(translated_subtitles, start_i, start_i + batch_size)
         try:
             ko_map, used_model_name, last_err = _translate_batch_with_recovery(
-                client, batch, models_to_try, ctx_b, ctx_a, video_title
+                client, batch, models_to_try, ctx_b, ctx_a, video_title, target_lang
             )
         except TranslationFatalError as fe:
             yield {
@@ -907,7 +912,7 @@ def translate_subtitles_stream(
         "type": "complete",
         "total_count": total_count,
         "percent": 100,
-        "message": f"🎉 총 {total_count}개 대사의 한국어 번역이 모두 완료되었습니다!",
+        "message": f"🎉 총 {total_count}개 대사의 {language_name(target_lang)} 번역이 모두 완료되었습니다!",
         "subtitles": translated_subtitles
     }
 

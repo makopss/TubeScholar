@@ -155,13 +155,27 @@ def _normalize_subs(subtitles: Optional[List[Dict[str, Any]]]) -> List[Dict[str,
     except Exception:
         return subtitles
 
+_LANG_META_KEYS = ("source_lang", "target_lang", "translation_source")
+
+
+def _clean_lang_meta(lang_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """노트에 저장할 자막 언어 정보 (허용된 키만, 짧은 문자열/None)."""
+    out: Dict[str, Any] = {}
+    for k in _LANG_META_KEYS:
+        if lang_meta and k in lang_meta:
+            v = lang_meta[k]
+            out[k] = str(v)[:40] if v else None
+    return out
+
+
 @_locked
 def save_note(
     video_info: Dict[str, Any], 
     markdown_content: str, 
     note_id: Optional[str] = None,
     note_title: Optional[str] = None,
-    subtitles: Optional[List[Dict[str, Any]]] = None
+    subtitles: Optional[List[Dict[str, Any]]] = None,
+    lang_meta: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
     """
     학습 노트를 .md 파일로 저장하고 library.json 메타데이터를 업데이트합니다.
@@ -221,6 +235,7 @@ created_at: "{created_time}"
         "created_at": created_time,
         "updated_at": created_time
     }
+    meta.update(_clean_lang_meta(lang_meta))
     lib["notes"][note_id] = meta
     save_library(lib)
 
@@ -269,14 +284,15 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
     }
 
 @_locked
-def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]]) -> bool:
-    """노트에 번역되거나 업데이트된 자막 데이터를 영구 캐싱 저장합니다."""
+def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]], lang_meta: Optional[Dict[str, Any]] = None) -> bool:
+    """노트에 번역되거나 업데이트된 자막 데이터를 영구 캐싱 저장합니다. (lang_meta: 원문/번역 언어 정보)"""
     if not is_safe_note_id(note_id):
         return False
     lib = load_library()
     notes = lib.get("notes", {})
     if note_id in notes:
         notes[note_id]["subtitles"] = _normalize_subs(subtitles)
+        notes[note_id].update(_clean_lang_meta(lang_meta))
         notes[note_id]["updated_at"] = time.strftime('%Y-%m-%d %H:%M:%S')
         save_library(lib)
         return True

@@ -40,6 +40,7 @@ from extractor import (
     extract_video_id, 
     get_video_info, 
     get_video_transcript, 
+    list_transcript_tracks,
     get_channel_videos, 
     parse_srt_vtt_text,
     convert_to_srt,
@@ -56,6 +57,7 @@ from analyzer import (
 )
 from storage import save_note, get_note, list_saved_notes, delete_note, update_note, update_note_subtitles, is_safe_note_id
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
 from stt import transcribe_audio_groq
 from tts import generate_note_audio, list_available_voices, AUDIO_DIR
 from typing import List, Dict, Any
@@ -90,6 +92,8 @@ class AnalyzeRequest(BaseModel):
     engine: Optional[str] = "gemini"
     api_key: Optional[str] = None
     gemini_model: Optional[str] = DEFAULT_NOTE_MODEL
+    source_lang: Optional[str] = None   # 원문 자막 트랙 ('en', 'en:auto'), 없으면 자동 감지
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG  # 번역 언어
 
 class LocalAnalyzeRequest(BaseModel):
     title: str
@@ -102,6 +106,8 @@ class LocalPromptRequest(BaseModel):
 
 class PromptRequest(BaseModel):
     url: str
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG
 
 class ManualSaveRequest(BaseModel):
     url: Optional[str] = ""
@@ -124,6 +130,8 @@ class SubtitlesRequest(BaseModel):
     subtitles: Optional[List[Dict[str, Any]]] = None
     note_id: Optional[str] = None
     title: Optional[str] = None  # 번역 프롬프트 문맥용 영상 제목
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG
 
 class SubtitleDownloadRequest(BaseModel):
     subtitles: List[Dict[str, Any]]
@@ -132,6 +140,7 @@ class SubtitleDownloadRequest(BaseModel):
     title: Optional[str] = "자막"
     auto_translate: Optional[bool] = False
     sync_offset: Optional[float] = 0.0  # 초 단위, +값 = 자막을 더 빨리 표시
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG  # 'ko_text' 필드에 담긴 번역문의 언어
 
 class ConfigRequest(BaseModel):
     api_key: Optional[str] = None
@@ -196,6 +205,37 @@ def set_config(req: ConfigRequest):
         
     return {"success": True, "message": "API 키가 성공적으로 저장되었습니다."}
 
+def _lang_payload(tr: Dict[str, Any]) -> Dict[str, Any]:
+    """자막 추출 결과 중 화면(언어 선택 상자/번역 버튼)에 필요한 언어 정보."""
+    return {
+        "transcript_language": tr.get("language"),
+        "source_lang": tr.get("source_lang"),
+        "original_lang": tr.get("original_lang"),
+        "target_lang": tr.get("target_lang"),
+        "translation_source": tr.get("translation_source"),
+        "translation_track": tr.get("translation_track"),
+        "tracks": tr.get("tracks", []),
+    }
+
+
+def _lang_meta(tr: Dict[str, Any]) -> Dict[str, Any]:
+    """노트에 저장할 언어 정보."""
+    return {
+        "source_lang": tr.get("source_lang"),
+        "target_lang": tr.get("target_lang"),
+        "translation_source": tr.get("translation_source"),
+    }
+
+
+@app.get("/api/languages")
+def get_languages():
+    """번역 언어 선택 목록 (프론트/백엔드 공통)."""
+    return {
+        "default": DEFAULT_TARGET_LANG,
+        "languages": [{"code": k, "name": v} for k, v in TARGET_LANGUAGES.items()],
+    }
+
+
 @app.post("/api/prompt")
 def get_prompt_for_ai(req: PromptRequest):
     """구독 중인 ChatGPT Plus / Claude Pro 대화창에 바로 붙여넣을 수 있는 프롬프트 생성"""
@@ -204,7 +244,10 @@ def get_prompt_for_ai(req: PromptRequest):
         raise HTTPException(status_code=400, detail="유효한 유튜브 영상 URL이 아닙니다.")
     
     video_info = get_video_info(video_id)
-    transcript_result = get_video_transcript(video_id)
+    transcript_result = get_video_transcript(
+        video_id, source_lang=req.source_lang, target_lang=req.target_lang,
+        ytdlp_lang=video_info.get("language")
+    )
     if not transcript_result.get("success"):
         raise HTTPException(status_code=400, detail=transcript_result.get("error"))
 
@@ -212,7 +255,10 @@ def get_prompt_for_ai(req: PromptRequest):
     return {
         "success": True,
         "video_info": video_info,
-        "prompt": prompt_text
+        "prompt": prompt_text,
+        "subtitles": transcript_result.get("subtitles", []),
+        "is_generated": transcript_result.get("is_generated"),
+        **_lang_payload(transcript_result)
     }
 
 @app.post("/api/local/prompt")
@@ -398,8 +444,11 @@ def analyze_video(req: AnalyzeRequest):
     video_info = get_video_info(video_id)
     video_info["video_type"] = "youtube"
 
-    # 2. 자막 추출
-    transcript_result = get_video_transcript(video_id)
+    # 2. 자막 추출 (원문 = 실제 발화 언어, 번역 언어의 공식 자막이 있으면 함께 정렬)
+    transcript_result = get_video_transcript(
+        video_id, source_lang=req.source_lang, target_lang=req.target_lang,
+        ytdlp_lang=video_info.get("language")
+    )
     if not transcript_result.get("success"):
         raise HTTPException(
             status_code=400, 
@@ -421,19 +470,23 @@ def analyze_video(req: AnalyzeRequest):
         )
 
     # 4. 고유 note_id로 로컬 저장 (동일 영상이라도 별도 버전으로 누적 보관)
-    save_res = save_note(video_info, llm_result["markdown"], subtitles=transcript_result.get("subtitles", []))
+    save_res = save_note(
+        video_info, llm_result["markdown"],
+        subtitles=transcript_result.get("subtitles", []),
+        lang_meta=_lang_meta(transcript_result)
+    )
 
     return {
         "success": True,
         "note_id": save_res["note_id"],
         "video_info": video_info,
         "subtitles": transcript_result.get("subtitles", []),
-        "transcript_language": transcript_result.get("language"),
         "is_generated": transcript_result.get("is_generated"),
         "is_korean": transcript_result.get("is_korean", False),
         "model_used": llm_result.get("model_used"),
         "markdown": save_res["markdown"],
-        "file_path": save_res["file_path"]
+        "file_path": save_res["file_path"],
+        **_lang_payload(transcript_result)
     }
 
 @app.post("/api/subtitles")
@@ -443,29 +496,61 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
     """
     subtitles = req.subtitles or []
     lang = "en"
+    target = normalize_target_lang(req.target_lang)
     
     if not subtitles:
         v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
         if not v_id:
             raise HTTPException(status_code=400, detail="올바른 유튜브 URL 또는 Video ID가 필요합니다.")
-        res = get_video_transcript(v_id)
+        res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=target)
         if not res.get("success"):
             raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
         subtitles = res.get("subtitles", [])
         lang = res.get("language", "en")
 
     if req.translate_ko and subtitles:
-        has_ko = any(s.get("ko_text") for s in subtitles[:5])
+        has_ko = any(s.get("ko_text") for s in subtitles)
         if not has_ko:
-            subtitles = translate_subtitles_gemini(subtitles, video_title=req.title)
+            subtitles = translate_subtitles_gemini(subtitles, target_lang=target, video_title=req.title)
         if req.note_id:
-            update_note_subtitles(req.note_id, subtitles)
+            update_note_subtitles(req.note_id, subtitles, {"target_lang": target, "translation_source": "gemini"})
 
     return {
         "success": True,
         "language": lang,
         "subtitles": subtitles
     }
+
+@app.post("/api/subtitles/reload")
+def reload_subtitles(req: SubtitlesRequest):
+    """
+    원문 언어(트랙) 또는 번역 언어를 바꿀 때 자막을 다시 불러옵니다.
+    번역 언어의 유튜브 공식 자막이 있으면 바로 정렬해 채우고, 노트에 언어 정보와 함께 저장합니다.
+    """
+    v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
+    if not v_id:
+        raise HTTPException(status_code=400, detail="유튜브 영상에서만 자막 언어를 바꿀 수 있습니다.")
+    if req.note_id and not is_safe_note_id(req.note_id):
+        raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
+    res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=req.target_lang)
+    if not res.get("success"):
+        raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
+    if req.note_id:
+        update_note_subtitles(req.note_id, res.get("subtitles", []), _lang_meta(res))
+    return {
+        "success": True,
+        "subtitles": res.get("subtitles", []),
+        "is_generated": res.get("is_generated"),
+        **_lang_payload(res)
+    }
+
+@app.get("/api/subtitles/tracks")
+def get_subtitle_tracks(video_id: str):
+    """원문 언어 선택 상자용: 영상이 가진 자막 트랙 목록."""
+    v_id = extract_video_id(video_id or "")
+    if not v_id:
+        raise HTTPException(status_code=400, detail="올바른 Video ID가 아닙니다.")
+    return list_transcript_tracks(v_id)
 
 @app.post("/api/subtitles/translate-stream")
 async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Request):
@@ -497,7 +582,10 @@ async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Re
         nonlocal is_cancelled
         # 번역(Gemini 호출 + 속도 제한 대기)은 블로킹 작업이므로 작업 스레드에서 실행
         # → 번역 중에도 노트 목록/오디오북/종료 등 다른 요청이 멈추지 않음
-        gen = translate_subtitles_stream(subtitles, is_cancelled_callback=check_cancelled, video_title=req.title)
+        target = normalize_target_lang(req.target_lang)
+        gen = translate_subtitles_stream(
+            subtitles, target_lang=target, is_cancelled_callback=check_cancelled, video_title=req.title
+        )
         try:
             async for event in iterate_in_threadpool(gen):
                 if await request.is_disconnected():
@@ -506,7 +594,10 @@ async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Re
                     last_subtitles = event.get("subtitles")
                     if req.note_id and last_subtitles:
                         try:
-                            await run_in_threadpool(update_note_subtitles, req.note_id, last_subtitles)
+                            await run_in_threadpool(
+                                update_note_subtitles, req.note_id, last_subtitles,
+                                {"target_lang": target, "translation_source": "gemini"}
+                            )
                         except Exception:
                             pass
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
@@ -535,16 +626,18 @@ def download_subtitles(req: SubtitleDownloadRequest):
     fmt = req.format.lower() if req.format else "srt"
     mode = req.lang_mode.lower() if req.lang_mode else "original"
     subtitles = req.subtitles
-    
+    target = normalize_target_lang(req.target_lang)
+    target_name = language_name(target)
+
     if mode in ["ko", "bilingual"]:
-        has_ko = any(s.get("ko_text") for s in subtitles[:5])
+        has_ko = any(s.get("ko_text") for s in subtitles)
         if not has_ko:
             if req.auto_translate:
-                subtitles = translate_subtitles_gemini(subtitles, video_title=req.title)
+                subtitles = translate_subtitles_gemini(subtitles, target_lang=target, video_title=req.title)
             else:
                 raise HTTPException(
                     status_code=400,
-                    detail="한국어 번역이 아직 생성되지 않았습니다. 먼저 화면의 [한국어 번역 요청] 버튼을 눌러 번역을 완료해주세요."
+                    detail=f"{target_name} 번역이 아직 생성되지 않았습니다. 먼저 화면의 [{target_name} 번역 요청] 버튼을 눌러 번역을 완료해주세요."
                 )
 
     if fmt == "txt":
@@ -555,7 +648,7 @@ def download_subtitles(req: SubtitleDownloadRequest):
         ext = "srt"
 
     safe_title = re.sub(r'[/\\?%*:|"<> ]+', '_', req.title or "subtitles").strip('_')
-    mode_tag = {"original": "원문", "ko": "한국어번역", "bilingual": "한영병기"}.get(mode, mode)
+    mode_tag = {"original": "원문", "ko": f"{target_name}번역", "bilingual": f"{target_name}병기"}.get(mode, mode)
     filename = f"{safe_title}_{mode_tag}.{ext}"
 
     return {

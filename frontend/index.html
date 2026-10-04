@@ -255,14 +255,14 @@
 
             <!-- 언어 선택 토글 (영상 하단) -->
             <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-lg text-xs">
-              <button type="button" id="ctrl-sub-lang-orig" class="px-2 py-0.5 rounded font-bold transition bg-sky-600 text-white text-[11px]" title="영문 원문 자막">
-                🇺🇸 원문
+              <button type="button" id="ctrl-sub-lang-orig" class="px-2 py-0.5 rounded font-bold transition bg-sky-600 text-white text-[11px]" title="원문 자막">
+                <span id="ctrl-sub-orig-label">원문</span>
               </button>
-              <button type="button" id="ctrl-sub-lang-ko" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="한국어 번역 자막">
-                🇰🇷 한글
+              <button type="button" id="ctrl-sub-lang-ko" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="번역 자막">
+                <span id="ctrl-sub-ko-label">한글</span>
               </button>
-              <button type="button" id="ctrl-sub-lang-bi" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="한/영 동시 출력">
-                🌐 병기
+              <button type="button" id="ctrl-sub-lang-bi" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="동시 병기 출력">
+                <span id="ctrl-sub-bi-label">병기</span>
               </button>
             </div>
           </div>
@@ -586,25 +586,36 @@
         <!-- 자막 옵션 툴바: 언어 선택 & 검색 & 통계 -->
         <div class="p-3 bg-slate-950/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
           <!-- 언어 선택 토글 버튼 및 번역 요청 버튼 -->
-          <div class="flex items-center space-x-2">
+          <div class="flex items-center flex-wrap gap-2">
             <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-lg text-xs">
               <button type="button" id="sub-lang-original" class="px-2.5 py-1 rounded-md font-bold transition bg-sky-600 text-white shadow">
-                🇺🇸 원문
+                원문
               </button>
               <button type="button" id="sub-lang-ko" class="px-2.5 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
-                <span>🇰🇷 한국어 번역</span>
+                <span id="sub-lang-ko-label">한국어 번역</span>
               </button>
               <button type="button" id="sub-lang-bilingual" class="px-2.5 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
-                <span>🌐 한/영 병기</span>
+                <span id="sub-lang-bi-label">한/영 병기</span>
               </button>
             </div>
 
-            <!-- 명시적 한국어 번역 요청 버튼 (Gemini 사용량 제한 방지) -->
+            <!-- 원문 트랙 / 번역 언어 선택 드롭다운 -->
+            <div class="flex items-center space-x-1 text-xs">
+              <select id="sub-source-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer max-w-[150px] truncate" title="원문 자막 트랙 선택">
+                <option value="">원문: 자동 감지</option>
+              </select>
+              <span class="text-slate-500 text-xs select-none">→</span>
+              <select id="sub-target-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer" title="번역 대상 언어 선택">
+                <option value="ko">번역: 한국어</option>
+              </select>
+            </div>
+
+            <!-- 명시적 번역 요청 버튼 (Gemini 사용량 제한 방지) -->
             <button 
               type="button" 
               id="request-sub-translate-btn" 
               class="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
-              title="Gemini를 호출하여 한국어 번역을 명시적으로 생성합니다 (API 사용)"
+              title="Gemini를 호출하여 번역을 명시적으로 생성합니다 (API 사용)"
             >
               <span id="trans-btn-icon">⚡</span>
               <span id="trans-btn-text">한국어 번역 요청</span>
@@ -962,7 +973,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.5.0"></script>
+  <script src="/static/app.js?v=3.6.0"></script>
 </body>
 
 </html>

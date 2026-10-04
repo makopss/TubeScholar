@@ -37,8 +37,43 @@ let lastOverlayRenderKey = ""; // updateActiveSubtitle 의 중복 DOM 갱신 방
 let timeSyncTimer = null;
 let isTranslatingSubtitles = false;
 let transAbortController = null;
-let isKoreanContent = false; // 한국어 원문 콘텐츠 여부 (true면 번역 불필요)
+let isKoreanContent = false; // 호환용 (isSameLanguage와 동기화)
+let isSameLanguage = false; // 원문 언어와 번역 대상 언어가 동일한지 여부
+let currentTargetLang = localStorage.getItem("tubescholar_target_lang") || "ko";
+let currentSourceLang = null;
+let currentOriginalLang = null;
+let currentTranslationSource = null; // 'same' | 'youtube' | 'gemini' | null
+let currentTranslationTrack = null;
+let currentTracks = [];
+let supportedTargetLanguages = [];
 let isSubtitleAutoScroll = localStorage.getItem("tubescholar_sub_autoscroll") !== "false";
+
+const FALLBACK_TARGET_LANGUAGES = [
+  { code: "ko", name: "한국어" },
+  { code: "en", name: "English" },
+  { code: "ja", name: "日本語" },
+  { code: "zh-Hans", name: "中文(简体)" },
+  { code: "zh-Hant", name: "中文(繁體)" },
+  { code: "es", name: "Español" },
+  { code: "fr", name: "Français" },
+  { code: "de", name: "Deutsch" },
+  { code: "pt", name: "Português" },
+  { code: "ru", name: "Русский" },
+  { code: "it", name: "Italiano" },
+  { code: "vi", name: "Tiếng Việt" },
+  { code: "th", name: "ไทย" },
+  { code: "id", name: "Bahasa Indonesia" },
+  { code: "ar", name: "العربية" },
+  { code: "hi", name: "हिन्दी" },
+  { code: "tr", name: "Türkçe" }
+];
+
+function getTargetLangName(code) {
+  const c = code || currentTargetLang || "ko";
+  const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
+  const found = list.find(l => l.code === c);
+  return found ? found.name : c;
+}
 
 window.onYouTubeIframeAPIReady = function() {
   console.log("YouTube IFrame API Ready");
@@ -295,21 +330,211 @@ function setSubtitles(subs) {
   updateTranslationButtonState();
 }
 
+async function initLanguages() {
+  try {
+    const res = await fetch("/api/languages");
+    if (res.ok) {
+      const data = await res.json();
+      if (Array.isArray(data.target_languages) && data.target_languages.length > 0) {
+        supportedTargetLanguages = data.target_languages;
+      }
+    }
+  } catch (e) {
+    console.warn("Failed to load /api/languages, using fallbacks:", e);
+  }
+  if (!supportedTargetLanguages || supportedTargetLanguages.length === 0) {
+    supportedTargetLanguages = FALLBACK_TARGET_LANGUAGES;
+  }
+  renderTargetLangSelect();
+  renderSourceLangSelect();
+  updateLangLabels();
+}
+
+function renderTargetLangSelect() {
+  const sel = document.getElementById("sub-target-lang");
+  if (!sel) return;
+  const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
+  
+  sel.innerHTML = list.map(item => {
+    const isSel = item.code === currentTargetLang ? "selected" : "";
+    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>번역: ${escapeHtmlStr(item.name)}</option>`;
+  }).join("");
+}
+
+function renderSourceLangSelect() {
+  const sel = document.getElementById("sub-source-lang");
+  if (!sel) return;
+
+  if (isLocalVideo || !currentTracks || currentTracks.length === 0) {
+    if (isLocalVideo) {
+      sel.innerHTML = `<option value="">원문: 로컬 자막</option>`;
+      sel.disabled = true;
+    } else {
+      sel.innerHTML = `<option value="">원문: 자동 감지</option>`;
+      sel.disabled = false;
+    }
+    return;
+  }
+
+  sel.disabled = false;
+  let html = `<option value="">원문: 자동 (${escapeHtmlStr(currentOriginalLang || "감지")})</option>`;
+  currentTracks.forEach(t => {
+    const isSel = (currentSourceLang && (currentSourceLang === t.value || currentSourceLang === t.code)) ? "selected" : "";
+    html += `<option value="${escapeHtmlStr(t.value)}" ${isSel}>${escapeHtmlStr(t.name)}</option>`;
+  });
+  sel.innerHTML = html;
+}
+
+function updateLangLabels() {
+  const targetName = getTargetLangName(currentTargetLang);
+  const koLabel = document.getElementById("sub-lang-ko-label");
+  const biLabel = document.getElementById("sub-lang-bi-label");
+  const ctrlKo = document.getElementById("ctrl-sub-ko-label");
+
+  if (koLabel) koLabel.textContent = `${targetName} 번역`;
+  if (biLabel) biLabel.textContent = targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`;
+  if (ctrlKo) ctrlKo.textContent = targetName === "한국어" ? "한글" : (targetName.length > 3 ? targetName.slice(0, 3) : targetName);
+}
+
+function applyLanguageState(payload) {
+  if (!payload) return;
+
+  if (payload.target_lang) {
+    currentTargetLang = payload.target_lang;
+    try { localStorage.setItem("tubescholar_target_lang", currentTargetLang); } catch (e) {}
+  }
+  if (payload.source_lang) {
+    currentSourceLang = payload.source_lang;
+  } else if (payload.transcript_language) {
+    currentSourceLang = payload.transcript_language;
+  }
+  if (payload.original_lang) {
+    currentOriginalLang = payload.original_lang;
+  }
+  if (payload.translation_source !== undefined) {
+    currentTranslationSource = payload.translation_source;
+  }
+  if (payload.translation_track !== undefined) {
+    currentTranslationTrack = payload.translation_track;
+  }
+  if (Array.isArray(payload.tracks)) {
+    currentTracks = payload.tracks;
+  }
+
+  // 동일 언어 판별: 명시적 "same" 이거나, 한국어 원문이면서 타겟이 한국어인 경우
+  isSameLanguage = (currentTranslationSource === "same") || (payload.is_korean && currentTargetLang === "ko");
+  isKoreanContent = isSameLanguage;
+
+  // 원문과 번역 언어가 동일한 경우 자막 배열의 ko_text에 text를 복사하여 즉시 표시 지원
+  if (isSameLanguage && Array.isArray(currentSubtitles)) {
+    currentSubtitles.forEach(s => {
+      if (!s.ko_text) s.ko_text = s.text;
+    });
+  }
+
+  renderTargetLangSelect();
+  renderSourceLangSelect();
+  updateLangLabels();
+
+  // 메타데이터 카드 자막 상태 라벨 갱신
+  const metaLang = document.getElementById("meta-lang");
+  if (metaLang) {
+    const srcName = currentOriginalLang ? getTargetLangName(currentOriginalLang) : (payload.transcript_language || '원문');
+    const genTag = payload.is_generated ? '(자동)' : '(공식)';
+    const tgtName = getTargetLangName(currentTargetLang);
+
+    if (isSameLanguage) {
+      metaLang.textContent = `자막: ${srcName} ${genTag} (원문과 동일)`;
+    } else if (currentTranslationSource === "youtube") {
+      metaLang.textContent = `자막: ${srcName} ${genTag} → ${tgtName} (YouTube 공식)`;
+    } else if (currentTranslationSource === "gemini") {
+      metaLang.textContent = `자막: ${srcName} ${genTag} → ${tgtName} (Gemini 번역)`;
+    } else {
+      const hasKo = currentSubtitles && currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+      if (hasKo) {
+        metaLang.textContent = `자막: ${srcName} ${genTag} → ${tgtName} (번역됨)`;
+      } else {
+        metaLang.textContent = `자막: ${srcName} ${genTag} (번역 대기)`;
+      }
+    }
+  }
+
+  updateTranslationButtonState();
+}
+
+async function reloadSubtitles(opts = {}) {
+  if (!currentVideoId || isLocalVideo) return;
+  if (isTranslatingSubtitles) {
+    alert("현재 번역 작업이 진행 중입니다. 완료되거나 취소된 후 언어를 변경해주세요.");
+    return;
+  }
+
+  const gen = mediaGeneration;
+  const newSource = opts.source_lang !== undefined ? opts.source_lang : currentSourceLang;
+  const newTarget = opts.target_lang !== undefined ? opts.target_lang : currentTargetLang;
+
+  const btn = document.getElementById("request-sub-translate-btn");
+  const text = document.getElementById("trans-btn-text");
+  if (text) text.textContent = "자막 조회 중...";
+
+  try {
+    const res = await fetch("/api/subtitles/reload", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        video_id: currentVideoId,
+        note_id: currentNoteId,
+        source_lang: newSource,
+        target_lang: newTarget
+      })
+    });
+    const d = await res.json();
+    if (!isCurrentMedia(gen)) return;
+
+    if (!res.ok) {
+      throw new Error(d.detail || "자막 갱신 실패");
+    }
+
+    if (d.success && Array.isArray(d.subtitles)) {
+      setSubtitles(d.subtitles);
+      applyLanguageState(d);
+
+      let curTime = -1;
+      if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+        curTime = ytPlayer.getCurrentTime();
+      }
+      if (curTime >= 0) updateActiveSubtitle(curTime);
+    }
+  } catch (err) {
+    alert("자막 언어 갱신 오류: " + err.message);
+    updateTranslationButtonState();
+  }
+}
+
 function updateTranslationButtonState() {
   const btn = document.getElementById("request-sub-translate-btn");
   if (!btn) return;
   const icon = document.getElementById("trans-btn-icon");
   const text = document.getElementById("trans-btn-text");
   const spinner = document.getElementById("trans-loading-spinner");
+  const targetName = getTargetLangName(currentTargetLang);
 
-  // 한국어 원문 콘텐츠인 경우: 번역이 불필요하므로 완료 상태 표시
-  if (isKoreanContent) {
+  if (isTranslatingSubtitles) {
+    btn.disabled = true;
+    btn.className = "px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold cursor-wait flex items-center space-x-1.5 shadow-sm";
+    if (text) text.textContent = `${targetName} 번역 진행 중...`;
+    if (icon) icon.textContent = "⏳";
+    if (spinner) spinner.classList.remove("hidden");
+    return;
+  }
+
+  if (isSameLanguage || currentTranslationSource === "same") {
     btn.disabled = true;
     btn.className = "px-2.5 py-1 bg-sky-500/15 text-sky-400 border border-sky-500/30 rounded-lg text-xs font-semibold cursor-default flex items-center space-x-1.5 shadow-sm opacity-80";
-    if (text) text.textContent = "한국어 원문";
-    if (icon) icon.textContent = "🇰🇷";
+    if (text) text.textContent = "원문 = 번역 언어";
+    if (icon) icon.textContent = "🆗";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = "한국어 원본 콘텐츠입니다. 번역이 필요하지 않습니다.";
+    btn.title = `원문과 번역 대상 언어가 ${targetName}(으)로 동일합니다.`;
     return;
   }
 
@@ -322,27 +547,31 @@ function updateTranslationButtonState() {
     return;
   }
 
+  if (currentTranslationSource === "youtube") {
+    btn.disabled = false;
+    btn.className = "px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
+    if (text) text.textContent = `📺 YouTube 공식 ${targetName} 자막`;
+    if (icon) icon.textContent = "📺";
+    if (spinner) spinner.classList.add("hidden");
+    btn.title = `YouTube 공식 ${targetName} 자막이 적용되었습니다. 클릭하면 Gemini로 다시 번역할 수 있습니다.`;
+    return;
+  }
+
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
-  if (isTranslatingSubtitles) {
-    btn.disabled = true;
-    btn.className = "px-2.5 py-1 bg-amber-500/20 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold cursor-wait flex items-center space-x-1.5 shadow-sm";
-    if (text) text.textContent = "번역 진행 중...";
-    if (icon) icon.textContent = "⏳";
-    if (spinner) spinner.classList.remove("hidden");
-  } else if (hasKo) {
+  if (hasKo || currentTranslationSource === "gemini") {
     btn.disabled = false;
     btn.className = "px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-400 border border-emerald-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
-    if (text) text.textContent = "재번역 요청";
+    if (text) text.textContent = `${targetName} 재번역`;
     if (icon) icon.textContent = "🔄";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = "한국어 번역이 완료된 상태입니다. 클릭하면 새로 보정된 규칙으로 다시 번역합니다.";
+    btn.title = `${targetName} 번역이 완료된 상태입니다. 클릭하면 새로 다시 번역합니다.`;
   } else {
     btn.disabled = false;
-    btn.className = "px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm";
-    if (text) text.textContent = "한국어 번역 요청";
+    btn.className = "px-2.5 py-1 bg-amber-500/15 hover:bg-amber-500/25 text-amber-300 border border-amber-500/40 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
+    if (text) text.textContent = `${targetName} 번역 요청`;
     if (icon) icon.textContent = "⚡";
     if (spinner) spinner.classList.add("hidden");
-    btn.title = "Gemini를 호출하여 한국어 번역을 명시적으로 생성합니다 (API 사용)";
+    btn.title = `Gemini를 호출하여 ${targetName} 번역을 명시적으로 생성합니다 (API 사용)`;
   }
 }
 
@@ -432,9 +661,11 @@ function appendTransLog(message, type = "info") {
   logBox.scrollTop = logBox.scrollHeight;
 }
 
-async function requestKoreanTranslation(force = false) {
+async function requestTranslation(force = false) {
   // 이 번역이 시작된 시점의 영상/노트 (도중에 전환되면 결과를 버림)
   const gen = mediaGeneration;
+  const targetName = getTargetLangName(currentTargetLang);
+
   // 1. 자막 데이터 유무 확인 및 자동 복구 시도
   if (!currentSubtitles || currentSubtitles.length === 0) {
     if (currentNoteId || currentVideoId) {
@@ -444,12 +675,17 @@ async function requestKoreanTranslation(force = false) {
         const fetchRes = await fetch("/api/subtitles", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ video_id: currentVideoId, note_id: currentNoteId })
+          body: JSON.stringify({
+            video_id: currentVideoId,
+            note_id: currentNoteId,
+            target_lang: currentTargetLang
+          })
         });
         const d = await fetchRes.json();
         if (!isCurrentMedia(gen)) return false;
         if (d.success && d.subtitles && d.subtitles.length > 0) {
           setSubtitles(d.subtitles);
+          applyLanguageState(d);
           appendTransLog(`서버에서 자막 ${d.subtitles.length}개를 성공적으로 불러왔습니다.`, "success");
         } else {
           appendTransLog("해당 영상의 자막 데이터를 찾지 못했습니다.", "error");
@@ -476,7 +712,7 @@ async function requestKoreanTranslation(force = false) {
 
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
   if (hasKo && !force) {
-    const retrans = confirm("이미 한국어 번역이 생성되어 있습니다.\nGemini에 다시 번역을 요청하시겠습니까? (API 사용량이 발생합니다)");
+    const retrans = confirm(`이미 ${targetName} 번역이 생성되어 있습니다.\nGemini에 다시 번역을 요청하시겠습니까? (API 사용량이 발생합니다)`);
     if (!retrans) return false;
   }
 
@@ -493,7 +729,7 @@ async function requestKoreanTranslation(force = false) {
   const completeBtn = document.getElementById("complete-trans-btn");
 
   try {
-    appendTransLog("Gemini 자막 번역 스트리밍 연결을 시작합니다...", "info");
+    appendTransLog(`Gemini [${targetName}] 자막 번역 스트리밍 연결을 시작합니다...`, "info");
 
     const res = await fetch("/api/subtitles/translate-stream", {
       method: "POST",
@@ -504,7 +740,8 @@ async function requestKoreanTranslation(force = false) {
         translate_ko: true,
         note_id: currentNoteId,
         video_id: currentVideoId,
-        title: currentVideoInfo?.title || ""
+        title: currentVideoInfo?.title || "",
+        target_lang: currentTargetLang
       })
     });
 
@@ -555,6 +792,7 @@ async function requestKoreanTranslation(force = false) {
               }
             } else if (data.type === "complete") {
               translationDone = true;
+              currentTranslationSource = "gemini";
               if (bar) bar.style.width = "100%";
               if (percentEl) percentEl.textContent = "100%";
               if (labelEl) labelEl.textContent = "번역 완료!";
@@ -562,6 +800,10 @@ async function requestKoreanTranslation(force = false) {
 
               if (data.subtitles && data.subtitles.length > 0) {
                 currentSubtitles = data.subtitles;
+                applyLanguageState({
+                  target_lang: currentTargetLang,
+                  translation_source: "gemini"
+                });
                 const searchInput = document.getElementById("subtitle-search-input");
                 renderSubtitlesList(searchInput ? searchInput.value : "");
 
@@ -591,7 +833,7 @@ async function requestKoreanTranslation(force = false) {
             } else if (data.type === "error") {
               appendTransLog(data.message, "error");
               if (labelEl) labelEl.textContent = "오류 발생";
-              alert("한국어 자막 번역 중 오류: " + data.message);
+              alert(`${targetName} 자막 번역 중 오류: ` + data.message);
             }
           } catch (e) {
             console.error("SSE JSON 파싱 오류:", e, line);
@@ -606,7 +848,7 @@ async function requestKoreanTranslation(force = false) {
       appendTransLog("🛑 번역 요청이 취소되었습니다.", "warn");
     } else {
       appendTransLog("네트워크 또는 번역 처리 오류: " + err.message, "error");
-      alert("한국어 자막 번역 오류: " + err.message);
+      alert(`${targetName} 자막 번역 오류: ` + err.message);
     }
     return false;
   } finally {
@@ -626,6 +868,9 @@ async function requestKoreanTranslation(force = false) {
     }
   }
 }
+
+// 하위 호환용 별칭
+const requestKoreanTranslation = requestTranslation;
 
 function applyCcFontSize() {
   const subKo = document.getElementById("video-sub-ko");
@@ -1118,22 +1363,23 @@ function renderSubtitlesList(filterKeyword = "") {
   const keyword = (filterKeyword || "").trim().toLowerCase();
   let html = "";
   let matchedCount = 0;
+  const targetName = getTargetLangName(currentTargetLang);
 
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
   let noticeHtml = "";
-  if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !hasKo) {
-    const modeName = currentSubLang === "ko" ? "한국어 번역" : "한/영 병기";
+  if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !hasKo && !isSameLanguage) {
+    const modeName = currentSubLang === "ko" ? `${targetName} 번역` : (targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`);
     noticeHtml = `
       <div class="mb-3 p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
         <div class="flex items-center space-x-2">
           <span class="text-base">⚡</span>
           <div class="text-xs">
-            <span class="font-bold">${modeName} 안내: 한국어 번역이 아직 요청되지 않았습니다.</span>
+            <span class="font-bold">${modeName} 안내: ${targetName} 번역이 아직 요청되지 않았습니다.</span>
             <p class="text-[11px] text-amber-300/80 mt-0.5">Gemini API 사용량을 절약하기 위해 번역 요청 시에만 수동으로 번역합니다.</p>
           </div>
         </div>
         <button type="button" id="inline-request-trans-btn" class="px-3 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold rounded-lg text-xs transition flex-shrink-0 flex items-center space-x-1 shadow">
-          <span>⚡ 지금 한국어 번역 요청</span>
+          <span>⚡ 지금 ${targetName} 번역 요청</span>
         </button>
       </div>
     `;
@@ -1165,7 +1411,7 @@ function renderSubtitlesList(filterKeyword = "") {
         `;
       } else {
         displayTextHtml = `
-          <div class="text-slate-200 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans font-normal bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">(한국어 번역 대기)</span></div>
+          <div class="text-slate-200 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans font-normal bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">(${targetName} 번역 대기)</span></div>
         `;
       }
     } else {
@@ -1281,18 +1527,19 @@ function updateSubLangButtons(newLang) {
 
 async function changeSubLanguage(newLang, fromPlayerBar = false) {
   const hasKo = currentSubtitles && currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+  const targetName = getTargetLangName(currentTargetLang);
 
-  // 영상 하단 플레이어 바에서 미번역 상태로 한국어/병기 선택 시 명시적 확인창 제공
-  if ((newLang === "ko" || newLang === "bilingual") && currentSubtitles.length > 0 && !hasKo) {
+  // 영상 하단 플레이어 바에서 미번역 상태로 번역/병기 선택 시 명시적 확인창 제공
+  if ((newLang === "ko" || newLang === "bilingual") && currentSubtitles.length > 0 && !hasKo && !isSameLanguage) {
     if (fromPlayerBar) {
-      const modeLabel = newLang === "ko" ? "한국어 자막" : "한/영 병기 자막";
+      const modeLabel = newLang === "ko" ? `${targetName} 자막` : (targetName === "한국어" ? "한/영 병기 자막" : `${targetName} 병기 자막`);
       const wantTranslate = confirm(
-        `[${modeLabel}]이 아직 생성되지 않았습니다.\n지금 Gemini에 한국어 번역을 요청하시겠습니까? (API 사용량이 발생합니다)\n\n[확인]을 누르면 번역 후 표시되고, [취소]를 누르면 원문 자막이 유지됩니다.`
+        `[${modeLabel}]이 아직 생성되지 않았습니다.\n지금 Gemini에 ${targetName} 번역을 요청하시겠습니까? (API 사용량이 발생합니다)\n\n[확인]을 누르면 번역 후 표시되고, [취소]를 누르면 원문 자막이 유지됩니다.`
       );
       if (wantTranslate) {
         currentSubLang = newLang;
         updateSubLangButtons(newLang);
-        await requestKoreanTranslation(true);
+        await requestTranslation(true);
         return;
       } else {
         return; // 취소 시 원문 유지
@@ -1325,15 +1572,16 @@ async function triggerSubtitleDownload(format) {
   }
 
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+  const targetName = getTargetLangName(currentTargetLang);
   let downloadLangMode = currentSubLang;
 
-  if ((downloadLangMode === "ko" || downloadLangMode === "bilingual") && !hasKo) {
-    const modeName = downloadLangMode === "ko" ? "한국어 번역" : "한/영 병기";
+  if ((downloadLangMode === "ko" || downloadLangMode === "bilingual") && !hasKo && !isSameLanguage) {
+    const modeName = downloadLangMode === "ko" ? `${targetName} 번역` : (targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`);
     const wantTranslate = confirm(
       `${modeName} 자막 데이터가 아직 없습니다.\n지금 Gemini 번역을 요청하여 생성한 후 다운로드하시겠습니까? (API 사용량이 발생합니다)\n\n[취소]를 누르면 번역 없이 원문 자막으로 다운로드합니다.`
     );
     if (wantTranslate) {
-      const ok = await requestKoreanTranslation(true);
+      const ok = await requestTranslation(true);
       if (!ok) return;
     } else {
       downloadLangMode = "original";
@@ -1350,6 +1598,7 @@ async function triggerSubtitleDownload(format) {
         format: format,
         lang_mode: downloadLangMode,
         title: title,
+        target_lang: currentTargetLang,
         auto_translate: false,
         sync_offset: getSyncOffset()
       })
@@ -1436,7 +1685,12 @@ async function runGeminiAnalysis(url) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       signal: currentAbortController.signal,
-      body: JSON.stringify({ url: url, engine: "gemini" })
+      body: JSON.stringify({
+        url: url,
+        engine: "gemini",
+        source_lang: currentSourceLang,
+        target_lang: currentTargetLang
+      })
     });
 
     clearTimeout(stepTimer);
@@ -1454,23 +1708,14 @@ async function runGeminiAnalysis(url) {
 
     switchMediaContext(data.video_info.video_id, data.note_id);
     initYouTubePlayer(currentVideoId);
-    // initYouTubePlayer()가 isKoreanContent를 초기화하므로 반드시 그 뒤에 설정
-    isKoreanContent = data.is_korean || false;
     displayVideoMetadata(data.video_info);
     renderMarkdownNote(data.markdown, `Gemini: ${data.model_used}`, data.note_id);
     if (data.subtitles) {
-      // 한국어 원문 콘텐츠인 경우: 원문 text를 ko_text에도 복사하여 한국어 표시 즉시 가능
-      if (isKoreanContent) {
-        data.subtitles.forEach(s => { if (!s.ko_text) s.ko_text = s.text; });
-      }
       setSubtitles(data.subtitles);
     } else {
       setSubtitles([]);
     }
-
-    const langLabel = isKoreanContent ? '한국어 원문' : (data.transcript_language || '감지됨');
-    const genLabel = data.is_generated ? '(자동생성)' : '(공식자막)';
-    document.getElementById("meta-lang").textContent = `자막: ${langLabel} ${genLabel}`;
+    applyLanguageState(data);
     loadLibrary();
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -1495,7 +1740,11 @@ async function runSubscriptionPrompt(url) {
     const res = await fetch("/api/prompt", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url })
+      body: JSON.stringify({
+        url: url,
+        source_lang: currentSourceLang,
+        target_lang: currentTargetLang
+      })
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "프롬프트 생성 실패");
@@ -1505,16 +1754,29 @@ async function runSubscriptionPrompt(url) {
     const gen = switchMediaContext(data.video_info.video_id, null);
     initYouTubePlayer(currentVideoId);
     displayVideoMetadata(data.video_info);
-    setSubtitles([]);
-    
-    // 비동기로 자막 목록도 함께 로드 (그 사이 다른 영상으로 바뀌면 무시)
-    fetch("/api/subtitles", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ video_id: currentVideoId })
-    }).then(r => r.json()).then(d => {
-      if (isCurrentMedia(gen) && d.success && d.subtitles) setSubtitles(d.subtitles);
-    }).catch(() => {});
+
+    if (data.subtitles && data.subtitles.length > 0) {
+      setSubtitles(data.subtitles);
+      applyLanguageState(data);
+    } else {
+      setSubtitles([]);
+      applyLanguageState(data);
+      // 비동기로 자막 목록도 함께 로드 (그 사이 다른 영상으로 바뀌면 무시)
+      fetch("/api/subtitles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          video_id: currentVideoId,
+          source_lang: currentSourceLang,
+          target_lang: currentTargetLang
+        })
+      }).then(r => r.json()).then(d => {
+        if (isCurrentMedia(gen) && d.success && d.subtitles) {
+          setSubtitles(d.subtitles);
+          applyLanguageState(d);
+        }
+      }).catch(() => {});
+    }
 
     const pasteCard = document.getElementById("inline-paste-card");
     const pasteTextarea = document.getElementById("inline-paste-textarea");
@@ -1611,21 +1873,53 @@ async function loadSingleSavedNote(noteIdOrVid) {
     displayVideoMetadata(data.metadata);
     renderMarkdownNote(data.markdown, "저장된 보관 노트", currentNoteId);
     document.getElementById("inline-paste-card").classList.add("hidden");
-    
+    // 저장된 언어 상태 복원 (target_lang, source_lang, translation_source 등)
+    const meta = data.metadata || {};
+    applyLanguageState({
+      target_lang: meta.target_lang || "ko",
+      source_lang: meta.source_lang || null,
+      original_lang: meta.original_lang || null,
+      translation_source: meta.translation_source || null,
+      translation_track: meta.translation_track || null,
+      is_korean: meta.is_korean || false,
+      transcript_language: meta.transcript_language || null,
+      is_generated: meta.is_generated || false
+    });
+
     // 자막 목록 로드 (저장된 자막이 있으면 즉시 표시, 유튜브는 API로 동기화)
-    if (data.metadata.subtitles && data.metadata.subtitles.length > 0) {
-      setSubtitles(data.metadata.subtitles);
-    } else if (data.metadata.video_type !== 'local' && currentVideoId && !currentVideoId.startsWith('custom_')) {
+    if (meta.subtitles && meta.subtitles.length > 0) {
+      setSubtitles(meta.subtitles);
+    } else if (meta.video_type !== 'local' && currentVideoId && !currentVideoId.startsWith('custom_')) {
       setSubtitles([]);
       fetch("/api/subtitles", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ video_id: currentVideoId })
+        body: JSON.stringify({
+          video_id: currentVideoId,
+          note_id: currentNoteId,
+          source_lang: currentSourceLang,
+          target_lang: currentTargetLang
+        })
       }).then(r => r.json()).then(d => {
-        if (isCurrentMedia(gen) && d.success && d.subtitles) setSubtitles(d.subtitles);
+        if (isCurrentMedia(gen) && d.success && d.subtitles) {
+          setSubtitles(d.subtitles);
+          applyLanguageState(d);
+        }
       }).catch(() => {});
     } else {
       setSubtitles([]);
+    }
+
+    // 유튜브 트랙 목록 비동기 보강 (원문 드롭다운에 모든 트랙 옵션 채우기)
+    if (meta.video_type !== 'local' && currentVideoId && !currentVideoId.startsWith('custom_')) {
+      fetch(`/api/subtitles/tracks?video_id=${encodeURIComponent(currentVideoId)}`)
+        .then(r => r.json())
+        .then(d => {
+          if (isCurrentMedia(gen) && d.success && Array.isArray(d.tracks)) {
+            currentTracks = d.tracks;
+            renderSourceLangSelect();
+          }
+        }).catch(() => {});
     }
     
     // 편집 모드 종료 상태로 복원
@@ -1836,6 +2130,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // 로컬 파일용 새 컨텍스트 (이전 YouTube 영상 ID·싱크값·번역이 섞이지 않도록)
     const gen = switchMediaContext(localMediaKey(videoFile, title), null);
     isKoreanContent = false;
+    isSameLanguage = false;
+    currentTracks = [];
+    currentSourceLang = null;
+    currentTranslationSource = null;
+    renderSourceLangSelect();
     setSubtitles([]);
 
     if (videoFile) {
@@ -1909,6 +2208,11 @@ document.addEventListener("DOMContentLoaded", () => {
     // 로컬 비디오 플레이어 바로 준비 및 재생 (새 컨텍스트)
     const gen = switchMediaContext(localMediaKey(videoFile, title), null);
     isKoreanContent = false;
+    isSameLanguage = false;
+    currentTracks = [];
+    currentSourceLang = null;
+    currentTranslationSource = null;
+    renderSourceLangSelect();
     setSubtitles([]);
     initLocalVideoPlayer(videoFile);
     displayVideoMetadata({
@@ -2091,10 +2395,56 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("sub-lang-ko").addEventListener("click", () => changeSubLanguage("ko"));
   document.getElementById("sub-lang-bilingual").addEventListener("click", () => changeSubLanguage("bilingual"));
 
-  // 명시적 한국어 번역 요청 버튼 (Gemini API 쿼터 보호)
+  // 번역 대상 언어 셀렉트 박스 변경 시
+  const subTargetSelect = document.getElementById("sub-target-lang");
+  if (subTargetSelect) {
+    subTargetSelect.addEventListener("change", async (e) => {
+      const newTarget = e.target.value;
+      if (newTarget === currentTargetLang) return;
+
+      if (isTranslatingSubtitles) {
+        alert("현재 번역 작업이 진행 중입니다. 번역 완료 또는 취소 후 언어를 변경해주세요.");
+        subTargetSelect.value = currentTargetLang;
+        return;
+      }
+
+      currentTargetLang = newTarget;
+      try { localStorage.setItem("tubescholar_target_lang", currentTargetLang); } catch (err) {}
+      updateLangLabels();
+
+      // 자막이 있고 YouTube 영상이 로드되어 있는 경우 즉시 새 언어로 리로드
+      if (currentVideoId && !isLocalVideo) {
+        await reloadSubtitles({ target_lang: newTarget });
+      } else {
+        updateTranslationButtonState();
+      }
+    });
+  }
+
+  // 원문 자막 트랙 셀렉트 박스 변경 시
+  const subSourceSelect = document.getElementById("sub-source-lang");
+  if (subSourceSelect) {
+    subSourceSelect.addEventListener("change", async (e) => {
+      const newSource = e.target.value;
+      if (newSource === currentSourceLang) return;
+
+      if (isTranslatingSubtitles) {
+        alert("현재 번역 작업이 진행 중입니다. 번역 완료 또는 취소 후 원문 트랙을 변경해주세요.");
+        subSourceSelect.value = currentSourceLang || "";
+        return;
+      }
+
+      currentSourceLang = newSource;
+      if (currentVideoId && !isLocalVideo) {
+        await reloadSubtitles({ source_lang: newSource });
+      }
+    });
+  }
+
+  // 명시적 번역 요청 버튼 (Gemini API 쿼터 보호)
   const reqTransBtn = document.getElementById("request-sub-translate-btn");
   if (reqTransBtn) {
-    reqTransBtn.addEventListener("click", () => requestKoreanTranslation());
+    reqTransBtn.addEventListener("click", () => requestTranslation());
   }
 
   // 자동 스크롤 토글 버튼 이벤트 바인딩
@@ -2227,6 +2577,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initZenModeEvents();
 
   checkConfig();
+  initLanguages();
   loadLibrary();
 });
 
