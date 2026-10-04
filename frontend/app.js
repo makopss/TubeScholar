@@ -496,6 +496,11 @@ async function reloadSubtitles(opts = {}) {
     }
 
     if (d.success && Array.isArray(d.subtitles)) {
+      const reloadHasTrans = d.subtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+      if (reloadHasTrans && currentSubLang === "original") {
+        currentSubLang = "bilingual";
+        updateSubLangButtons(currentSubLang);
+      }
       setSubtitles(d.subtitles);
       applyLanguageState(d);
 
@@ -1710,11 +1715,15 @@ async function runGeminiAnalysis(url) {
     initYouTubePlayer(currentVideoId);
     displayVideoMetadata(data.video_info);
     renderMarkdownNote(data.markdown, `Gemini: ${data.model_used}`, data.note_id);
-    if (data.subtitles) {
-      setSubtitles(data.subtitles);
+    const analyzeSubs = data.subtitles || [];
+    const analyzeHasTrans = analyzeSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
+    if (analyzeHasTrans) {
+      currentSubLang = "bilingual";
     } else {
-      setSubtitles([]);
+      currentSubLang = "original";
     }
+    updateSubLangButtons(currentSubLang);
+    setSubtitles(analyzeSubs);
     applyLanguageState(data);
     loadLibrary();
   } catch (err) {
@@ -1873,22 +1882,22 @@ async function loadSingleSavedNote(noteIdOrVid) {
     displayVideoMetadata(data.metadata);
     renderMarkdownNote(data.markdown, "저장된 보관 노트", currentNoteId);
     document.getElementById("inline-paste-card").classList.add("hidden");
-    // 저장된 언어 상태 복원 (target_lang, source_lang, translation_source 등)
-    const meta = data.metadata || {};
-    applyLanguageState({
-      target_lang: meta.target_lang || "ko",
-      source_lang: meta.source_lang || null,
-      original_lang: meta.original_lang || null,
-      translation_source: meta.translation_source || null,
-      translation_track: meta.translation_track || null,
-      is_korean: meta.is_korean || false,
-      transcript_language: meta.transcript_language || null,
-      is_generated: meta.is_generated || false
-    });
 
-    // 자막 목록 로드 (저장된 자막이 있으면 즉시 표시, 유튜브는 API로 동기화)
-    if (meta.subtitles && meta.subtitles.length > 0) {
-      setSubtitles(meta.subtitles);
+    const meta = data.metadata || {};
+    const savedSubs = (meta.subtitles && Array.isArray(meta.subtitles)) ? meta.subtitles : [];
+    const hasTranslation = savedSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
+
+    // 1. 번역된 자막이 존재하는 경우 사용자가 즉시 번역문을 볼 수 있도록 'bilingual'(병기) 모드로 전환
+    if (hasTranslation) {
+      currentSubLang = "bilingual";
+    } else {
+      currentSubLang = "original";
+    }
+    updateSubLangButtons(currentSubLang);
+
+    // 2. 자막 목록 등록 (setSubtitles 내부에서 renderSubtitlesList가 최신 currentSubLang 기준으로 렌더링)
+    if (savedSubs.length > 0) {
+      setSubtitles(savedSubs);
     } else if (meta.video_type !== 'local' && currentVideoId && !currentVideoId.startsWith('custom_')) {
       setSubtitles([]);
       fetch("/api/subtitles", {
@@ -1902,6 +1911,11 @@ async function loadSingleSavedNote(noteIdOrVid) {
         })
       }).then(r => r.json()).then(d => {
         if (isCurrentMedia(gen) && d.success && d.subtitles) {
+          const fetchHasTrans = d.subtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+          if (fetchHasTrans && currentSubLang === "original") {
+            currentSubLang = "bilingual";
+            updateSubLangButtons(currentSubLang);
+          }
           setSubtitles(d.subtitles);
           applyLanguageState(d);
         }
@@ -1909,6 +1923,28 @@ async function loadSingleSavedNote(noteIdOrVid) {
     } else {
       setSubtitles([]);
     }
+
+    // 3. 자막이 메모리에 등록된 상태에서 언어 상태 복원 (hasKo가 정확히 계산되어 '재번역' 버튼 및 뱃지 정상 동기화)
+    applyLanguageState({
+      target_lang: meta.target_lang || "ko",
+      source_lang: meta.source_lang || null,
+      original_lang: meta.original_lang || null,
+      translation_source: meta.translation_source || (hasTranslation ? "gemini" : null),
+      translation_track: meta.translation_track || null,
+      is_korean: meta.is_korean || false,
+      transcript_language: meta.transcript_language || null,
+      is_generated: meta.is_generated || false
+    });
+
+    // 4. 화면 재생 위치에 따른 자막 동기화
+    let curTime = -1;
+    if (isLocalVideo) {
+      const v = document.getElementById("local-video-player");
+      if (v) curTime = v.currentTime;
+    } else if (ytPlayer && typeof ytPlayer.getCurrentTime === 'function') {
+      curTime = ytPlayer.getCurrentTime();
+    }
+    if (curTime >= 0) updateActiveSubtitle(curTime);
 
     // 유튜브 트랙 목록 비동기 보강 (원문 드롭다운에 모든 트랙 옵션 채우기)
     if (meta.video_type !== 'local' && currentVideoId && !currentVideoId.startsWith('custom_')) {
@@ -2052,7 +2088,11 @@ document.addEventListener("DOMContentLoaded", () => {
           body: JSON.stringify({ 
             title: currentVideoInfo ? currentVideoInfo.title : "수정된 학습 노트", 
             markdown: editedMd,
-            note_id: currentNoteId 
+            note_id: currentNoteId,
+            subtitles: currentSubtitles,
+            source_lang: currentSourceLang,
+            target_lang: currentTargetLang,
+            translation_source: currentTranslationSource
           })
         });
         const d2 = await res2.json();
@@ -2083,7 +2123,11 @@ document.addEventListener("DOMContentLoaded", () => {
         body: JSON.stringify({ 
           url: url, 
           markdown: rawMd,
-          title: currentVideoInfo ? currentVideoInfo.title : ""
+          title: currentVideoInfo ? currentVideoInfo.title : "",
+          subtitles: currentSubtitles,
+          source_lang: currentSourceLang,
+          target_lang: currentTargetLang,
+          translation_source: currentTranslationSource
         })
       });
       const data = await res.json();

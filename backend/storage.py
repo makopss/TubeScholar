@@ -316,10 +316,29 @@ def get_note(note_id_or_video_id: str) -> Optional[Dict[str, Any]]:
     if not target_id or not is_safe_note_id(target_id):
         return None
 
-    meta = notes[target_id]
+    meta = dict(notes[target_id])
     file_path = os.path.join(NOTES_DIR, f"{target_id}.md")
     if not os.path.exists(file_path):
         return None
+
+    # 과거 생성된 노트 중 자막에 번역(ko_text)이 있으나 메타데이터 언어 설정이 누락된 경우 자동 보정
+    subs = meta.get("subtitles") or []
+    has_ko = any(bool(s.get("ko_text")) for s in subs if isinstance(s, dict))
+    if has_ko:
+        updated = False
+        if not meta.get("target_lang"):
+            meta["target_lang"] = "ko"
+            notes[target_id]["target_lang"] = "ko"
+            updated = True
+        if not meta.get("translation_source"):
+            meta["translation_source"] = "gemini"
+            notes[target_id]["translation_source"] = "gemini"
+            updated = True
+        if updated:
+            try:
+                save_library(lib)
+            except Exception:
+                pass
 
     with open(file_path, "r", encoding="utf-8") as f:
         raw_content = f.read()

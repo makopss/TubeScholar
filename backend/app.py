@@ -115,6 +115,10 @@ class ManualSaveRequest(BaseModel):
     markdown: str
     video_type: Optional[str] = "youtube"
     note_id: Optional[str] = None
+    subtitles: Optional[List[Dict[str, Any]]] = None
+    source_lang: Optional[str] = None
+    target_lang: Optional[str] = None
+    translation_source: Optional[str] = None
 
 class UpdateNoteRequest(BaseModel):
     markdown: str
@@ -425,7 +429,19 @@ def manual_save_note(req: ManualSaveRequest):
         video_info["video_type"] = "youtube"
 
     # 항상 새로운 note_id로 독립 저장하여 이전 기록을 덮어쓰지 않음
-    save_res = save_note(video_info, req.markdown, note_id=req.note_id, note_title=req.title)
+    lang_meta = {
+        "source_lang": req.source_lang,
+        "target_lang": req.target_lang,
+        "translation_source": req.translation_source
+    }
+    save_res = save_note(
+        video_info, 
+        req.markdown, 
+        note_id=req.note_id, 
+        note_title=req.title,
+        subtitles=req.subtitles,
+        lang_meta=lang_meta
+    )
     return {
         "success": True,
         "note_id": save_res["note_id"],
@@ -497,6 +513,7 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
     subtitles = req.subtitles or []
     lang = "en"
     target = normalize_target_lang(req.target_lang)
+    res_meta = {}
     
     if not subtitles:
         v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
@@ -507,6 +524,9 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
             raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
         subtitles = res.get("subtitles", [])
         lang = res.get("language", "en")
+        res_meta = _lang_payload(res)
+        if req.note_id and subtitles:
+            update_note_subtitles(req.note_id, subtitles, _lang_meta(res))
 
     if req.translate_ko and subtitles:
         has_ko = any(s.get("ko_text") for s in subtitles)
@@ -514,11 +534,13 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
             subtitles = translate_subtitles_gemini(subtitles, target_lang=target, video_title=req.title)
         if req.note_id:
             update_note_subtitles(req.note_id, subtitles, {"target_lang": target, "translation_source": "gemini"})
+        res_meta["translation_source"] = "gemini"
 
     return {
         "success": True,
         "language": lang,
-        "subtitles": subtitles
+        "subtitles": subtitles,
+        **res_meta
     }
 
 @app.post("/api/subtitles/reload")
