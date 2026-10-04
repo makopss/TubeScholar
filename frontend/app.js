@@ -321,7 +321,7 @@ function setSubtitles(subs) {
     }
   }
   if (countText) {
-    countText.textContent = `${currentSubtitles.length}개 대사`;
+    countText.textContent = typeof t === "function" ? t("sub_lines_count", { count: currentSubtitles.length }) : `${currentSubtitles.length}개 대사`;
   }
   const searchInput = document.getElementById("subtitle-search-input");
   renderSubtitlesList(searchInput ? searchInput.value : "");
@@ -1359,9 +1359,9 @@ function renderSubtitlesList(filterKeyword = "") {
         <div class="w-14 h-14 rounded-2xl bg-slate-800/50 flex items-center justify-center mb-3 text-slate-600">
           <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"></path></svg>
         </div>
-        <h4 class="text-xs font-semibold text-slate-300 mb-1">자막이 없습니다</h4>
-        <p class="text-[11px] text-slate-500 max-w-xs leading-relaxed">
-          영상을 분석하거나 불러오면 인터랙티브 자막 목록이 표시됩니다. 자막을 클릭하면 해당 시간대로 즉시 이동합니다!
+        <h4 class="text-xs font-semibold text-slate-300 mb-1" data-i18n="no_subtitles_title">${typeof t === "function" ? t("no_subtitles_title") : "자막이 없습니다"}</h4>
+        <p class="text-[11px] text-slate-500 max-w-xs leading-relaxed" data-i18n="no_subtitles_desc">
+          ${typeof t === "function" ? t("no_subtitles_desc") : "영상을 분석하거나 불러오면 인터랙티브 자막 목록이 표시됩니다. 자막을 클릭하면 해당 시간대로 즉시 이동합니다!"}
         </p>
       </div>`;
     return;
@@ -1812,13 +1812,13 @@ async function loadLibrary() {
     const notes = data.notes || [];
 
     document.getElementById("library-count-badge").textContent = notes.length;
-    document.getElementById("drawer-count").textContent = `(${notes.length}개)`;
+    document.getElementById("drawer-count").textContent = typeof t === "function" ? `(${t("library_count_simple", { count: notes.length })})` : `(${notes.length}개)`;
 
     const listEl = document.getElementById("library-list");
     listEl.innerHTML = "";
 
     if (notes.length === 0) {
-      listEl.innerHTML = `<p class="text-xs text-slate-500 text-center py-8">아직 저장된 학습 노트가 없습니다.</p>`;
+      listEl.innerHTML = `<p class="text-xs text-slate-500 text-center py-8" data-i18n="library_empty">${typeof t === "function" ? t("library_empty") : "아직 저장된 학습 노트가 없습니다."}</p>`;
       return;
     }
 
@@ -1826,17 +1826,19 @@ async function loadLibrary() {
       const card = document.createElement("div");
       card.className = "p-3 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 rounded-xl cursor-pointer transition flex space-x-3 items-start group relative";
       const thumb = item.thumbnail || (item.video_id.startsWith('local_') ? '' : `https://i.ytimg.com/vi/${item.video_id}/hqdefault.jpg`);
+      const localLabel = typeof t === "function" ? t("tag_local") : "📁 로컬";
+      const delLabel = typeof t === "function" ? t("library_delete_btn") : "삭제";
       
       card.innerHTML = `
         <div class="w-20 h-14 bg-slate-900 rounded-lg border border-slate-700 flex-shrink-0 overflow-hidden flex items-center justify-center">
-          ${thumb ? `<img src="${escapeHtmlStr(thumb)}" alt="thumb" class="w-full h-full object-cover">` : `<span class="text-xs text-amber-400 font-bold">📁 로컬</span>`}
+          ${thumb ? `<img src="${escapeHtmlStr(thumb)}" alt="thumb" class="w-full h-full object-cover">` : `<span class="text-xs text-amber-400 font-bold">${localLabel}</span>`}
         </div>
         <div class="flex-1 min-w-0 pr-6">
           <p class="text-xs font-semibold text-sky-400 truncate">${escapeHtmlStr(item.channel || 'YouTube')}</p>
           <h4 class="text-xs font-bold text-white truncate mt-0.5" title="${escapeHtmlStr(item.title)}">${escapeHtmlStr(item.title)}</h4>
           <p class="text-[10px] text-slate-400 mt-1">${escapeHtmlStr(item.created_at || '')}</p>
         </div>
-        <button class="delete-note-btn absolute top-2 right-2 text-slate-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition" title="삭제">
+        <button class="delete-note-btn absolute top-2 right-2 text-slate-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition" title="${delLabel}">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
         </button>
       `;
@@ -1977,13 +1979,13 @@ function toggleEditor(forceState) {
   if (isEditing) {
     editorContainer.classList.remove("hidden");
     markdownContainer.classList.add("hidden");
-    editBtnText.textContent = "👁️ 미리보기";
+    editBtnText.textContent = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
     document.getElementById("note-editor-textarea").value = currentMarkdown;
     document.getElementById("note-editor-textarea").focus();
   } else {
     editorContainer.classList.add("hidden");
     markdownContainer.classList.remove("hidden");
-    editBtnText.textContent = "✏️ 편집";
+    editBtnText.textContent = typeof t === "function" ? t("btn_edit") : "✏️ 편집";
   }
 }
 
@@ -2053,6 +2055,17 @@ document.addEventListener("DOMContentLoaded", () => {
     renderSourceLangSelect();
     updateTranslationButtonState();
     loadTtsVoices();
+    if (isEditing) {
+      const editBtnText = document.getElementById("edit-btn-text");
+      if (editBtnText) editBtnText.textContent = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
+    }
+    const searchInput = document.getElementById("subtitle-search-input");
+    renderSubtitlesList(searchInput ? searchInput.value : "");
+    const countText = document.getElementById("sub-count-text");
+    if (countText && currentSubtitles) {
+      countText.textContent = typeof t === "function" ? t("sub_lines_count", { count: currentSubtitles.length }) : `${currentSubtitles.length}개 대사`;
+    }
+    loadLibrary();
   });
 
   const form = document.getElementById("analyze-form");
