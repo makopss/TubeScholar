@@ -724,11 +724,12 @@ def generate_study_note_from_audio(
     audio_path: str,
     video_title: str = "로컬 비디오",
     api_key: Optional[str] = None,
-    model_name: Optional[str] = None
+    model_name: Optional[str] = None,
+    target_lang: str = "ko"
 ) -> Dict[str, Any]:
     """
     자막이 없는 로컬 영상의 오디오 파일을 Gemini Files API로 직접 전달하여,
-    Gemini가 음성을 듣고 타임스탬프 학습 노트를 자동 생성합니다.
+    Gemini가 음성을 듣고 타임스탬프 학습 노트를 지정된 언어로 자동 생성합니다.
     """
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
@@ -743,19 +744,39 @@ def generate_study_note_from_audio(
     except Exception as e:
         return {"success": False, "error": f"오디오 업로드 실패: {str(e)}"}
 
-    audio_prompt = f"""
-[영상 정보]
-- 제목: {video_title}
-- 음성 파일: 첨부된 오디오
+    target = (target_lang or "ko").lower()
+    target_name = language_name(target)
+    active_system_prompt = get_system_prompt_for_lang(target, "en")
 
-첨부된 오디오를 귀로 듣고 분석하여 다음 두 섹션으로 명확히 구분하여 출력해 주십시오:
+    if target.startswith("en"):
+        req_instruction = "Generate the comprehensive Master Deep Learning Note entirely in English, capturing key proper nouns, their origins/etymology, dense chronological deep dives, and the 3-stage quiz."
+        sub_instruction = "Output all spoken dialogues as standard SRT subtitle format."
+    elif target.startswith("ja"):
+        req_instruction = "5大メタ原型に合わせた最高峰のマスター深層学習ノートをすべて日本語で作成してください。固有名詞の語源・命名由来辞典、タイムライン別Deep Dive解説、理解度チェッククイズを含めてください。"
+        sub_instruction = "音声の発話を標準SRT字幕形式で漏れなく作成してください。"
+    elif target == "ko":
+        req_instruction = (
+            "정확한 타임스탬프([MM:SS])와 함께 5대 메타 원형(분석·평가형, 스토리·해석형, 가이드·공략형, 지식·정보형, 대화·인터뷰형)에 맞춤화된 최고급 심화 지식 확장 마스터 노트를 작성해 주십시오.\n"
+            "음성 본문에 실제로 언급되는 중요한 고유명사(인물, 기관/기업, 프로젝트, 지명/천체 등)와 전문용어를 빠짐없이 포착하여 '유형 분류, 어원(Etymology) 및 명명 유래'가 담긴 사전과, 작동 원리와 배경 지식을 'Deep Dive(지식 보충)' 박스로 풍부하게 설명하고, 이해도 점검 퀴즈를 포함해 주십시오."
+        )
+        sub_instruction = "오디오의 발화 대사를 표준 SRT 자막 형식(1부터 시작하는 자막 번호, 00:00:00,000 --> 00:00:00,000 타임코드, 대사)으로 빠짐없이 작성해 주십시오."
+    else:
+        req_instruction = f"Generate the comprehensive Master Deep Learning Note strictly and entirely in {target_name} ({target}), capturing proper nouns, their origins/etymology, chronological deep dives, and quizzes."
+        sub_instruction = "Output the spoken dialogues in standard SRT subtitle format."
+
+    audio_prompt = f"""
+[Video Information]
+- Title: {video_title}
+- Audio File: Attached Audio
+- Target Language: {target_name} ({target})
+
+Please listen carefully to the attached audio, analyze it, and output clearly divided into the following two sections:
 
 ===STUDY_NOTE===
-정확한 타임스탬프([MM:SS])와 함께 5대 메타 원형(분석·평가형, 스토리·해석형, 가이드·공략형, 지식·정보형, 대화·인터뷰형)에 맞춤화된 최고급 심화 지식 확장 마스터 노트를 작성해 주십시오.
-음성 본문에 실제로 언급되는 중요한 고유명사(인물, 기관/기업, 프로젝트, 지명/천체 등)와 전문용어를 빠짐없이 포착하여 '유형 분류, 어원(Etymology) 및 명명 유래'가 담긴 사전과, 작동 원리와 배경 지식을 'Deep Dive(지식 보충)' 박스로 풍부하게 설명하고, 이해도 점검 퀴즈를 포함해 주십시오.
+{req_instruction}
 
 ===SUBTITLES_SRT===
-오디오의 발화 대사를 표준 SRT 자막 형식(1부터 시작하는 자막 번호, 00:00:00,000 --> 00:00:00,000 타임코드, 대사)으로 빠짐없이 작성해 주십시오.
+{sub_instruction}
 """
 
     models_to_try = [model_name or DEFAULT_GEMINI_MODEL]
@@ -779,7 +800,7 @@ def generate_study_note_from_audio(
                         model=target_model,
                         contents=[uploaded_file, audio_prompt],
                         config=types.GenerateContentConfig(
-                            system_instruction=SYSTEM_PROMPT,
+                            system_instruction=active_system_prompt,
                             temperature=0.3,
                         )
                     )

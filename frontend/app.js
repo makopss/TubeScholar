@@ -2334,7 +2334,11 @@ document.addEventListener("DOMContentLoaded", () => {
         const res = await fetch("/api/local/prompt", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: title, subtitle_text: subText })
+          body: JSON.stringify({
+            title: title,
+            subtitle_text: subText,
+            target_lang: currentTargetLang
+          })
         });
         const d = await res.json();
         await navigator.clipboard.writeText(d.prompt);
@@ -2352,7 +2356,12 @@ document.addEventListener("DOMContentLoaded", () => {
         const res = await fetch("/api/local/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ title: title, subtitle_text: subText, engine: "gemini" })
+          body: JSON.stringify({
+            title: title,
+            subtitle_text: subText,
+            engine: "gemini",
+            target_lang: currentTargetLang
+          })
         });
         let d = null;
         try {
@@ -2425,6 +2434,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const formData = new FormData();
     formData.append("video", videoFile);
     formData.append("title", title);
+    formData.append("target_lang", currentTargetLang);
 
     try {
       const res = await fetch("/api/local/video-analyze", {

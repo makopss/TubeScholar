@@ -340,11 +340,13 @@ def analyze_local_video(req: LocalAnalyzeRequest):
 @app.post("/api/local/video-analyze")
 def analyze_local_video_audio(
     video: UploadFile = File(...),
-    title: Optional[str] = Form(None)
+    title: Optional[str] = Form(None),
+    target_lang: Optional[str] = Form(None)
 ):
     """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성
     (일반 def: FastAPI 가 작업 스레드에서 실행하므로 분석 중에도 다른 요청이 멈추지 않음)"""
     vid_title = title or os.path.splitext(os.path.basename(video.filename or "") or "로컬 비디오")[0]
+    target = normalize_target_lang(target_lang)
     
     temp_dir = tempfile.mkdtemp()
     # 클라이언트 파일명은 경로로 쓰지 않음 (경로 탈출 방지) → 고정 이름 + 검증된 확장자만 사용
@@ -394,7 +396,7 @@ def analyze_local_video_audio(
                 "full_text": "\n".join(f"[{s['timestamp']}] {s['text']}" for s in subtitles),
                 "subtitles": subtitles
             }
-            llm_result = generate_study_note_gemini(video_info, transcript_data)
+            llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=target)
             if not llm_result.get("success"):
                 raise HTTPException(status_code=500, detail=f"Gemini 학습 노트 생성 실패: {llm_result.get('error')}")
 
@@ -403,7 +405,8 @@ def analyze_local_video_audio(
             # Groq 키가 없거나 실패한 경우: 기존 Gemini Multimodal Audio 직접 청취 방식으로 폴백
             llm_result = generate_study_note_from_audio(
                 audio_path=temp_audio_path,
-                video_title=vid_title
+                video_title=vid_title,
+                target_lang=target
             )
             if not llm_result.get("success"):
                 raise HTTPException(status_code=500, detail=f"Gemini 음성 분석 실패: {llm_result.get('error')}")
@@ -418,7 +421,7 @@ def analyze_local_video_audio(
             subtitles = llm_result.get("subtitles", [])
             model_used = llm_result.get("model_used")
 
-        save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles)
+        save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles, lang_meta={"target_lang": target})
         subtitles = save_res["metadata"].get("subtitles", subtitles)
         return {
             "success": True,
