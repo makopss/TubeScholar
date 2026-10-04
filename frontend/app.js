@@ -3116,12 +3116,25 @@ function initZenModeEvents() {
     });
   }
 
-  // 브라우저 탭 활성 생존 신호 (브라우저 창을 닫았을 때 백그라운드 프로세스가 자동 종료되도록 함)
+  // 브라우저 탭/창 종료 시 백그라운드 프로세스 즉각 종료 신호 전송
+  const sendCloseSignal = () => {
+    try {
+      fetch("/api/system/browser-close", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-tubescholar": "1" },
+        keepalive: true
+      }).catch(() => {});
+    } catch (e) {}
+  };
+  window.addEventListener("pagehide", sendCloseSignal);
+  window.addEventListener("beforeunload", sendCloseSignal);
+
+  // 브라우저 탭 활성 생존 신호 (주기적으로 서버에 신호를 보내 비정상 종료 시에도 워치독으로 자동 종료)
   function initHeartbeat() {
     const ping = () => {
       fetch("/api/system/heartbeat", { method: "POST" }).catch(() => {});
     };
-    setInterval(ping, 5000);
+    setInterval(ping, 3000);
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) ping();
     });

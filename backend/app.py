@@ -73,8 +73,25 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost
 #    (외부 웹사이트가 커스텀 헤더를 붙이면 CORS preflight 가 발생하는데, 이 서버는 CORS 를 허용하지 않으므로 차단됨)
 _CSRF_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
+_last_heartbeat = time.time()
+_shutdown_timer: Optional[threading.Timer] = None
+_shutdown_lock = threading.Lock()
+
+def cancel_shutdown():
+    """새로운 요청이나 하트비트가 수신되면 종료 예약 취소 (새로고침 지원)"""
+    global _shutdown_timer
+    with _shutdown_lock:
+        if _shutdown_timer is not None:
+            _shutdown_timer.cancel()
+            _shutdown_timer = None
+
+def _perform_exit():
+    os._exit(0)
+
 @app.middleware("http")
 async def csrf_guard(request: Request, call_next):
+    if _shutdown_timer is not None and not request.url.path.startswith("/api/system/browser-close"):
+        cancel_shutdown()
     if request.method in _CSRF_METHODS and request.url.path.startswith("/api/"):
         if request.headers.get("x-tubescholar") != "1":
             return JSONResponse(status_code=403, content={"detail": "허용되지 않은 요청입니다. (CSRF 보호)"})
@@ -751,13 +768,24 @@ def get_tts_audio_file(filename: str):
         raise HTTPException(status_code=404, detail="오디오 파일을 찾을 수 없습니다.")
     return FileResponse(filepath, media_type="audio/mpeg", filename=safe_filename)
 
-_last_heartbeat = time.time()
+@app.post("/api/system/browser-close")
+def browser_close_signal():
+    """브라우저 창/탭 닫힘 시 1.5초 후 프로세스 즉시 종료 (F5 새로고침인 경우 다음 요청 수신 시 취소)"""
+    global _shutdown_timer
+    with _shutdown_lock:
+        if _shutdown_timer is not None:
+            _shutdown_timer.cancel()
+        _shutdown_timer = threading.Timer(1.5, _perform_exit)
+        _shutdown_timer.daemon = True
+        _shutdown_timer.start()
+    return {"status": "closing"}
 
 @app.post("/api/system/heartbeat")
 def system_heartbeat():
     """브라우저 활성 생존 신호 수신 (브라우저 창 종료 감지용)"""
     global _last_heartbeat
     _last_heartbeat = time.time()
+    cancel_shutdown()
     return {"status": "ok"}
 
 @app.post("/api/system/shutdown")
