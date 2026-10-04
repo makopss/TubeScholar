@@ -710,14 +710,22 @@
 
       <div class="space-y-3 text-xs">
         <div>
-          <label class="block font-semibold text-slate-300 mb-1" data-i18n="local_video_step1">1. 비디오 파일 선택 (.mp4, .webm, .mkv)</label>
-          <input type="file" id="local-video-input" accept="video/*" class="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-white hover:file:bg-slate-700 cursor-pointer" />
+          <label class="block font-semibold text-slate-300 mb-1.5" data-i18n="local_video_step1">1. 비디오 파일 선택 (.mp4, .webm, .mkv)</label>
+          <div class="flex items-center space-x-2 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800">
+            <label for="local-video-input" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg text-xs font-semibold cursor-pointer border border-slate-700 transition flex-shrink-0 shadow-sm" data-i18n="btn_choose_file">파일 선택</label>
+            <span id="local-video-file-name" class="text-xs text-slate-500 truncate flex-1 select-none" data-i18n="no_file_chosen">선택된 파일 없음</span>
+            <input type="file" id="local-video-input" accept="video/*" class="hidden" />
+          </div>
         </div>
 
         <div>
-          <label class="block font-semibold text-slate-300 mb-1" data-i18n-html="local_sub_step2">2. 자막 파일 선택 (.srt, .vtt) <span class="text-sky-400 font-normal">(자막이 없으면 비워두세요)</span></label>
-          <input type="file" id="local-subtitle-input" accept=".srt,.vtt,text/plain" class="w-full text-xs text-slate-400 file:mr-3 file:py-1.5 file:px-3 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-white hover:file:bg-slate-700 cursor-pointer" />
-          <p class="text-[11px] text-slate-400 mt-1" data-i18n-html="local_sub_tip">
+          <label class="block font-semibold text-slate-300 mb-1.5" data-i18n-html="local_sub_step2">2. 자막 파일 선택 (.srt, .vtt) <span class="text-sky-400 font-normal">(자막이 없으면 비워두세요)</span></label>
+          <div class="flex items-center space-x-2 bg-slate-950/60 p-1.5 rounded-xl border border-slate-800">
+            <label for="local-subtitle-input" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 active:scale-95 text-white rounded-lg text-xs font-semibold cursor-pointer border border-slate-700 transition flex-shrink-0 shadow-sm" data-i18n="btn_choose_file">파일 선택</label>
+            <span id="local-subtitle-file-name" class="text-xs text-slate-500 truncate flex-1 select-none" data-i18n="no_file_chosen">선택된 파일 없음</span>
+            <input type="file" id="local-subtitle-input" accept=".srt,.vtt,text/plain" class="hidden" />
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1.5" data-i18n-html="local_sub_tip">
             💡 자막 파일이 없으신가요? 비워두시면 <strong>Gemini가 영상의 음성을 직접 귀로 듣고</strong> 분석합니다!
           </p>
         </div>

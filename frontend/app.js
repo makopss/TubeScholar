@@ -2105,6 +2105,7 @@ document.addEventListener("DOMContentLoaded", () => {
     loadTtsVoices();
     refreshSyncBadge(true);
     updateSubtitleAutoScrollUI();
+    updateLocalFileInputLabels();
     checkConfig();
 
     if (currentVideoInfo) {
@@ -2252,8 +2253,40 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   });
 
-  // 로컬 비디오 모달 열기/닫기
+  // 로컬 비디오 모달 열기/닫기 및 커스텀 파일 인풋 라벨 동기화
+  function updateLocalFileInputLabels() {
+    const localVideoInput = document.getElementById("local-video-input");
+    const localVideoFileName = document.getElementById("local-video-file-name");
+    const localSubInput = document.getElementById("local-subtitle-input");
+    const localSubFileName = document.getElementById("local-subtitle-file-name");
+
+    if (localVideoFileName) {
+      if (localVideoInput && localVideoInput.files && localVideoInput.files.length > 0) {
+        localVideoFileName.textContent = localVideoInput.files[0].name;
+        localVideoFileName.className = "text-xs text-sky-300 font-mono truncate flex-1";
+      } else {
+        localVideoFileName.textContent = typeof t === "function" ? t("no_file_chosen") : "선택된 파일 없음";
+        localVideoFileName.className = "text-xs text-slate-500 truncate flex-1 select-none";
+      }
+    }
+    if (localSubFileName) {
+      if (localSubInput && localSubInput.files && localSubInput.files.length > 0) {
+        localSubFileName.textContent = localSubInput.files[0].name;
+        localSubFileName.className = "text-xs text-sky-300 font-mono truncate flex-1";
+      } else {
+        localSubFileName.textContent = typeof t === "function" ? t("no_file_chosen") : "선택된 파일 없음";
+        localSubFileName.className = "text-xs text-slate-500 truncate flex-1 select-none";
+      }
+    }
+  }
+
+  const localVideoInputEl = document.getElementById("local-video-input");
+  const localSubInputEl = document.getElementById("local-subtitle-input");
+  if (localVideoInputEl) localVideoInputEl.addEventListener("change", updateLocalFileInputLabels);
+  if (localSubInputEl) localSubInputEl.addEventListener("change", updateLocalFileInputLabels);
+
   document.getElementById("local-file-btn").addEventListener("click", () => {
+    updateLocalFileInputLabels();
     document.getElementById("local-file-modal").classList.remove("hidden");
   });
   document.getElementById("close-local-modal-btn").addEventListener("click", () => {

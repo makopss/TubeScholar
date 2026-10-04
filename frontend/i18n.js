@@ -396,6 +396,8 @@ const TUBESCHOLAR_I18N = {
     channel_loading: "채널 영상 목록을 조회하고 있습니다...",
     channel_empty: "조회된 영상이 없습니다.",
     local_channel_whisper: "내 로컬 PC 영상 (Groq Whisper 0.1초 칼싱크)",
+    btn_choose_file: "파일 선택",
+    no_file_chosen: "선택된 파일 없음"
   },
 
   en: {
@@ -790,6 +792,8 @@ const TUBESCHOLAR_I18N = {
     channel_loading: "Loading channel video list...",
     channel_empty: "No videos found for this channel.",
     local_channel_whisper: "Local PC Video (Groq Whisper 0.1s Sync)",
+    btn_choose_file: "Choose File",
+    no_file_chosen: "No file chosen"
   },
 
   ja: {
@@ -1184,6 +1188,8 @@ const TUBESCHOLAR_I18N = {
     channel_loading: "チャンネル動画リストを読み込んでいます...",
     channel_empty: "動画が見つかりませんでした。",
     local_channel_whisper: "ローカルPC動画 (Groq Whisper 0.1秒同期)",
+    btn_choose_file: "ファイルを選択",
+    no_file_chosen: "選択されたファイルはありません"
   }
 };
 
