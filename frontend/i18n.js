@@ -191,16 +191,16 @@ const TUBESCHOLAR_I18N = {
     settings_modal_title: "Gemini API 설정",
     settings_gemini_label: "Google Gemini 무료 API 키",
     settings_gemini_link: "무료 키 발급받기 ↗",
-    settings_gemini_tip: "* 신용카드 없이 구글 계정만으로 즉시 발급되며 하루 1,500회 무료입니다.",
+    settings_gemini_tip: "",
     settings_groq_label: "⚡ Groq Cloud 무료 API 키",
-    settings_groq_badge: "0.1초 칼싱크",
+    settings_groq_badge: "",
     settings_groq_link: "무료 키 발급받기",
-    settings_groq_tip: "* 로컬 영상의 자막을 10초 만에 0.1초 단위 칼싱크(Whisper Large-v3)로 자동 생성합니다. (매일 8시간 완전 무료)",
+    settings_groq_tip: "",
     settings_save_btn_simple: "저장하기",
 
     // 자막 번역 진행 모달
     trans_modal_title: "한국어 자막 번역 진행",
-    trans_modal_subtitle: "Gemini 3.5 Flash Lite (500 RPD) 모델을 통해 자막을 초고속 번역하고 있습니다.",
+    trans_modal_subtitle: "Gemini AI 모델을 통해 자막을 신속하게 번역하고 있습니다.",
     trans_preparing: "번역 준비 중...",
     trans_log_title: "실시간 처리 로그",
     trans_autoscroll_label: "자동 스크롤",
@@ -245,7 +245,7 @@ const TUBESCHOLAR_I18N = {
 
     loading_local_step1_title: "1단계: 영상에서 오디오 추출 중...",
     loading_local_step1_desc: "FFmpeg를 통해 영상에서 고압축 음성 트랙(MP3)을 신속하게 추출하고 있습니다.",
-    loading_local_step2_title: "2단계: Groq Whisper 0.1초 칼싱크 자막 & Gemini 지식 노트 생성 중...",
+    loading_local_step2_title: "2단계: Groq Whisper 자막 & Gemini 지식 노트 생성 중...",
     loading_local_step2_desc: "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.",
     loading_local_step3_title: "3단계: 노트 렌더링 및 보관함 저장 완료!",
 
@@ -411,7 +411,7 @@ const TUBESCHOLAR_I18N = {
     tts_voice_katja: "Katja (독일어 여성 톤)",
     channel_loading: "채널 영상 목록을 조회하고 있습니다...",
     channel_empty: "조회된 영상이 없습니다.",
-    local_channel_whisper: "내 로컬 PC 영상 (Groq Whisper 0.1초 칼싱크)",
+    local_channel_whisper: "내 로컬 PC 영상 (Groq Whisper 자막)",
     btn_choose_file: "파일 선택",
     no_file_chosen: "선택된 파일 없음"
   },
@@ -603,11 +603,11 @@ const TUBESCHOLAR_I18N = {
     settings_modal_title: "Gemini API Settings",
     settings_gemini_label: "Google Gemini Free API Key",
     settings_gemini_link: "Get Free Key ↗",
-    settings_gemini_tip: "* Free 1,500 requests/day with just a Google account, no credit card required.",
+    settings_gemini_tip: "",
     settings_groq_label: "⚡ Groq Cloud Free API Key",
-    settings_groq_badge: "0.1s Fast Sync",
+    settings_groq_badge: "",
     settings_groq_link: "Get Free Key",
-    settings_groq_tip: "* Automatically generates precise 0.1s synced subtitles for local videos in 10s via Whisper Large-v3. (8 hours/day free)",
+    settings_groq_tip: "",
     settings_save_btn_simple: "Save",
 
     // Subtitle Translation Progress Modal
@@ -657,7 +657,7 @@ const TUBESCHOLAR_I18N = {
 
     loading_local_step1_title: "Step 1: Extracting audio from video...",
     loading_local_step1_desc: "Rapidly extracting high-compression audio track (MP3) via FFmpeg.",
-    loading_local_step2_title: "Step 2: Groq Whisper 0.1s Fast Sync Subtitles & Gemini Note Generation...",
+    loading_local_step2_title: "Step 2: Groq Whisper Subtitles & Gemini Note Generation...",
     loading_local_step2_desc: "Generating precise subtitles via ultra-fast STT and composing deep study notes with Gemini AI.",
     loading_local_step3_title: "Step 3: Rendering note & saved to library!",
 
@@ -823,7 +823,7 @@ const TUBESCHOLAR_I18N = {
     tts_voice_katja: "Katja (German Female)",
     channel_loading: "Loading channel video list...",
     channel_empty: "No videos found for this channel.",
-    local_channel_whisper: "Local PC Video (Groq Whisper 0.1s Sync)",
+    local_channel_whisper: "Local PC Video (Groq Whisper Subtitles)",
     btn_choose_file: "Choose File",
     no_file_chosen: "No file chosen"
   },
@@ -1015,11 +1015,11 @@ const TUBESCHOLAR_I18N = {
     settings_modal_title: "Gemini API 設定",
     settings_gemini_label: "Google Gemini 無料APIキー",
     settings_gemini_link: "無料キーを取得 ↗",
-    settings_gemini_tip: "* クレジットカード不要でGoogleアカウントのみで即時発行、1日1,500回無料です。",
+    settings_gemini_tip: "",
     settings_groq_label: "⚡ Groq Cloud 無料APIキー",
-    settings_groq_badge: "0.1秒 高精度同期",
+    settings_groq_badge: "",
     settings_groq_link: "無料キーを取得",
-    settings_groq_tip: "* ローカル動画の字幕をWhisper Large-v3により0.1秒単位の高精度同期で10秒で自動生成します。(毎日8時間完全無料)",
+    settings_groq_tip: "",
     settings_save_btn_simple: "保存する",
 
     // 字幕翻訳進行モーダル
@@ -1069,7 +1069,7 @@ const TUBESCHOLAR_I18N = {
 
     loading_local_step1_title: "ステップ1: 動画から音声を抽出中...",
     loading_local_step1_desc: "FFmpegを使用して動画から圧縮音声トラック（MP3）を迅速に抽出しています。",
-    loading_local_step2_title: "ステップ2: Groq Whisper 0.1秒高精度同期字幕＆Gemini知識ノートを生成中...",
+    loading_local_step2_title: "ステップ2: Groq Whisper 字幕＆Gemini 知識ノートを生成中...",
     loading_local_step2_desc: "超高速音声認識で高精度な字幕を生成し、Gemini AIが深層学習ノートを構成します。",
     loading_local_step3_title: "ステップ3: ノート描画および保管庫への保存完了！",
 
@@ -1235,7 +1235,7 @@ const TUBESCHOLAR_I18N = {
     tts_voice_katja: "カチャ (ドイツ語 女性)",
     channel_loading: "チャンネル動画リストを読み込んでいます...",
     channel_empty: "動画が見つかりませんでした。",
-    local_channel_whisper: "ローカルPC動画 (Groq Whisper 0.1秒同期)",
+    local_channel_whisper: "ローカルPC動画 (Groq Whisper 字幕)",
     btn_choose_file: "ファイルを選択",
     no_file_chosen: "選択されたファイルはありません"
   }

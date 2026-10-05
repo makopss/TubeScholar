@@ -310,7 +310,7 @@ function displayVideoMetadata(info) {
   currentVideoInfo = info;
   document.getElementById("video-meta-card").classList.remove("hidden");
   let channelText = info.channel;
-  if (channelText === "내 로컬 PC 영상 (Groq Whisper 0.1초 칼싱크)") {
+  if (channelText && channelText.includes("Groq Whisper")) {
     channelText = typeof t === "function" ? t("local_channel_whisper") : channelText;
   } else if (channelText === "내 로컬 PC 영상 (Gemini 음성 직접 청취)" || channelText === "내 로컬 PC 영상 (음성 직접 청취)") {
     channelText = typeof t === "function" ? t("local_channel_audio") : channelText;
@@ -2711,7 +2711,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const stepTimer = setTimeout(() => {
       setAnalysisStep(2);
-      loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: Groq Whisper 0.1초 칼싱크 자막 & Gemini 지식 노트 생성 중...";
+      loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: Groq Whisper 자막 & Gemini 지식 노트 생성 중...";
       loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.";
     }, 2200);
 

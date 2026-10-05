@@ -18,27 +18,30 @@ warnings.filterwarnings("ignore", message=".*Automatic function calling.*")
 warnings.filterwarnings("ignore", message=".*Direct use of automatic function calling.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai.*")
 
-# 1) 학습 노트 심층 생성용 모델 (가장 안정적이고 권장되는 초고속 모델)
-DEFAULT_NOTE_MODEL = "gemini-3.6-flash"
+# 1) 학습 노트 심층 생성용 모델 (최신 Flash 모델 최우선, Lite 모델은 후순위 폴백)
+DEFAULT_NOTE_MODEL = "gemini-3.8-flash"
 FALLBACK_NOTE_MODELS = [
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
     "gemini-flash-lite-latest",
-    "gemini-3.7-flash",
-    "gemini-3.8-flash"
 ]
 DEFAULT_GEMINI_MODEL = DEFAULT_NOTE_MODEL
 FALLBACK_GEMINI_MODELS = FALLBACK_NOTE_MODELS
 
-# 2) 한국어 자막 번역 전담 모델 (하루 500회 & 분당 15회 한도 Lite 모델)
+# 2) 한국어 및 다국어 자막 번역 전담 모델 (현재 Lite 우선순위 유지 + 후순위에 최신 Flash 모델 추가)
 DEFAULT_TRANSLATE_MODEL = "gemini-3.5-flash-lite"
 FALLBACK_TRANSLATE_MODELS = [
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-flash-lite-latest",
+    "gemini-3.8-flash",
+    "gemini-3.7-flash",
     "gemini-3.6-flash",
-    "gemini-3.5-flash"
+    "gemini-3.5-flash",
 ]
 
 # 3) 자막 번역 RPM(분당 요청수) 엄격 제어 설정

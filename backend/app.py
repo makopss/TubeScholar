@@ -418,13 +418,13 @@ def analyze_local_video_audio(
             stt_result = transcribe_audio_groq(temp_audio_path, api_key=groq_key)
 
         if stt_result and stt_result.get("success") and stt_result.get("subtitles"):
-            # Groq 0.1초 칼싱크 자막 완성 -> Gemini에게 전달하여 최고급 지식 확장 노트 생성
+            # Groq Whisper 자막 완성 -> Gemini에게 전달하여 지식 확장 노트 생성
             subtitles = stt_result["subtitles"]
             duration_str = subtitles[-1]["timestamp"] if subtitles else "00:00"
             video_info = {
                 "video_id": f"local_{int(time.time())}",
                 "title": vid_title,
-                "channel": "내 로컬 PC 영상 (Groq Whisper 0.1초 칼싱크)",
+                "channel": "내 로컬 PC 영상 (Groq Whisper 자막)",
                 "video_type": "local",
                 "duration_str": duration_str
             }

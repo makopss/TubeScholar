@@ -12,12 +12,12 @@
   <!-- YouTube IFrame API -->
   <script src="https://www.youtube.com/iframe_api"></script>
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="/static/style.css">
+  <link rel="stylesheet" href="/static/style.css?v=2.2.0">
   <!-- Tailwind CSS (로컬 정적 빌드: npm run build:css / 설정은 tailwind.config.js)
        기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에 둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
   <!-- i18n 다국어 지원 시스템 (ko, en, ja) -->
-  <script src="/static/i18n.js?v=1.0.4"></script>
+  <script src="/static/i18n.js?v=1.0.5"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -382,7 +382,6 @@
             <span id="subtitle-badge" class="hidden ml-1 px-1.5 py-0.2 text-[10px] bg-slate-700 rounded-full font-mono">0</span>
           </button>
           <span id="status-tag" class="hidden px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-bold" data-i18n="status_tag_done">완료</span>
-          <span id="engine-tag" class="hidden px-2 py-0.5 bg-sky-500/10 text-sky-400 border border-sky-500/20 rounded-full text-[10px] font-mono"></span>
         </div>
 
         <!-- 툴바 액션 버튼 그룹 -->
@@ -828,17 +827,13 @@
           placeholder="AIzaSy..." 
           class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-sky-500"
         />
-        <p class="text-[11px] text-slate-400" data-i18n="settings_gemini_tip">
-          * 신용카드 없이 구글 계정만으로 즉시 발급되며 하루 1,500회 무료입니다.
-        </p>
       </div>
 
-      <!-- Groq 무료 API 키 (0.1초 칼싱크 Whisper Large-v3) -->
+      <!-- Groq 무료 API 키 -->
       <div class="space-y-2 pt-2 border-t border-slate-800">
         <div class="flex items-center justify-between">
           <label class="text-xs font-semibold text-amber-300 flex items-center space-x-1.5">
             <span data-i18n="settings_groq_label">⚡ Groq Cloud 무료 API 키</span>
-            <span class="px-1.5 py-0.2 bg-amber-500/20 text-amber-300 rounded text-[10px] font-bold" data-i18n="settings_groq_badge">0.1초 칼싱크</span>
           </label>
           <a href="https://console.groq.com/keys" target="_blank" class="text-[11px] text-amber-400 hover:underline flex items-center space-x-0.5">
             <span data-i18n="settings_groq_link">무료 키 발급받기</span>
@@ -851,9 +846,6 @@
           placeholder="gsk_..." 
           class="w-full px-3 py-2 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white focus:outline-none focus:border-amber-400"
         />
-        <p class="text-[11px] text-slate-400 leading-relaxed" data-i18n="settings_groq_tip">
-          * 로컬 영상의 자막을 10초 만에 0.1초 단위 칼싱크(Whisper Large-v3)로 자동 생성합니다. (매일 8시간 완전 무료)
-        </p>
       </div>
 
       <div class="pt-2 flex justify-end space-x-2">
@@ -935,7 +927,7 @@
   </div>
 
   <!-- 백그라운드 번역 진행 미니 위젯 (우측 하단 플로팅) -->
-  <div id="trans-mini-widget" class="fixed bottom-5 right-5 z-40 hidden pointer-events-auto bg-slate-900/95 border border-amber-500/40 rounded-full pl-3.5 pr-2 py-1.5 shadow-2xl backdrop-blur-md flex items-center space-x-3 text-xs ring-1 ring-amber-400/20 hover:border-amber-400 transition cursor-pointer select-none">
+  <div id="trans-mini-widget" style="bottom: 20px; right: 20px;" class="fixed z-50 hidden pointer-events-auto bg-slate-900/95 border border-amber-500/40 rounded-full pl-3.5 pr-2 py-1.5 shadow-2xl backdrop-blur-md flex items-center space-x-3 text-xs ring-1 ring-amber-400/20 hover:border-amber-400 transition cursor-pointer select-none">
     <div id="trans-mini-expand-area" class="flex items-center space-x-2.5" title="클릭하여 상세 번역 진행창 열기" data-i18n-title="trans_mini_expand_tooltip">
       <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
       <span class="font-bold text-amber-300" data-i18n="trans_mini_label">자막 번역 중</span>
@@ -1042,7 +1034,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.6.4"></script>
+  <script src="/static/app.js?v=3.6.5"></script>
 </body>
 
 </html>

@@ -94,8 +94,7 @@ def transcribe_audio_groq(
 ) -> Dict[str, Any]:
     """
     Groq Cloud LPU의 Whisper-large-v3 모델을 사용하여 
-    오디오 파일에서 0.1초 단위 칼싱크 자막(SRT/큐)을 초고속으로 추출합니다.
-    (무료 티어: 하루 8시간 / 시간당 2시간 무료)
+    오디오 파일에서 타임스탬프 자막(SRT/큐)을 신속하게 추출합니다.
     """
     key = api_key or os.environ.get("GROQ_API_KEY")
     if not key:

@@ -934,5 +934,15 @@ body.theme-light .toc-item.active {
   scrollbar-width: none !important;
 }
 
+/* 백그라운드 번역 진행 미니 플로팅 위젯 (우측 하단 고정) */
+#trans-mini-widget {
+  position: fixed !important;
+  bottom: 20px !important;
+  right: 20px !important;
+  top: auto !important;
+  left: auto !important;
+  z-index: 50 !important;
+}
+
 
 
