@@ -65,8 +65,8 @@ const TUBESCHOLAR_I18N = {
     tip_local: "• <strong class=\"text-sky-400\">📁 로컬 영상</strong>을 누르면 PC 안의 영상과 자막(.srt)도 동일하게 시청 & 연동됩니다.",
 
     // 상단 뷰 전환 & 툴바
-    tab_note: "📖 학습 노트",
-    tab_subtitles: "💬 자막 스크립트",
+    tab_note: "📖 노트",
+    tab_subtitles: "💬 자막",
     status_tag_done: "완료",
     label_note_lang: "노트",
     note_target_lang_title: "학습 노트 작성 언어 선택",
@@ -87,8 +87,8 @@ const TUBESCHOLAR_I18N = {
     btn_reader_mode: "읽기 모드",
     btn_retranslate_title: "현재 영상의 자막을 1:1 고정밀 싱크 엔진으로 다시 번역합니다",
     btn_retranslate: "자막 재번역",
-    btn_download_srt_label: "📥 .SRT 다운로드",
-    btn_download_txt_label: "📄 .TXT 다운로드",
+    btn_download_srt_label: "📥 .SRT",
+    btn_download_txt_label: "📄 .TXT",
 
     // 📖 집중 읽기 모드 (Zen Focus View)
     zen_exit: "일반 뷰로 복귀",
@@ -139,8 +139,11 @@ const TUBESCHOLAR_I18N = {
 
     // 자막 뷰 모드 & 자막 옵션 툴바
     mode_original: "원문",
-    mode_translated: "{lang} 번역",
-    mode_bilingual: "{lang} 병기",
+    mode_translated: "번역문",
+    mode_bilingual: "모두",
+    label_trans_prefix: "번역: ",
+    sub_target_ko: "번역: 한국어",
+    no_subtitles_short: "자막 없음",
     btn_translate_request: "{lang} 번역 요청",
     btn_translate_stop: "⏹️ 번역 중단",
     btn_translate_retranslate: "🔄 {lang} 재번역",
@@ -470,8 +473,8 @@ const TUBESCHOLAR_I18N = {
     tip_local: "• Click <strong class=\"text-sky-400\">📁 Local Video</strong> to watch and study local PC videos and subtitles (.srt) seamlessly.",
 
     // Top View Switching & Toolbar
-    tab_note: "📖 Study Note",
-    tab_subtitles: "💬 Subtitles",
+    tab_note: "📖 Note",
+    tab_subtitles: "💬 Subs",
     status_tag_done: "Done",
     label_note_lang: "Note",
     note_target_lang_title: "Select study note language",
@@ -491,9 +494,9 @@ const TUBESCHOLAR_I18N = {
     btn_reader_mode_title: "Distraction-free Reader Mode for reading like a book (Shortcut: Z)",
     btn_reader_mode: "Reader Mode",
     btn_retranslate_title: "Re-translate subtitles with 1:1 high-precision sync engine",
-    btn_retranslate: "Re-translate Subtitles",
-    btn_download_srt_label: "📥 Download .SRT",
-    btn_download_txt_label: "📄 Download .TXT",
+    btn_retranslate: "Re-translate",
+    btn_download_srt_label: "📥 .SRT",
+    btn_download_txt_label: "📄 .TXT",
 
     // 📖 Focused Reader View (Zen Mode)
     zen_exit: "Exit Reader View",
@@ -544,8 +547,11 @@ const TUBESCHOLAR_I18N = {
 
     // Subtitles View & Toolbar
     mode_original: "Original",
-    mode_translated: "{lang} Translation",
-    mode_bilingual: "{lang} Bilingual",
+    mode_translated: "Translated",
+    mode_bilingual: "Both",
+    label_trans_prefix: "Trans: ",
+    sub_target_ko: "Trans: Korean",
+    no_subtitles_short: "No Subs",
     btn_translate_request: "Translate to {lang}",
     btn_translate_stop: "⏹️ Stop Translation",
     btn_translate_retranslate: "🔄 Re-translate to {lang}",
@@ -949,8 +955,11 @@ const TUBESCHOLAR_I18N = {
 
     // 字幕ビューモード＆字幕ツールバー
     mode_original: "原文",
-    mode_translated: "{lang} 翻訳",
-    mode_bilingual: "{lang} 併記",
+    mode_translated: "翻訳文",
+    mode_bilingual: "両方",
+    label_trans_prefix: "翻訳: ",
+    sub_target_ko: "翻訳: 韓国語",
+    no_subtitles_short: "字幕なし",
     btn_translate_request: "{lang} 翻訳をリクエスト",
     btn_translate_stop: "⏹️ 翻訳を中断",
     btn_translate_retranslate: "🔄 {lang} 再翻訳",
@@ -1222,9 +1231,8 @@ const TUBESCHOLAR_I18N = {
 
 let currentUiLang = (function() {
   const saved = localStorage.getItem("tubescholar_ui_lang");
-  if (saved && TUBESCHOLAR_I18N[saved]) return saved;
+  if (saved === "ko" || saved === "en") return saved;
   const navLang = (navigator.language || navigator.userLanguage || "ko").toLowerCase();
-  if (navLang.startsWith("ja")) return "ja";
   if (navLang.startsWith("en")) return "en";
   return "ko";
 })();
@@ -1234,7 +1242,7 @@ function getUiLang() {
 }
 
 function setUiLang(lang) {
-  if (!TUBESCHOLAR_I18N[lang]) lang = "ko";
+  if (lang !== "en" && lang !== "ko") lang = "ko";
   currentUiLang = lang;
   localStorage.setItem("tubescholar_ui_lang", lang);
   document.documentElement.lang = lang;

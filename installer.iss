@@ -4,7 +4,7 @@
 #define MyAppName "TubeScholar"
 #define MyAppVersion "1.0.0"
 #define MyAppPublisher "TubeScholar Team"
-#define MyAppURL "https://github.com/makop/TubeScholar"
+#define MyAppURL "https://github.com/makopss/TubeScholar"
 #define MyAppExeName "TubeScholar.exe"
 
 [Setup]

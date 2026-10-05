@@ -852,4 +852,87 @@ body.theme-light .toc-item.active {
   opacity: 1 !important;
 }
 
+/* ==========================================================================
+   일관된 UI 버튼 및 컨트롤러 표준 규격화 (Standardized Button Sizing)
+   ========================================================================== */
+
+/* 상단 헤더 버튼 크기 통일 (높이 34px 규격화) */
+.ts-header-btn {
+  height: 34px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  font-size: 0.75rem !important;
+  line-height: 1 !important;
+  border-radius: 0.5rem !important;
+}
+
+.ts-header-icon-btn {
+  width: 34px !important;
+  height: 34px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  flex-shrink: 0 !important;
+  border-radius: 0.5rem !important;
+}
+
+/* 노트 및 자막 툴바 버튼 크기 통일 (높이 32px 규격화) */
+.ts-toolbar-btn {
+  height: 32px !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  font-size: 0.75rem !important; /* 12px */
+  line-height: 1 !important;
+  padding-left: 0.5rem !important;
+  padding-right: 0.5rem !important;
+  border-radius: 0.5rem !important; /* rounded-lg */
+  transition: all 0.15s ease-in-out !important;
+}
+
+/* 툴바 정사각형 아이콘 전용 버튼 (32x32px 규격화) */
+.ts-toolbar-icon-btn {
+  width: 32px !important;
+  height: 32px !important;
+  padding: 0 !important;
+  display: inline-flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+  border-radius: 0.5rem !important; /* rounded-lg */
+  transition: all 0.15s ease-in-out !important;
+}
+
+/* 툴바 셀렉트박스 통일 (높이 32px 규격화) */
+.ts-toolbar-select {
+  height: 32px !important;
+  box-sizing: border-box !important;
+  font-size: 0.75rem !important;
+  line-height: 1.2 !important;
+  border-radius: 0.5rem !important;
+  white-space: nowrap !important;
+  flex-shrink: 0 !important;
+}
+
+/* 툴바 가로 스크롤 시 스크롤바 숨김 */
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+
 

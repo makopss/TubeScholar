@@ -376,12 +376,12 @@ function renderTargetLangSelect() {
   const sel = document.getElementById("sub-target-lang");
   if (!sel) return;
   const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
-  const prefix = typeof t === "function" ? t("label_target_lang") : "번역";
+  const prefix = typeof t === "function" ? t("label_trans_prefix") : "번역: ";
   
   sel.innerHTML = list.map(item => {
     const isSel = item.code === currentTargetLang ? "selected" : "";
     const name = getTargetLangName(item.code);
-    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(name)}</option>`;
+    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}${escapeHtmlStr(name)}</option>`;
   }).join("");
 }
 
@@ -389,12 +389,11 @@ function renderNoteTargetLangSelect() {
   const sel = document.getElementById("note-target-lang");
   if (!sel) return;
   const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
-  const prefix = typeof t === "function" ? t("label_note_lang") : "노트";
   
   sel.innerHTML = list.map(item => {
     const isSel = item.code === currentNoteTargetLang ? "selected" : "";
     const name = getTargetLangName(item.code);
-    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}: ${escapeHtmlStr(name)}</option>`;
+    return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${escapeHtmlStr(name)}</option>`;
   }).join("");
 }
 
@@ -446,7 +445,7 @@ async function regenerateStudyNote() {
   const origBtnContent = regenBtn ? regenBtn.innerHTML : "";
   if (regenBtn) {
     regenBtn.disabled = true;
-    regenBtn.innerHTML = `<span>⏳</span><span>${typeof t === "function" ? t("tts_status_generating") : "생성 중..."}</span>`;
+    regenBtn.innerHTML = `<span class="animate-spin text-sm">🔄</span>`;
   }
 
   const loadingOverlay = document.getElementById("loading-overlay");
@@ -540,13 +539,9 @@ function updateLangLabels() {
   const biLabel = document.getElementById("sub-lang-bi-label");
   const ctrlKo = document.getElementById("ctrl-sub-ko-label");
 
-  if (koLabel) koLabel.textContent = typeof t === "function" ? t("mode_translated", { lang: targetName }) : `${targetName} 번역`;
+  if (koLabel) koLabel.textContent = typeof t === "function" ? t("mode_translated") : "번역문";
   if (biLabel) {
-    if (typeof t === "function") {
-      biLabel.textContent = t("mode_bilingual", { lang: targetName });
-    } else {
-      biLabel.textContent = targetName === "한국어" ? "한/영 병기" : `${targetName} 병기`;
-    }
+    biLabel.textContent = typeof t === "function" ? t("mode_bilingual") : "모두";
   }
   if (ctrlKo) {
     const short = typeof t === "function" ? t("ctrl_trans_btn_label") : null;
@@ -708,7 +703,7 @@ function updateTranslationButtonState() {
   if (!currentSubtitles || currentSubtitles.length === 0) {
     btn.disabled = true;
     btn.className = "px-2.5 py-1 bg-slate-800 text-slate-500 border border-slate-700 rounded-lg text-xs font-semibold cursor-not-allowed flex items-center space-x-1.5 shadow-sm opacity-60";
-    if (text) text.textContent = typeof t === "function" ? t("no_subtitles_found") : "자막 없음";
+    if (text) text.textContent = typeof t === "function" ? t("no_subtitles_short") : "자막 없음";
     if (icon) icon.textContent = "⚡";
     if (spinner) spinner.classList.add("hidden");
     return;
@@ -1405,21 +1400,20 @@ function updateActiveSubtitle(currentTime) {
 }
 
 function updateSubtitleAutoScrollUI() {
-  const btn = document.getElementById("sub-autoscroll-toggle-btn");
+  const label = document.getElementById("sub-autoscroll-toggle-btn");
+  const cb = document.getElementById("sub-autoscroll-checkbox");
   const icon = document.getElementById("sub-autoscroll-icon");
-  const text = document.getElementById("sub-autoscroll-text");
-  if (!btn) return;
+  if (cb) cb.checked = isSubtitleAutoScroll;
+  if (!label) return;
 
   if (isSubtitleAutoScroll) {
-    btn.className = "px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm";
-    btn.title = typeof t === "function" ? t("autoscroll_on_title") : "자동 스크롤이 켜져 있습니다 (클릭 시 끄기)";
+    label.className = "px-2 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm cursor-pointer select-none whitespace-nowrap flex-shrink-0";
+    label.title = typeof t === "function" ? t("autoscroll_on_title") : "자동 스크롤이 켜져 있습니다 (클릭 시 끄기)";
     if (icon) icon.textContent = "📜";
-    if (text) text.textContent = typeof t === "function" ? t("sub_autoscroll_on") : "자동 스크롤 ON";
   } else {
-    btn.className = "px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm";
-    btn.title = typeof t === "function" ? t("autoscroll_off_title") : "자동 스크롤이 꺼져 있습니다 (자막 자유 탐색 중, 클릭 시 켜기)";
-    if (icon) icon.textContent = "⏸️";
-    if (text) text.textContent = typeof t === "function" ? t("sub_autoscroll_off") : "자동 스크롤 OFF";
+    label.className = "px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm cursor-pointer select-none whitespace-nowrap flex-shrink-0";
+    label.title = typeof t === "function" ? t("autoscroll_off_title") : "자동 스크롤이 꺼져 있습니다 (자막 자유 탐색 중, 클릭 시 켜기)";
+    if (icon) icon.textContent = "📜";
   }
 }
 
@@ -1655,10 +1649,12 @@ function switchViewTab(tabName) {
   const subsContainer = document.getElementById("subtitle-container");
   const noteToolbar = document.getElementById("note-toolbar-buttons");
   const subsToolbar = document.getElementById("subtitle-toolbar-buttons");
+  const noteLangContainer = document.getElementById("note-lang-container");
 
   if (tabName === "subtitles") {
-    tabSubsBtn.className = "px-3 py-1 bg-sky-600 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center space-x-1";
-    tabNoteBtn.className = "px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center space-x-1";
+    tabSubsBtn.className = "ts-toolbar-btn bg-sky-600 text-white font-bold shadow-sm border border-transparent";
+    tabNoteBtn.className = "ts-toolbar-btn bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700/60";
+    if (noteLangContainer) noteLangContainer.classList.add("hidden");
     noteContainer.classList.add("hidden");
     const editor = document.getElementById("editor-container");
     if (editor) editor.classList.add("hidden");
@@ -1672,8 +1668,9 @@ function switchViewTab(tabName) {
       setTimeout(() => scrollToActiveSubtitle(activeSubtitleIndex), 100);
     }
   } else {
-    tabNoteBtn.className = "px-3 py-1 bg-sky-600 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center space-x-1";
-    tabSubsBtn.className = "px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center space-x-1";
+    tabNoteBtn.className = "ts-toolbar-btn bg-sky-600 text-white font-bold shadow-sm border border-transparent";
+    tabSubsBtn.className = "ts-toolbar-btn bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700/60";
+    if (noteLangContainer) noteLangContainer.classList.remove("hidden");
     subsContainer.classList.add("hidden");
     noteContainer.classList.remove("hidden");
     subsToolbar.classList.add("hidden");
@@ -2157,17 +2154,26 @@ function toggleEditor(forceState) {
   const editorContainer = document.getElementById("editor-container");
   const markdownContainer = document.getElementById("markdown-container");
   const editBtnText = document.getElementById("edit-btn-text");
+  const toggleEditBtn = document.getElementById("toggle-edit-btn");
 
   if (isEditing) {
     editorContainer.classList.remove("hidden");
     markdownContainer.classList.add("hidden");
-    editBtnText.textContent = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
+    if (editBtnText) editBtnText.textContent = "👁️";
+    if (toggleEditBtn) {
+      toggleEditBtn.title = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
+      toggleEditBtn.setAttribute("data-i18n-title", "btn_preview");
+    }
     document.getElementById("note-editor-textarea").value = currentMarkdown;
     document.getElementById("note-editor-textarea").focus();
   } else {
     editorContainer.classList.add("hidden");
     markdownContainer.classList.remove("hidden");
-    editBtnText.textContent = typeof t === "function" ? t("btn_edit") : "✏️ 편집";
+    if (editBtnText) editBtnText.textContent = "✏️";
+    if (toggleEditBtn) {
+      toggleEditBtn.title = typeof t === "function" ? t("btn_edit") : "✏️ 편집";
+      toggleEditBtn.setAttribute("data-i18n-title", "btn_edit");
+    }
   }
 }
 
@@ -2846,10 +2852,17 @@ document.addEventListener("DOMContentLoaded", () => {
     reqTransBtn.addEventListener("click", () => requestTranslation());
   }
 
-  // 자동 스크롤 토글 버튼 이벤트 바인딩
-  const autoScrollBtn = document.getElementById("sub-autoscroll-toggle-btn");
-  if (autoScrollBtn) {
-    autoScrollBtn.addEventListener("click", toggleSubtitleAutoScroll);
+  // 자동 스크롤 체크박스 이벤트 바인딩
+  const autoScrollCb = document.getElementById("sub-autoscroll-checkbox");
+  if (autoScrollCb) {
+    autoScrollCb.addEventListener("change", (e) => {
+      isSubtitleAutoScroll = e.target.checked;
+      localStorage.setItem("tubescholar_sub_autoscroll", isSubtitleAutoScroll);
+      updateSubtitleAutoScrollUI();
+      if (isSubtitleAutoScroll && activeSubtitleIndex >= 0) {
+        scrollToActiveSubtitle(activeSubtitleIndex);
+      }
+    });
     updateSubtitleAutoScrollUI();
   }
 
@@ -3006,10 +3019,13 @@ async function triggerAudiobookPlay() {
   const speedSelect = document.getElementById("tts-speed-select");
 
   isGeneratingAudio = true;
-  if (btn) btn.disabled = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.title = typeof t === "function" ? t("tts_status_generating") : "음성 생성 중...";
+  }
   if (icon) icon.classList.add("hidden");
   if (spinner) spinner.classList.remove("hidden");
-  if (text) text.textContent = typeof t === "function" ? t("tts_generating_short") : "생성 중...";
+  if (text) text.textContent = "";
 
   if (card) card.classList.remove("hidden");
   if (badge) {
@@ -3064,10 +3080,13 @@ async function triggerAudiobookPlay() {
     }
   } finally {
     isGeneratingAudio = false;
-    if (btn) btn.disabled = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.title = typeof t === "function" ? t("btn_audiobook_title") : "오디오북";
+    }
     if (icon) icon.classList.remove("hidden");
     if (spinner) spinner.classList.add("hidden");
-    if (text) text.textContent = typeof t === "function" ? t("btn_audiobook") : "오디오북";
+    if (text) text.textContent = "";
   }
 }
 
@@ -3532,7 +3551,7 @@ function initZenModeEvents() {
     });
   }
 
-  // 브라우저 탭/창 종료 시 백그라운드 프로세스 즉각 종료 신호 전송
+  // 브라우저 탭/창 종료 시 백그라운드 프로세스 종료 신호 전송
   const sendCloseSignal = () => {
     try {
       fetch("/api/system/browser-close", {
@@ -3542,18 +3561,40 @@ function initZenModeEvents() {
       }).catch(() => {});
     } catch (e) {}
   };
-  window.addEventListener("pagehide", sendCloseSignal);
+  // pagehide는 브라우저 창 최소화나 백그라운드 전환 시에도 발생할 수 있으므로 제거하고, 실제 탭 닫힘 이벤트인 beforeunload만 사용
   window.addEventListener("beforeunload", sendCloseSignal);
 
-  // 브라우저 탭 활성 생존 신호 (주기적으로 서버에 신호를 보내 비정상 종료 시에도 워치독으로 자동 종료)
+  // 브라우저 탭 활성 생존 신호 (Web Worker를 사용하여 창 최소화/내려놓은 상태에서도 타이머 쓰로틀링 없이 안정적 유지)
   function initHeartbeat() {
     const ping = () => {
-      fetch("/api/system/heartbeat", { method: "POST" }).catch(() => {});
+      fetch("/api/system/heartbeat", { 
+        method: "POST",
+        headers: { "x-tubescholar": "1" }
+      }).catch(() => {});
     };
-    setInterval(ping, 3000);
+
+    // 1. Web Worker 백그라운드 타이머 (창을 내렸을 때 메인 스레드 타이머가 브라우저에 의해 1분 이상 지연되는 현상 방지)
+    try {
+      const workerBlob = new Blob([
+        'setInterval(function() { postMessage("ping"); }, 4000);'
+      ], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(workerBlob);
+      const worker = new Worker(workerUrl);
+      worker.onmessage = () => ping();
+    } catch (e) {
+      console.warn("Heartbeat web worker unavailable, using main timer fallback:", e);
+    }
+
+    // 2. 메인 스레드 인터벌 병행 (안전장치)
+    setInterval(ping, 4000);
+
+    // 3. 브라우저 창 복원 및 포커스 시 즉시 갱신
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) ping();
     });
+    window.addEventListener("focus", ping);
+
+    // 최초 즉시 신호 전송
     ping();
   }
   initHeartbeat();

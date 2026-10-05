@@ -64,16 +64,23 @@ def open_browser():
     webbrowser.open("http://127.0.0.1:8000")
 
 def heartbeat_watchdog():
-    """브라우저가 모두 닫혀 하트비트가 끊기면 백그라운드 프로세스 자동 종료 (최대 10초)"""
-    # 최초 기동 시 브라우저가 열리고 첫 신호를 보낼 때까지 20초간 대기
-    time.sleep(20)
+    """브라우저가 열린 후 모든 탭이 닫혀 하트비트가 끊기면 백그라운드 프로세스 자동 종료"""
+    # 브라우저가 최초 접속하기 전까지는 최대 5분간 넉넉하게 대기 (즉시 꺼짐 방지)
+    start_time = time.time()
     while True:
-        time.sleep(2)
+        time.sleep(3)
         try:
             import app as app_module
+            has_connected = getattr(app_module, "_heartbeat_received", False)
+            if not has_connected:
+                # 최초 접속 전: 최대 5분(300초) 대기
+                if time.time() - start_time > 300:
+                    os._exit(0)
+                continue
+
+            # 최초 접속 이후: 60초 이상 신호가 없으면 브라우저가 모두 닫힌 것으로 판단하고 안전 종료
             last_hb = getattr(app_module, "_last_heartbeat", time.time())
-            if time.time() - last_hb > 10:
-                # 10초 이상 브라우저 탭으로부터 신호가 없으면 사용자 브라우저 종료로 간주하고 안전 종료
+            if time.time() - last_hb > 60:
                 os._exit(0)
         except Exception:
             pass

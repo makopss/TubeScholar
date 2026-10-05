@@ -3,7 +3,7 @@ import sys
 import re
 import asyncio
 import hashlib
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import edge_tts
 
 if getattr(sys, 'frozen', False):

@@ -22,13 +22,10 @@
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
   <!-- 상단 네비게이션 바 -->
-  <header class="h-16 flex-shrink-0 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-40 px-4 flex items-center justify-between">
-    <div class="flex items-center space-x-3">
-      <img src="/static/icon.png" class="w-10 h-10 rounded-xl shadow-lg shadow-sky-500/30 object-cover flex-shrink-0 border border-sky-500/30" alt="TubeScholar Logo">
-      <div>
-        <h1 class="text-lg font-bold tracking-tight bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent">TubeScholar</h1>
-        <p class="text-[11px] text-slate-400 hidden sm:block" data-i18n="brand_subtitle">유튜브 & 로컬 비디오 LLM 심층 학습기</p>
-      </div>
+  <header class="h-14 flex-shrink-0 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-40 px-4 flex items-center justify-between">
+    <div class="flex items-center space-x-2.5 flex-shrink-0 cursor-default" title="유튜브 & 로컬 비디오 LLM 심층 학습기" data-i18n-title="brand_subtitle">
+      <img src="/static/icon.png" class="w-8 h-8 rounded-lg shadow-md shadow-sky-500/20 object-cover flex-shrink-0 border border-sky-500/30" alt="TubeScholar Logo">
+      <h1 class="text-base font-bold tracking-tight bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent select-none">TubeScholar</h1>
     </div>
 
     <!-- 중앙 2대 특화 모드 선택 & URL 입력창 -->
@@ -36,18 +33,18 @@
       <form id="analyze-form" class="flex items-center space-x-2">
         
         <!-- 2대 모드 세그먼트 스위치 -->
-        <div class="inline-flex p-1 bg-slate-800 border border-slate-700 rounded-xl flex-shrink-0">
+        <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-xl flex-shrink-0 h-[34px] items-center">
           <button 
             type="button" 
             id="tab-gemini" 
-            class="px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow"
+            class="h-7 px-3 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow whitespace-nowrap"
           >
             <span data-i18n="tab_gemini">⚡ Gemini 자동 분석</span>
           </button>
           <button 
             type="button" 
             id="tab-subscription" 
-            class="px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white"
+            class="h-7 px-3 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white whitespace-nowrap"
           >
             <span data-i18n="tab_subscription">📋 구독 AI 연동</span>
           </button>
@@ -60,7 +57,7 @@
             id="url-input"
             placeholder="유튜브 영상 URL 또는 채널 URL 입력..." 
             data-i18n-placeholder="url_placeholder"
-            class="w-full pl-9 pr-32 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition shadow-inner placeholder-slate-500 text-white"
+            class="w-full pl-9 pr-36 py-1.5 h-[34px] bg-slate-800/80 border border-slate-700 rounded-xl text-xs focus:outline-none focus:border-sky-500 focus:ring-1 focus:ring-sky-500 transition shadow-inner placeholder-slate-500 text-white"
           />
           <svg class="w-4 h-4 absolute left-3 top-2.5 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
@@ -70,7 +67,7 @@
             <button 
               type="button" 
               id="header-cancel-btn"
-              class="hidden px-2.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 animate-pulse"
+              class="hidden px-2.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 animate-pulse whitespace-nowrap"
               title="분석 중단하기"
               data-i18n-title="btn_cancel"
             >
@@ -79,7 +76,7 @@
             <button 
               type="submit" 
               id="submit-btn"
-              class="px-3.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95"
+              class="px-3.5 bg-sky-600 hover:bg-sky-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 whitespace-nowrap"
             >
               <span id="submit-btn-text" data-i18n="btn_analyze">⚡ 분석 및 생성</span>
             </button>
@@ -89,18 +86,18 @@
     </div>
 
     <!-- 우측 도구 버튼 -->
-    <div class="flex items-center space-x-2">
+    <div class="flex items-center space-x-2 flex-shrink-0">
       <!-- 로컬 비디오 열기 버튼 -->
       <button 
         id="local-file-btn" 
         title="내 PC 로컬 영상 및 자막 열기" 
         data-i18n-title="btn_local_video_title"
-        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-amber-300 flex items-center space-x-1 transition"
+        class="ts-header-btn px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium text-amber-300 space-x-1.5 transition"
       >
-        <svg class="w-4 h-4 text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-amber-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path>
         </svg>
-        <span class="hidden md:inline" data-i18n="btn_local_video">로컬 영상</span>
+        <span class="hidden md:inline whitespace-nowrap" data-i18n="btn_local_video">로컬 영상</span>
       </button>
 
       <!-- 채널 탐색 모달 버튼 -->
@@ -108,12 +105,12 @@
         id="channel-btn" 
         title="채널 영상 탐색" 
         data-i18n-title="btn_channel_title"
-        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 flex items-center space-x-1 transition"
+        class="ts-header-btn px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 space-x-1.5 transition"
       >
-        <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-sky-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
         </svg>
-        <span class="hidden md:inline" data-i18n="btn_channel">채널 탐색</span>
+        <span class="hidden md:inline whitespace-nowrap" data-i18n="btn_channel">채널 탐색</span>
       </button>
 
       <!-- 보관함 열기 버튼 -->
@@ -121,25 +118,25 @@
         id="library-toggle-btn" 
         title="저장된 학습 보관함" 
         data-i18n-title="btn_library_title"
-        class="px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-300 flex items-center space-x-1 transition relative"
+        class="ts-header-btn px-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs font-medium text-slate-300 space-x-1.5 transition relative"
       >
-        <svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 text-emerald-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 19a2 2 0 01-2-2V7a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1M5 19h14a2 2 0 002-2v-5a2 2 0 00-2-2H9a2 2 0 00-2 2v5a2 2 0 01-2 2z"></path>
         </svg>
-        <span class="hidden md:inline" data-i18n="btn_library">보관함</span>
+        <span class="hidden md:inline whitespace-nowrap" data-i18n="btn_library">보관함</span>
         <span id="library-count-badge" class="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold">0</span>
       </button>
 
-      <!-- UI 언어 선택 드롭다운 -->
-      <div class="relative">
+      <!-- UI 언어 선택 드롭다운 (단순화: 한국어 / English 2개 지원) -->
+      <div class="relative flex items-center flex-shrink-0">
+        <span class="absolute left-2.5 text-xs pointer-events-none text-slate-400 select-none">🌐</span>
         <select 
           id="ui-lang-select" 
-          title="UI 언어 변경 / Switch UI Language / 言語切替" 
-          class="px-2 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-sky-500 cursor-pointer font-medium transition"
+          title="UI 언어 변경 / Switch UI Language" 
+          class="ts-header-btn pl-7 pr-3 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-xs text-slate-200 focus:outline-none focus:border-sky-500 cursor-pointer font-medium transition"
         >
-          <option value="ko">🇰🇷 한국어</option>
-          <option value="en">🇺🇸 English</option>
-          <option value="ja">🇯🇵 日本語</option>
+          <option value="ko">한국어</option>
+          <option value="en">English</option>
         </select>
       </div>
 
@@ -148,9 +145,9 @@
         id="settings-btn" 
         title="Gemini 무료 API 키 설정" 
         data-i18n-title="btn_settings_title"
-        class="p-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-400 hover:text-white transition"
+        class="ts-header-icon-btn bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg text-slate-400 hover:text-white transition"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path>
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path>
         </svg>
@@ -161,9 +158,9 @@
         id="shutdown-btn" 
         title="TubeScholar 프로그램 종료" 
         data-i18n-title="btn_shutdown_title"
-        class="p-2 bg-slate-800 hover:bg-rose-900/60 border border-slate-700 hover:border-rose-700 rounded-lg text-slate-400 hover:text-rose-300 transition"
+        class="ts-header-icon-btn bg-slate-800 hover:bg-rose-900/60 border border-slate-700 hover:border-rose-700 rounded-lg text-slate-400 hover:text-rose-300 transition"
       >
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <svg class="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path>
         </svg>
       </button>
@@ -360,14 +357,28 @@
     <section id="note-section" class="w-full lg:w-1/2 h-full flex flex-col bg-slate-900/40 overflow-hidden relative">
       
       <!-- 노트 상단 툴바 -->
-      <div class="h-12 border-b border-slate-800 px-4 flex items-center justify-between bg-slate-900/60 backdrop-blur flex-shrink-0">
-        <!-- 탭 스위처: [📖 학습 노트] vs [💬 자막 스크립트] -->
-        <div class="flex items-center space-x-1.5">
-          <button type="button" id="view-tab-note" class="px-3 py-1 bg-sky-600 text-white rounded-lg text-xs font-bold transition shadow-sm flex items-center space-x-1">
-            <span data-i18n="tab_note">📖 학습 노트</span>
+      <div class="h-12 border-b border-slate-800 px-3 flex items-center justify-between bg-slate-900/60 backdrop-blur flex-shrink-0 gap-2 overflow-x-auto no-scrollbar">
+        <!-- 탭 스위처: [📖 노트 + 언어 선택] vs [💬 자막] -->
+        <div class="flex items-center space-x-1.5 flex-shrink-0">
+          <button type="button" id="view-tab-note" class="ts-toolbar-btn bg-sky-600 text-white font-bold shadow-sm border border-transparent">
+            <span data-i18n="tab_note">📖 노트</span>
           </button>
-          <button type="button" id="view-tab-subtitles" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-lg text-xs font-semibold transition flex items-center space-x-1">
-            <span data-i18n="tab_subtitles">💬 자막 스크립트</span>
+
+          <!-- 학습 노트 언어 선택 & 즉시 재작성 버튼 (노트 탭 바로 옆에 위치) -->
+          <div id="note-lang-container" class="flex items-center space-x-1 flex-shrink-0">
+            <div class="relative flex items-center">
+              <span class="absolute left-2 text-[11px] pointer-events-none text-slate-400 select-none">🌐</span>
+              <select id="note-target-lang" class="ts-toolbar-select pl-6 pr-2 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-medium focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer transition" title="학습 노트 작성 언어 선택" data-i18n-title="note_target_lang_title">
+                <option value="ko">한국어</option>
+              </select>
+            </div>
+            <button id="regenerate-note-btn" type="button" class="hidden ts-toolbar-icon-btn bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 font-semibold" title="현재 선택된 언어로 학습 노트를 새로 작성합니다" data-i18n-title="btn_regenerate_note_title">
+              <span class="text-sm">🔄</span>
+            </button>
+          </div>
+
+          <button type="button" id="view-tab-subtitles" class="ts-toolbar-btn bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700/60">
+            <span data-i18n="tab_subtitles">💬 자막</span>
             <span id="subtitle-badge" class="hidden ml-1 px-1.5 py-0.2 text-[10px] bg-slate-700 rounded-full font-mono">0</span>
           </button>
           <span id="status-tag" class="hidden px-2 py-0.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 rounded-full text-[10px] font-bold" data-i18n="status_tag_done">완료</span>
@@ -375,52 +386,38 @@
         </div>
 
         <!-- 툴바 액션 버튼 그룹 -->
-        <div class="flex items-center space-x-2">
+        <div class="flex items-center space-x-1 flex-shrink-0">
           <!-- 1) 학습 노트용 버튼들 -->
-          <div id="note-toolbar-buttons" class="flex items-center space-x-2">
-            <!-- 학습 노트 언어 선택 & 즉시 재작성 버튼 -->
-            <div id="note-lang-container" class="flex items-center space-x-1">
-              <select id="note-target-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer" title="학습 노트 작성 언어 선택" data-i18n-title="note_target_lang_title">
-                <option value="ko">노트: 한국어</option>
-              </select>
-              <button id="regenerate-note-btn" type="button" class="hidden px-2 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs rounded-lg transition flex items-center space-x-1 font-semibold" title="현재 선택된 언어로 학습 노트를 새로 작성합니다" data-i18n-title="btn_regenerate_note_title">
-                <span>🔄</span>
-                <span data-i18n="btn_regenerate_note">재작성</span>
-              </button>
-            </div>
-            <button id="toggle-edit-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs rounded-lg transition flex items-center space-x-1">
-              <span id="edit-btn-text" data-i18n="btn_edit">✏️ 편집</span>
+          <div id="note-toolbar-buttons" class="flex items-center space-x-1 flex-shrink-0">
+            <button id="toggle-edit-btn" class="ts-toolbar-icon-btn bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30" title="노트 편집" data-i18n-title="btn_edit">
+              <span id="edit-btn-text" class="text-xs">✏️</span>
             </button>
-            <button id="copy-markdown-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs rounded-lg transition flex items-center space-x-1">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
-              <span data-i18n="btn_copy">복사</span>
+            <button id="copy-markdown-btn" class="ts-toolbar-icon-btn bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700" title="마크다운 복사" data-i18n-title="btn_copy">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
             </button>
-            <button id="download-markdown-btn" class="px-2.5 py-1 bg-sky-600 hover:bg-sky-500 text-white text-xs rounded-lg transition flex items-center space-x-1">
-              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
-              <span data-i18n="btn_download_md">.md 다운로드</span>
+            <button id="download-markdown-btn" class="ts-toolbar-icon-btn bg-sky-600 hover:bg-sky-500 text-white border border-transparent font-medium shadow-sm" title=".md 마크다운 다운로드" data-i18n-title="btn_download_md">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
             </button>
-            <button id="tts-audiobook-btn" class="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold" title="edge-tts 고품질 신경망 음성으로 노트를 읽어줍니다" data-i18n-title="btn_audiobook_title">
-              <span id="tts-btn-icon">🎧</span>
-              <span id="tts-btn-text" data-i18n="btn_audiobook">오디오북</span>
-              <span id="tts-btn-spinner" class="hidden w-3 h-3 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
+            <button id="tts-audiobook-btn" class="ts-toolbar-icon-btn bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 font-semibold shadow-sm" title="edge-tts 고품질 신경망 음성으로 노트를 읽어줍니다" data-i18n-title="btn_audiobook_title">
+              <span id="tts-btn-icon" class="text-xs">🎧</span>
+              <span id="tts-btn-spinner" class="hidden w-3.5 h-3.5 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
+              <span id="tts-btn-text" class="hidden"></span>
             </button>
-            <button id="zen-mode-toggle-btn" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold" title="영상과 패널을 접고 책처럼 편안하게 읽는 집중 독서 모드 (단축키: Z)" data-i18n-title="btn_reader_mode_title">
-              <span>📖</span>
-              <span data-i18n="btn_reader_mode">읽기 모드</span>
+            <button id="zen-mode-toggle-btn" class="ts-toolbar-icon-btn bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 font-semibold shadow-sm" title="영상과 패널을 접고 책처럼 편안하게 읽는 집중 독서 모드 (단축키: Z)" data-i18n-title="btn_reader_mode_title">
+              <span class="text-xs">📖</span>
             </button>
           </div>
 
           <!-- 2) 자막 스크립트용 버튼들 -->
-          <div id="subtitle-toolbar-buttons" class="hidden flex items-center space-x-2">
-            <button id="retranslate-sub-btn" class="px-2.5 py-1 bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold" title="현재 영상의 자막을 1:1 고정밀 싱크 엔진으로 다시 번역합니다" data-i18n-title="btn_retranslate_title">
-              <span>🔄</span>
-              <span data-i18n="btn_retranslate">자막 재번역</span>
+          <div id="subtitle-toolbar-buttons" class="hidden flex items-center space-x-1 flex-shrink-0">
+            <button id="retranslate-sub-btn" class="ts-toolbar-icon-btn bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 font-semibold shadow-sm" title="현재 영상의 자막을 1:1 고정밀 싱크 엔진으로 다시 번역합니다" data-i18n-title="btn_retranslate_title">
+              <span class="text-sm">🔄</span>
             </button>
-            <button id="download-srt-btn" class="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg transition flex items-center space-x-1 shadow-sm font-semibold">
-              <span data-i18n="btn_download_srt_label">📥 .SRT 다운로드</span>
+            <button id="download-srt-btn" class="ts-toolbar-btn px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-transparent font-semibold shadow-sm" title=".SRT 자막 다운로드">
+              <span>📥 .SRT</span>
             </button>
-            <button id="download-txt-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition flex items-center space-x-1 border border-slate-700 font-semibold">
-              <span data-i18n="btn_download_txt_label">📄 .TXT 다운로드</span>
+            <button id="download-txt-btn" class="ts-toolbar-btn px-2.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 font-semibold" title=".TXT 스크립트 다운로드">
+              <span>📄 .TXT</span>
             </button>
           </div>
         </div>
@@ -618,74 +615,78 @@
 
       <!-- 인터랙티브 자막 뷰어 영역 (기본 숨김) -->
       <div id="subtitle-container" class="hidden flex-1 flex flex-col overflow-hidden bg-slate-900/30">
-        <!-- 자막 옵션 툴바: 언어 선택 & 검색 & 통계 -->
-        <div class="p-3 bg-slate-950/60 border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 flex-shrink-0">
-          <!-- 언어 선택 토글 버튼 및 번역 요청 버튼 -->
-          <div class="flex items-center flex-wrap gap-2">
-            <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-lg text-xs">
-              <button type="button" id="sub-lang-original" class="px-2.5 py-1 rounded-md font-bold transition bg-sky-600 text-white shadow" data-i18n="mode_original">
-                원문
-              </button>
-              <button type="button" id="sub-lang-ko" class="px-2.5 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
-                <span id="sub-lang-ko-label">한국어 번역</span>
-              </button>
-              <button type="button" id="sub-lang-bilingual" class="px-2.5 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
-                <span id="sub-lang-bi-label">한/영 병기</span>
-              </button>
+        <!-- 자막 옵션 툴바: 2개 행 고정 레이아웃 (언어/번역 1행, 검색/통계 2행) -->
+        <div class="px-3 py-2 bg-slate-950/60 border-b border-slate-800 flex flex-col gap-2 flex-shrink-0">
+          <!-- 1행: 자막 모드 [원문|번역문|모두] + 언어 드롭다운 + 번역 버튼 + 자동 스크롤 체크박스 -->
+          <div class="flex items-center justify-between gap-1.5 overflow-x-auto no-scrollbar flex-nowrap">
+            <div class="flex items-center space-x-1.5 flex-shrink-0">
+              <div class="inline-flex p-0.5 bg-slate-800 border border-slate-700 rounded-lg text-xs flex-shrink-0">
+                <button type="button" id="sub-lang-original" class="px-2 py-1 rounded-md font-bold transition bg-sky-600 text-white shadow" data-i18n="mode_original">
+                  원문
+                </button>
+                <button type="button" id="sub-lang-ko" class="px-2 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
+                  <span id="sub-lang-ko-label" data-i18n="mode_translated">번역문</span>
+                </button>
+                <button type="button" id="sub-lang-bilingual" class="px-2 py-1 rounded-md font-semibold text-slate-400 hover:text-white transition flex items-center space-x-1">
+                  <span id="sub-lang-bi-label" data-i18n="mode_bilingual">모두</span>
+                </button>
+              </div>
+
+              <!-- 원문 트랙 / 번역 언어 선택 드롭다운 -->
+              <div class="flex items-center space-x-1 text-xs flex-shrink-0">
+                <select id="sub-source-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer max-w-[130px] truncate" title="원문 자막 트랙 선택" data-i18n-title="sub_source_lang_title">
+                  <option value="" data-i18n="sub_source_auto">원문: 자동 감지</option>
+                </select>
+                <span class="text-slate-500 text-xs select-none">→</span>
+                <select id="sub-target-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer max-w-[125px] truncate" title="번역 대상 언어 선택" data-i18n-title="sub_target_lang_title">
+                  <option value="ko" data-i18n="sub_target_ko">번역: 한국어</option>
+                </select>
+              </div>
             </div>
 
-            <!-- 원문 트랙 / 번역 언어 선택 드롭다운 -->
-            <div class="flex items-center space-x-1 text-xs">
-              <select id="sub-source-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer max-w-[150px] truncate" title="원문 자막 트랙 선택" data-i18n-title="sub_source_lang_title">
-                <option value="" data-i18n="sub_source_auto">원문: 자동 감지</option>
-              </select>
-              <span class="text-slate-500 text-xs select-none">→</span>
-              <select id="sub-target-lang" class="bg-slate-800 hover:bg-slate-750 text-slate-200 border border-slate-700 rounded-lg px-2 py-1 text-xs focus:ring-1 focus:ring-sky-500 focus:outline-none cursor-pointer" title="번역 대상 언어 선택" data-i18n-title="sub_target_lang_title">
-                <option value="ko" data-i18n="sub_target_ko">번역: 한국어</option>
-              </select>
+            <div class="flex items-center space-x-1.5 flex-shrink-0">
+              <!-- 명시적 번역 요청 버튼 (Gemini 사용량 제한 방지) -->
+              <button 
+                type="button" 
+                id="request-sub-translate-btn" 
+                class="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm whitespace-nowrap"
+                title="Gemini를 호출하여 번역을 명시적으로 생성합니다 (API 사용)"
+                data-i18n-title="sub_translate_tooltip"
+              >
+                <span id="trans-btn-icon">⚡</span>
+                <span id="trans-btn-text">한국어 번역 요청</span>
+                <span id="trans-loading-spinner" class="hidden w-3 h-3 border-2 border-amber-300 border-t-transparent rounded-full animate-spin"></span>
+              </button>
+
+              <!-- 자동 스크롤 체크박스 형태 토글 (아이콘 전용) -->
+              <label 
+                id="sub-autoscroll-toggle-btn" 
+                class="px-2 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm cursor-pointer select-none whitespace-nowrap flex-shrink-0"
+                title="영상 재생 시 현재 대사 위치로 자동 스크롤"
+                data-i18n-title="btn_sub_autoscroll_title"
+              >
+                <input type="checkbox" id="sub-autoscroll-checkbox" class="w-3.5 h-3.5 rounded bg-slate-900 border-slate-600 text-sky-500 focus:ring-0 cursor-pointer accent-sky-500" checked>
+                <span id="sub-autoscroll-icon" class="text-xs select-none">📜</span>
+              </label>
             </div>
-
-            <!-- 명시적 번역 요청 버튼 (Gemini 사용량 제한 방지) -->
-            <button 
-              type="button" 
-              id="request-sub-translate-btn" 
-              class="px-2.5 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm"
-              title="Gemini를 호출하여 번역을 명시적으로 생성합니다 (API 사용)"
-              data-i18n-title="sub_translate_tooltip"
-            >
-              <span id="trans-btn-icon">⚡</span>
-              <span id="trans-btn-text">한국어 번역 요청</span>
-              <span id="trans-loading-spinner" class="hidden w-3 h-3 border-2 border-amber-300 border-t-transparent rounded-full animate-spin"></span>
-            </button>
-
-            <!-- 자동 스크롤 ON/OFF 토글 버튼 -->
-            <button 
-              type="button" 
-              id="sub-autoscroll-toggle-btn" 
-              class="px-2.5 py-1 bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm"
-              title="영상 재생 시 현재 대사 위치로 자동 스크롤할지 여부를 켜고 끕니다"
-              data-i18n-title="btn_sub_autoscroll_title"
-            >
-              <span id="sub-autoscroll-icon">📜</span>
-              <span id="sub-autoscroll-text" data-i18n="sub_autoscroll_on">자동 스크롤 ON</span>
-            </button>
           </div>
 
-          <!-- 실시간 자막 검색창 -->
-          <div class="relative flex-1 min-w-[140px] max-w-xs">
-            <input 
-              type="text" 
-              id="subtitle-search-input" 
-              placeholder="자막 키워드 검색..." 
-              data-i18n-placeholder="search_subtitles_placeholder"
-              class="w-full pl-8 pr-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
-            />
-            <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
-            </svg>
+          <!-- 2행: 실시간 자막 검색창 및 대사 개수 통계 -->
+          <div class="flex items-center gap-2 flex-nowrap">
+            <div class="relative flex-1">
+              <input 
+                type="text" 
+                id="subtitle-search-input" 
+                placeholder="자막 키워드 검색..." 
+                data-i18n-placeholder="search_subtitles_placeholder"
+                class="w-full pl-8 pr-3 py-1 bg-slate-800/80 border border-slate-700 rounded-lg text-xs text-white placeholder-slate-500 focus:outline-none focus:border-sky-500"
+              />
+              <svg class="w-3.5 h-3.5 absolute left-2.5 top-2 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
+              </svg>
+            </div>
+            <span id="sub-count-text" class="text-[11px] text-slate-400 font-mono whitespace-nowrap flex-shrink-0">0개 대사</span>
           </div>
-          
-          <span id="sub-count-text" class="text-[11px] text-slate-400 font-mono">0개 대사</span>
         </div>
 
         <!-- 자막 목록 (클릭 시 해당 시간대로 점프) -->

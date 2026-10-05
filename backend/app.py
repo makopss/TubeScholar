@@ -74,6 +74,7 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost
 _CSRF_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 _last_heartbeat = time.time()
+_heartbeat_received = False
 _shutdown_timer: Optional[threading.Timer] = None
 _shutdown_lock = threading.Lock()
 
@@ -871,12 +872,12 @@ def get_tts_audio_file(filename: str):
 
 @app.post("/api/system/browser-close")
 def browser_close_signal():
-    """브라우저 창/탭 닫힘 시 1.5초 후 프로세스 즉시 종료 (F5 새로고침인 경우 다음 요청 수신 시 취소)"""
+    """브라우저 창/탭 닫힘 시 3.0초 후 프로세스 종료 (F5 새로고침인 경우 다음 요청 수신 시 취소)"""
     global _shutdown_timer
     with _shutdown_lock:
         if _shutdown_timer is not None:
             _shutdown_timer.cancel()
-        _shutdown_timer = threading.Timer(1.5, _perform_exit)
+        _shutdown_timer = threading.Timer(3.0, _perform_exit)
         _shutdown_timer.daemon = True
         _shutdown_timer.start()
     return {"status": "closing"}
@@ -884,8 +885,9 @@ def browser_close_signal():
 @app.post("/api/system/heartbeat")
 def system_heartbeat():
     """브라우저 활성 생존 신호 수신 (브라우저 창 종료 감지용)"""
-    global _last_heartbeat
+    global _last_heartbeat, _heartbeat_received
     _last_heartbeat = time.time()
+    _heartbeat_received = True
     cancel_shutdown()
     return {"status": "ok"}
 
