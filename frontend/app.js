@@ -49,6 +49,7 @@ let currentTranslationTrack = null;
 let currentTracks = [];
 let supportedTargetLanguages = [];
 let isSubtitleAutoScroll = localStorage.getItem("tubescholar_sub_autoscroll") !== "false";
+const clientTranslationCache = new Map(); // key: `${vidKey}_${targetLang}` -> { subtitles, source }
 
 const FALLBACK_TARGET_LANGUAGES = [
   { code: "ko", name: "한국어" },
@@ -609,8 +610,8 @@ function applyLanguageState(payload) {
     currentTracks = payload.tracks;
   }
 
-  // 동일 언어 판별: 명시적 "same" 이거나, 한국어 원문이면서 타겟이 한국어인 경우
-  isSameLanguage = (currentTranslationSource === "same") || (payload.is_korean && currentTargetLang === "ko");
+  // 동일 언어 판별: 명시적 "same" 이거나, 원문 언어와 타겟 언어가 일치하는 경우
+  isSameLanguage = Boolean((payload && payload.is_same_language) || (currentTranslationSource === "same") || (currentOriginalLang && currentOriginalLang.toLowerCase() === (currentTargetLang || "").toLowerCase()) || (payload && payload.is_korean && currentTargetLang === "ko"));
   isKoreanContent = isSameLanguage;
 
   // 원문과 번역 언어가 동일한 경우 자막 배열의 ko_text에 text를 복사하여 즉시 표시 지원
@@ -685,9 +686,15 @@ async function reloadSubtitles(opts = {}) {
 
     if (d.success && Array.isArray(d.subtitles)) {
       const reloadHasTrans = d.subtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
-      if (reloadHasTrans && currentSubLang === "original") {
-        currentSubLang = "bilingual";
-        updateSubLangButtons(currentSubLang);
+      if (reloadHasTrans) {
+        const tgtNorm = (newTarget || currentTargetLang || "ko").toLowerCase();
+        const entry = { subtitles: d.subtitles, source: d.translation_source || "gemini" };
+        if (currentNoteId) clientTranslationCache.set(`${currentNoteId}_${tgtNorm}`, entry);
+        if (currentVideoId) clientTranslationCache.set(`${currentVideoId}_${tgtNorm}`, entry);
+        if (currentSubLang === "original") {
+          currentSubLang = "bilingual";
+          updateSubLangButtons(currentSubLang);
+        }
       }
       setSubtitles(d.subtitles);
       applyLanguageState(d);
@@ -1025,6 +1032,11 @@ async function requestTranslation(force = false) {
 
               if (data.subtitles && data.subtitles.length > 0) {
                 currentSubtitles = data.subtitles;
+                const tgtNorm = (currentTargetLang || "ko").toLowerCase();
+                const entry = { subtitles: data.subtitles, source: "gemini" };
+                if (currentNoteId) clientTranslationCache.set(`${currentNoteId}_${tgtNorm}`, entry);
+                if (currentVideoId) clientTranslationCache.set(`${currentVideoId}_${tgtNorm}`, entry);
+
                 applyLanguageState({
                   target_lang: currentTargetLang,
                   translation_source: "gemini"
@@ -1600,10 +1612,9 @@ function renderSubtitlesList(filterKeyword = "") {
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
   let noticeHtml = "";
   if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !hasKo && !isSameLanguage) {
-    const modeName = currentSubLang === "ko" ? (typeof t === "function" ? t("mode_translated", { lang: targetName }) : `${targetName} 번역`) : (typeof t === "function" ? t("mode_bilingual", { lang: targetName }) : `${targetName} 병기`);
-    const noticeTitle = typeof t === "function" ? t("sub_notice_title", { mode: modeName, lang: targetName }) : `${modeName} 안내: ${targetName} 번역이 아직 요청되지 않았습니다.`;
-    const noticeDesc = typeof t === "function" ? t("sub_notice_desc") : "Gemini API 사용량을 절약하기 위해 번역 요청 시에만 수동으로 번역합니다.";
-    const noticeBtnText = typeof t === "function" ? t("sub_notice_btn", { lang: targetName }) : `⚡ 지금 ${targetName} 번역 요청`;
+    const noticeTitle = typeof t === "function" ? t("sub_notice_title", { lang: targetName }) : `${targetName} 번역이 아직 생성되지 않았습니다.`;
+    const noticeDesc = typeof t === "function" ? t("sub_notice_desc", { lang: targetName }) : `Gemini AI로 번역을 요청하면 ${targetName} 자막을 확인할 수 있습니다.`;
+    const noticeBtnText = typeof t === "function" ? t("sub_notice_btn", { lang: targetName }) : `⚡ ${targetName} 번역 요청`;
     noticeHtml = `
       <div class="mb-3 p-3 rounded-xl bg-amber-950/40 border border-amber-500/40 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 shadow-sm">
         <div class="flex items-center space-x-2">
@@ -1985,6 +1996,10 @@ async function runGeminiAnalysis(url) {
     const analyzeHasTrans = analyzeSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
     if (analyzeHasTrans) {
       currentSubLang = "bilingual";
+      const tgtNorm = (data.target_lang || currentTargetLang || "ko").toLowerCase();
+      const entry = { subtitles: analyzeSubs, source: data.translation_source || "gemini" };
+      if (data.note_id) clientTranslationCache.set(`${data.note_id}_${tgtNorm}`, entry);
+      if (data.video_info && data.video_info.video_id) clientTranslationCache.set(`${data.video_info.video_id}_${tgtNorm}`, entry);
     } else {
       currentSubLang = "original";
     }
@@ -2152,6 +2167,24 @@ async function loadSingleSavedNote(noteIdOrVid) {
     const meta = data.metadata || {};
     const savedSubs = (meta.subtitles && Array.isArray(meta.subtitles)) ? meta.subtitles : [];
     const hasTranslation = savedSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
+
+    // 캐시 보관: 노트 내 여러 언어 번역본이 있다면 전부 클라이언트 캐시에 등록
+    if (meta.translations && typeof meta.translations === "object") {
+      for (const [tLang, tData] of Object.entries(meta.translations)) {
+        if (tData && Array.isArray(tData.subtitles)) {
+          const entry = { subtitles: tData.subtitles, source: tData.translation_source || "gemini" };
+          const normLang = tLang.toLowerCase();
+          if (data.note_id) clientTranslationCache.set(`${data.note_id}_${normLang}`, entry);
+          if (meta.video_id) clientTranslationCache.set(`${meta.video_id}_${normLang}`, entry);
+        }
+      }
+    }
+    if (hasTranslation) {
+      const curTgt = (meta.target_lang || currentTargetLang || "ko").toLowerCase();
+      const entry = { subtitles: savedSubs, source: meta.translation_source || "gemini" };
+      if (data.note_id) clientTranslationCache.set(`${data.note_id}_${curTgt}`, entry);
+      if (meta.video_id) clientTranslationCache.set(`${meta.video_id}_${curTgt}`, entry);
+    }
 
     // 1. 번역된 자막이 존재하는 경우 사용자가 즉시 번역문을 볼 수 있도록 'bilingual'(병기) 모드로 전환
     if (hasTranslation) {
@@ -2898,11 +2931,41 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
+      // 1. 현재 화면의 번역 자막을 클라이언트 캐시에 즉시 보관 (언어 전환 시 유실 원천 방지)
+      const oldTarget = (currentTargetLang || "ko").toLowerCase();
+      const hasTrans = currentSubtitles && currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+      if (hasTrans) {
+        const backupEntry = {
+          subtitles: JSON.parse(JSON.stringify(currentSubtitles)),
+          source: currentTranslationSource || "gemini"
+        };
+        if (currentNoteId) clientTranslationCache.set(`${currentNoteId}_${oldTarget}`, backupEntry);
+        if (currentVideoId) clientTranslationCache.set(`${currentVideoId}_${oldTarget}`, backupEntry);
+      }
+
       currentTargetLang = newTarget;
       try { localStorage.setItem("tubescholar_target_lang", currentTargetLang); } catch (err) {}
       updateLangLabels();
 
-      // 자막이 있고 YouTube 영상이 로드되어 있는 경우 즉시 새 언어로 리로드
+      // 2. 이미 캐시된 새 언어의 번역 자막이 있다면 0ms 즉시 화면 복원
+      const normNew = (newTarget || "ko").toLowerCase();
+      const cached = (currentNoteId && clientTranslationCache.get(`${currentNoteId}_${normNew}`)) ||
+                     (currentVideoId && clientTranslationCache.get(`${currentVideoId}_${normNew}`));
+      if (cached && Array.isArray(cached.subtitles) && cached.subtitles.length > 0) {
+        const cachedHasTrans = cached.subtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+        if (cachedHasTrans && currentSubLang === "original") {
+          currentSubLang = "bilingual";
+          updateSubLangButtons(currentSubLang);
+        }
+        setSubtitles(cached.subtitles);
+        currentTranslationSource = cached.source || "gemini";
+        applyLanguageState({
+          target_lang: newTarget,
+          translation_source: currentTranslationSource
+        });
+      }
+
+      // 3. 자막이 있고 YouTube 영상이 로드되어 있는 경우 서버와 상태 동기화
       if (currentVideoId && !isLocalVideo) {
         await reloadSubtitles({ target_lang: newTarget });
       } else {

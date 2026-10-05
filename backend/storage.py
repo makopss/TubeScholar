@@ -15,6 +15,7 @@ else:
 
 DATA_DIR = os.environ.get("TUBESCHOLAR_DATA_DIR") or DEFAULT_DATA_DIR
 NOTES_DIR = os.path.join(DATA_DIR, "notes")
+TRANSLATIONS_DIR = os.path.join(DATA_DIR, "translations")
 LIBRARY_FILE = os.path.join(DATA_DIR, "library.json")
 LIBRARY_BACKUP = LIBRARY_FILE + ".bak"
 
@@ -52,6 +53,7 @@ def _require_safe_note_id(note_id: str):
 def ensure_dirs():
     """데이터 및 노트 저장 디렉토리를 확인하고 생성합니다."""
     os.makedirs(NOTES_DIR, exist_ok=True)
+    os.makedirs(TRANSLATIONS_DIR, exist_ok=True)
     if not os.path.exists(LIBRARY_FILE) and not os.path.exists(LIBRARY_BACKUP):
         _atomic_write_json(LIBRARY_FILE, {"notes": {}})
 
@@ -168,6 +170,124 @@ def _clean_lang_meta(lang_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     return out
 
 
+def _safe_file_key(key: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]", "_", str(key))[:100] or "unknown"
+
+
+def save_translation_cache(video_id: str, target_lang: str, subtitles: List[Dict[str, Any]], source: str = "gemini") -> bool:
+    """비디오 ID 및 번역 언어 기준으로 번역 자막을 영구 캐시합니다."""
+    if not video_id or not target_lang or not subtitles:
+        return False
+    try:
+        ensure_dirs()
+        vid_key = _safe_file_key(video_id)
+        lang_key = _safe_file_key(target_lang).lower()
+        cache_file = os.path.join(TRANSLATIONS_DIR, f"{vid_key}_{lang_key}.json")
+        payload = {
+            "video_id": video_id,
+            "target_lang": target_lang.lower(),
+            "translation_source": source,
+            "subtitles": _normalize_subs(subtitles),
+            "updated_at": time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        _atomic_write_json(cache_file, payload)
+        return True
+    except Exception as e:
+        print(f"[storage] 번역 캐시 저장 실패 ({video_id}, {target_lang}): {e}")
+        return False
+
+
+def get_translation_cache(video_id: str, target_lang: str) -> Optional[Dict[str, Any]]:
+    """캐시된 번역 자막을 조회합니다."""
+    if not video_id or not target_lang:
+        return None
+    try:
+        vid_key = _safe_file_key(video_id)
+        lang_key = _safe_file_key(target_lang).lower()
+        cache_file = os.path.join(TRANSLATIONS_DIR, f"{vid_key}_{lang_key}.json")
+        if os.path.exists(cache_file):
+            data = _read_json(cache_file)
+            subs = data.get("subtitles") or []
+            if subs and any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in subs):
+                return data
+    except Exception:
+        pass
+    return None
+
+
+def get_cached_subtitles(note_id: Optional[str], video_id: Optional[str], target_lang: str) -> Optional[Dict[str, Any]]:
+    """노트 또는 비디오 ID를 기반으로 target_lang에 해당하는 번역된 자막 데이터를 찾습니다."""
+    target_lang = (target_lang or "ko").lower()
+
+    # 1. note_id 기준 검색
+    if note_id and is_safe_note_id(note_id):
+        lib = load_library()
+        note = lib.get("notes", {}).get(note_id)
+        if note:
+            trans_map = note.get("translations") or {}
+            if target_lang in trans_map and isinstance(trans_map[target_lang], dict):
+                entry = trans_map[target_lang]
+                subs = entry.get("subtitles") or []
+                if any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in subs):
+                    return {
+                        "subtitles": subs,
+                        "translation_source": entry.get("translation_source", "gemini"),
+                        "target_lang": target_lang,
+                        "source_lang": note.get("source_lang")
+                    }
+            cur_subs = note.get("subtitles") or []
+            if (note.get("target_lang") or "ko").lower() == target_lang:
+                if any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in cur_subs):
+                    return {
+                        "subtitles": cur_subs,
+                        "translation_source": note.get("translation_source", "gemini"),
+                        "target_lang": target_lang,
+                        "source_lang": note.get("source_lang")
+                    }
+            if not video_id:
+                video_id = note.get("video_id")
+
+    # 2. 비디오 ID 기준 저장된 노트 역순 검색 (note_id가 없더라도 동일 영상의 기존 번역 복원)
+    if video_id:
+        lib = load_library()
+        for nid, item in reversed(list(lib.get("notes", {}).items())):
+            if item.get("video_id") == video_id:
+                trans_map = item.get("translations") or {}
+                if target_lang in trans_map and isinstance(trans_map[target_lang], dict):
+                    subs = trans_map[target_lang].get("subtitles") or []
+                    if any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in subs):
+                        return {
+                            "subtitles": subs,
+                            "translation_source": trans_map[target_lang].get("translation_source", "gemini"),
+                            "target_lang": target_lang,
+                            "source_lang": item.get("source_lang")
+                        }
+                if (item.get("target_lang") or "ko").lower() == target_lang:
+                    subs = item.get("subtitles") or []
+                    if any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in subs):
+                        return {
+                            "subtitles": subs,
+                            "translation_source": item.get("translation_source", "gemini"),
+                            "target_lang": target_lang,
+                            "source_lang": item.get("source_lang")
+                        }
+                break
+
+    # 3. 비디오 ID 기준 글로벌 캐시 검색
+    if video_id:
+        cached = get_translation_cache(video_id, target_lang)
+        if cached:
+            subs = cached.get("subtitles") or []
+            if any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in subs):
+                return {
+                    "subtitles": subs,
+                    "translation_source": cached.get("translation_source", "gemini"),
+                    "target_lang": target_lang
+                }
+
+    return None
+
+
 @_locked
 def save_note(
     video_info: Dict[str, Any], 
@@ -220,6 +340,9 @@ created_at: "{created_time}"
     if "notes" not in lib:
         lib["notes"] = {}
 
+    existing_meta = lib.get("notes", {}).get(note_id, {})
+    existing_trans = dict(existing_meta.get("translations", {})) if isinstance(existing_meta.get("translations"), dict) else {}
+
     meta = {
         "note_id": note_id,
         "video_id": video_id,
@@ -232,10 +355,24 @@ created_at: "{created_time}"
         "url": video_info.get("url", f"https://www.youtube.com/watch?v={video_id}"),
         "note_path": file_path,
         "subtitles": _normalize_subs(subtitles),
+        "translations": existing_trans,
         "created_at": created_time,
         "updated_at": created_time
     }
     meta.update(_clean_lang_meta(lang_meta))
+    
+    # 번역된 자막이 포함되어 있으면 translations 및 비디오 글로벌 캐시에도 보관
+    t_lang = (meta.get("target_lang") or "ko").lower()
+    has_trans = any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in meta["subtitles"])
+    if has_trans:
+        meta["translations"][t_lang] = {
+            "subtitles": meta["subtitles"],
+            "translation_source": meta.get("translation_source") or "gemini",
+            "target_lang": t_lang
+        }
+        if video_id:
+            save_translation_cache(video_id, t_lang, meta["subtitles"], meta.get("translation_source") or "gemini")
+
     lib["notes"][note_id] = meta
     save_library(lib)
 
@@ -291,8 +428,27 @@ def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]], lang_me
     lib = load_library()
     notes = lib.get("notes", {})
     if note_id in notes:
-        notes[note_id]["subtitles"] = _normalize_subs(subtitles)
-        notes[note_id].update(_clean_lang_meta(lang_meta))
+        clean_meta = _clean_lang_meta(lang_meta)
+        target = (clean_meta.get("target_lang") or notes[note_id].get("target_lang") or "ko").lower()
+        normalized = _normalize_subs(subtitles)
+
+        if "translations" not in notes[note_id] or not isinstance(notes[note_id]["translations"], dict):
+            notes[note_id]["translations"] = {}
+
+        has_trans = any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in normalized)
+        if has_trans:
+            source = clean_meta.get("translation_source") or notes[note_id].get("translation_source") or "gemini"
+            notes[note_id]["translations"][target] = {
+                "subtitles": normalized,
+                "translation_source": source,
+                "target_lang": target
+            }
+            vid = notes[note_id].get("video_id")
+            if vid:
+                save_translation_cache(vid, target, normalized, source)
+
+        notes[note_id]["subtitles"] = normalized
+        notes[note_id].update(clean_meta)
         notes[note_id]["updated_at"] = time.strftime('%Y-%m-%d %H:%M:%S')
         save_library(lib)
         return True
@@ -323,9 +479,29 @@ def get_note(note_id_or_video_id: str) -> Optional[Dict[str, Any]]:
 
     # 과거 생성된 노트 중 자막에 번역(ko_text)이 있으나 메타데이터 언어 설정이 누락된 경우 자동 보정
     subs = meta.get("subtitles") or []
-    has_ko = any(bool(s.get("ko_text")) for s in subs if isinstance(s, dict))
+    has_ko = any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in subs if isinstance(s, dict))
+    updated = False
+
+    if "translations" not in notes[target_id] or not isinstance(notes[target_id]["translations"], dict):
+        notes[target_id]["translations"] = {}
+        meta["translations"] = notes[target_id]["translations"]
+        updated = True
+
+    t_lang = (meta.get("target_lang") or "ko").lower()
+    if has_ko and t_lang not in notes[target_id]["translations"]:
+        source = meta.get("translation_source") or "gemini"
+        notes[target_id]["translations"][t_lang] = {
+            "subtitles": subs,
+            "translation_source": source,
+            "target_lang": t_lang
+        }
+        meta["translations"] = notes[target_id]["translations"]
+        vid = meta.get("video_id")
+        if vid:
+            save_translation_cache(vid, t_lang, subs, source)
+        updated = True
+
     if has_ko:
-        updated = False
         if not meta.get("target_lang"):
             meta["target_lang"] = "ko"
             notes[target_id]["target_lang"] = "ko"
@@ -334,11 +510,12 @@ def get_note(note_id_or_video_id: str) -> Optional[Dict[str, Any]]:
             meta["translation_source"] = "gemini"
             notes[target_id]["translation_source"] = "gemini"
             updated = True
-        if updated:
-            try:
-                save_library(lib)
-            except Exception:
-                pass
+
+    if updated:
+        try:
+            save_library(lib)
+        except Exception:
+            pass
 
     with open(file_path, "r", encoding="utf-8") as f:
         raw_content = f.read()

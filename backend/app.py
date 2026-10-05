@@ -56,7 +56,10 @@ from analyzer import (
     DEFAULT_NOTE_MODEL,
     DEFAULT_TRANSLATE_MODEL
 )
-from storage import save_note, get_note, list_saved_notes, delete_note, update_note, update_note_subtitles, is_safe_note_id
+from storage import (
+    save_note, get_note, list_saved_notes, delete_note, update_note,
+    update_note_subtitles, is_safe_note_id, get_cached_subtitles, save_translation_cache
+)
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
 from stt import transcribe_audio_groq
@@ -654,6 +657,9 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
         has_ko = any(s.get("ko_text") for s in subtitles)
         if not has_ko:
             subtitles = translate_subtitles_gemini(subtitles, target_lang=target, video_title=req.title)
+        v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
+        if v_id:
+            save_translation_cache(v_id, target, subtitles, "gemini")
         if req.note_id:
             update_note_subtitles(req.note_id, subtitles, {"target_lang": target, "translation_source": "gemini"})
         res_meta["translation_source"] = "gemini"
@@ -669,21 +675,51 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
 def reload_subtitles(req: SubtitlesRequest):
     """
     원문 언어(트랙) 또는 번역 언어를 바꿀 때 자막을 다시 불러옵니다.
-    번역 언어의 유튜브 공식 자막이 있으면 바로 정렬해 채우고, 노트에 언어 정보와 함께 저장합니다.
+    이미 생성/보관된 번역 캐시가 있으면 최우선으로 즉시 복원하여 이전 번역 손실을 방지합니다.
     """
     v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
     if not v_id:
         raise HTTPException(status_code=400, detail="유튜브 영상에서만 자막 언어를 바꿀 수 있습니다.")
     if req.note_id and not is_safe_note_id(req.note_id):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
-    res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=req.target_lang)
+
+    target = normalize_target_lang(req.target_lang)
+
+    # 1. 기존에 생성된 번역 캐시가 있는지 최우선 확인! (사용자가 번역했던 내용 영구 보존)
+    cached = get_cached_subtitles(req.note_id, v_id, target)
+    if cached and cached.get("subtitles"):
+        cached_subs = cached["subtitles"]
+        if any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in cached_subs):
+            if req.note_id:
+                update_note_subtitles(req.note_id, cached_subs, {
+                    "target_lang": target,
+                    "translation_source": cached.get("translation_source", "gemini")
+                })
+            return {
+                "success": True,
+                "subtitles": cached_subs,
+                "is_generated": False,
+                "target_lang": target,
+                "source_lang": cached.get("source_lang"),
+                "translation_source": cached.get("translation_source", "gemini"),
+                "is_same_language": False
+            }
+
+    # 2. 캐시가 없으면 유튜브에서 자막을 가져옴
+    res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=target)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
+
+    subs = res.get("subtitles", [])
+    if res.get("translation_source") == "youtube" or res.get("is_same_language"):
+        save_translation_cache(v_id, target, subs, res.get("translation_source", "youtube"))
+
     if req.note_id:
-        update_note_subtitles(req.note_id, res.get("subtitles", []), _lang_meta(res))
+        update_note_subtitles(req.note_id, subs, _lang_meta(res))
+
     return {
         "success": True,
-        "subtitles": res.get("subtitles", []),
+        "subtitles": subs,
         "is_generated": res.get("is_generated"),
         **_lang_payload(res)
     }
@@ -736,14 +772,18 @@ async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Re
                     break
                 if event.get("type") in ["complete", "cancelled"]:
                     last_subtitles = event.get("subtitles")
-                    if req.note_id and last_subtitles:
-                        try:
-                            await run_in_threadpool(
-                                update_note_subtitles, req.note_id, last_subtitles,
-                                {"target_lang": target, "translation_source": "gemini"}
-                            )
-                        except Exception:
-                            pass
+                    if last_subtitles:
+                        v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
+                        if v_id:
+                            await run_in_threadpool(save_translation_cache, v_id, target, last_subtitles, "gemini")
+                        if req.note_id:
+                            try:
+                                await run_in_threadpool(
+                                    update_note_subtitles, req.note_id, last_subtitles,
+                                    {"target_lang": target, "translation_source": "gemini"}
+                                )
+                            except Exception:
+                                pass
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
         finally:
             # 연결 종료/취소 시 작업 스레드의 번역 루프도 다음 배치에서 중단되도록 신호

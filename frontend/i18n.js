@@ -263,9 +263,9 @@ const TUBESCHOLAR_I18N = {
     autoscroll_off_title: "자동 스크롤이 꺼져 있습니다 (자막 자유 탐색 중, 클릭 시 켜기)",
 
     // 자막 목록 및 알림 배너
-    sub_notice_title: "{mode} 안내: {lang} 번역이 아직 요청되지 않았습니다.",
-    sub_notice_desc: "Gemini API 사용량을 절약하기 위해 번역 요청 시에만 수동으로 번역합니다.",
-    sub_notice_btn: "⚡ 지금 {lang} 번역 요청",
+    sub_notice_title: "{lang} 번역이 아직 생성되지 않았습니다.",
+    sub_notice_desc: "Gemini AI로 번역을 요청하면 {lang} 자막을 확인할 수 있습니다.",
+    sub_notice_btn: "⚡ {lang} 번역 요청",
     sub_waiting_trans: "({lang} 번역 대기)",
     sub_waiting_trans_simple: "(번역 대기)",
     sub_jump_tooltip: "클릭하여 {time} 구간으로 이동",
@@ -675,9 +675,9 @@ const TUBESCHOLAR_I18N = {
     autoscroll_off_title: "Auto-scroll is OFF (Free browsing, click to turn ON)",
 
     // Subtitle List & Notices
-    sub_notice_title: "{mode} Notice: {lang} translation has not been requested yet.",
-    sub_notice_desc: "To conserve Gemini API quota, translations are generated manually upon request.",
-    sub_notice_btn: "⚡ Request {lang} translation now",
+    sub_notice_title: "{lang} translation is not yet available.",
+    sub_notice_desc: "Request translation to view subtitles in {lang} with Gemini AI.",
+    sub_notice_btn: "⚡ Request {lang} translation",
     sub_waiting_trans: "({lang} translation pending)",
     sub_waiting_trans_simple: "(Translation pending)",
     sub_jump_tooltip: "Click to jump to {time}",
@@ -1087,9 +1087,9 @@ const TUBESCHOLAR_I18N = {
     autoscroll_off_title: "自動スクロールがオフです（クリックでオン）",
 
     // 字幕リスト＆案内バナー
-    sub_notice_title: "{mode} のご案内: {lang} 翻訳はまだリクエストされていません。",
-    sub_notice_desc: "Gemini API消費を抑えるため、リクエスト時にのみ手動で翻訳します。",
-    sub_notice_btn: "⚡ 今すぐ {lang} 翻訳をリクエスト",
+    sub_notice_title: "{lang} 翻訳はまだ生成されていません。",
+    sub_notice_desc: "Gemini AIで翻訳をリクエストすると、{lang} 字幕を確認できます。",
+    sub_notice_btn: "⚡ {lang} 翻訳をリクエスト",
     sub_waiting_trans: "({lang} 翻訳待機中)",
     sub_waiting_trans_simple: "(翻訳待機中)",
     sub_jump_tooltip: "クリックして {time} へジャンプ",
