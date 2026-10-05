@@ -743,7 +743,7 @@ function updateTranslationButtonState() {
   if (currentTranslationSource === "youtube") {
     btn.disabled = false;
     btn.className = "px-2.5 py-1 bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 shadow-sm cursor-pointer";
-    if (text) text.textContent = `📺 YouTube ${targetName}`;
+    if (text) text.textContent = `YouTube ${targetName}`;
     if (icon) icon.textContent = "📺";
     if (spinner) spinner.classList.add("hidden");
     btn.title = typeof t === "function" ? t("btn_translate_yt_title", { lang: targetName }) : `YouTube 공식 ${targetName} 자막이 적용되었습니다. 클릭하면 Gemini로 다시 번역할 수 있습니다.`;

@@ -17,7 +17,7 @@
        기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에 둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
   <!-- i18n 다국어 지원 시스템 (ko, en, ja) -->
-  <script src="/static/i18n.js?v=1.0.2"></script>
+  <script src="/static/i18n.js?v=1.0.3"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -408,11 +408,8 @@
             </button>
           </div>
 
-          <!-- 2) 자막 스크립트용 버튼들 -->
+          <!-- 2) 자막 스크립트용 버튼들 (내보내기) -->
           <div id="subtitle-toolbar-buttons" class="hidden flex items-center space-x-1 flex-shrink-0">
-            <button id="retranslate-sub-btn" class="ts-toolbar-icon-btn bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 font-semibold shadow-sm" title="현재 영상의 자막을 1:1 고정밀 싱크 엔진으로 다시 번역합니다" data-i18n-title="btn_retranslate_title">
-              <span class="text-sm">🔄</span>
-            </button>
             <button id="download-srt-btn" class="ts-toolbar-btn px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-transparent font-semibold shadow-sm" title=".SRT 자막 다운로드">
               <span>📥 .SRT</span>
             </button>
@@ -1045,7 +1042,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.6.2"></script>
+  <script src="/static/app.js?v=3.6.3"></script>
 </body>
 
 </html>
