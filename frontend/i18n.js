@@ -209,6 +209,10 @@ const TUBESCHOLAR_I18N = {
     trans_abort_btn: "🛑 번역 취소",
     btn_close: "닫기",
     trans_complete_btn: "✓ 적용 및 닫기",
+    trans_minimize_title: "최소화 (백그라운드에서 계속 진행)",
+    trans_close_title: "창 닫기 (백그라운드에서 계속 진행)",
+    trans_mini_label: "자막 번역 중",
+    trans_mini_expand_tooltip: "클릭하여 상세 번역 진행 및 로그 창 열기",
 
     // 독서 팝업 (Reader Popup Modal)
     reader_mode_badge: "집중 독서 모드",
@@ -617,6 +621,10 @@ const TUBESCHOLAR_I18N = {
     trans_abort_btn: "🛑 Cancel Translation",
     btn_close: "Close",
     trans_complete_btn: "✓ Apply & Close",
+    trans_minimize_title: "Minimize (Continue in background)",
+    trans_close_title: "Close (Continue in background)",
+    trans_mini_label: "Translating subtitles",
+    trans_mini_expand_tooltip: "Click to expand translation progress & logs",
 
     // Reader Popup Modal
     reader_mode_badge: "Focused Reader Mode",
@@ -1025,6 +1033,10 @@ const TUBESCHOLAR_I18N = {
     trans_abort_btn: "🛑 翻訳をキャンセル",
     btn_close: "閉じる",
     trans_complete_btn: "✓ 適用して閉じる",
+    trans_minimize_title: "最小化 (バックグラウンドで続行)",
+    trans_close_title: "閉じる (バックグラウンドで続行)",
+    trans_mini_label: "字幕翻訳中",
+    trans_mini_expand_tooltip: "クリックして詳細ログを開く",
 
     // 読書ポップアップ
     reader_mode_badge: "集中読書モード",

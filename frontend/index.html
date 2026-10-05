@@ -17,7 +17,7 @@
        기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에 둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
   <!-- i18n 다국어 지원 시스템 (ko, en, ja) -->
-  <script src="/static/i18n.js?v=1.0.1"></script>
+  <script src="/static/i18n.js?v=1.0.2"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -63,11 +63,11 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"></path>
           </svg>
           
-          <div class="absolute right-1 top-1 bottom-1 flex items-center space-x-1">
+          <div class="absolute right-1 top-1 bottom-1 flex items-center">
             <button 
               type="button" 
               id="header-cancel-btn"
-              class="hidden px-2.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 animate-pulse whitespace-nowrap"
+              class="hidden px-3.5 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded-lg text-xs flex items-center space-x-1 transition shadow-sm h-full active:scale-95 animate-pulse whitespace-nowrap"
               title="분석 중단하기"
               data-i18n-title="btn_cancel"
             >
@@ -867,9 +867,9 @@
     </div>
   </div>
 
-  <!-- 한국어 자막 번역 진행 상태 팝업 모달 (실시간 진행률 및 로그 창) -->
-  <div id="trans-progress-modal" class="fixed inset-0 bg-black/80 backdrop-blur-md z-50 hidden flex items-center justify-center p-4">
-    <div class="bg-slate-900 border border-slate-800 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+  <!-- 한국어 자막 번역 진행 상태 팝업 모달 (실시간 진행률 및 로그 창 - 비차단형 모달) -->
+  <div id="trans-progress-modal" class="fixed inset-0 z-40 hidden pointer-events-none flex items-center justify-center p-4">
+    <div class="pointer-events-auto bg-slate-900/95 border border-slate-700/80 rounded-2xl w-full max-w-lg p-6 shadow-2xl space-y-4 backdrop-blur-xl animate-in fade-in zoom-in duration-200 ring-1 ring-white/10">
       <div class="flex items-center justify-between border-b border-slate-800 pb-3">
         <div class="flex items-center space-x-3">
           <div class="w-9 h-9 rounded-xl bg-amber-500/20 text-amber-300 flex items-center justify-center font-bold text-lg shadow-inner">
@@ -880,9 +880,14 @@
             <p id="trans-modal-subtitle" class="text-xs text-slate-400" data-i18n="trans_modal_subtitle">Gemini 3.5 Flash Lite (500 RPD) 모델을 통해 자막을 초고속 번역하고 있습니다.</p>
           </div>
         </div>
-        <button id="close-trans-modal-btn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
-          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-        </button>
+        <div class="flex items-center space-x-1">
+          <button id="minimize-trans-modal-btn" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition" title="최소화 (백그라운드에서 계속 진행)" data-i18n-title="trans_minimize_title">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 12H5"></path></svg>
+          </button>
+          <button id="close-trans-modal-btn" class="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition" title="닫기 (백그라운드에서 계속 진행)" data-i18n-title="trans_close_title">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+          </button>
+        </div>
       </div>
 
       <!-- 프로그레스 바 -->
@@ -929,6 +934,24 @@
           </button>
         </div>
       </div>
+    </div>
+  </div>
+
+  <!-- 백그라운드 번역 진행 미니 위젯 (우측 하단 플로팅) -->
+  <div id="trans-mini-widget" class="fixed bottom-5 right-5 z-40 hidden pointer-events-auto bg-slate-900/95 border border-amber-500/40 rounded-full pl-3.5 pr-2 py-1.5 shadow-2xl backdrop-blur-md flex items-center space-x-3 text-xs ring-1 ring-amber-400/20 hover:border-amber-400 transition cursor-pointer select-none">
+    <div id="trans-mini-expand-area" class="flex items-center space-x-2.5" title="클릭하여 상세 번역 진행창 열기" data-i18n-title="trans_mini_expand_tooltip">
+      <span class="inline-block w-2.5 h-2.5 rounded-full bg-amber-400 animate-ping"></span>
+      <span class="font-bold text-amber-300" data-i18n="trans_mini_label">자막 번역 중</span>
+      <span id="trans-mini-percent" class="font-mono font-bold text-white bg-slate-800 px-2 py-0.5 rounded-full text-[11px] border border-slate-700">0%</span>
+      <span id="trans-mini-batch" class="text-slate-400 text-[11px] font-mono">[0/0]</span>
+    </div>
+    <div class="flex items-center space-x-1 pl-1 border-l border-slate-800">
+      <button id="trans-mini-expand-btn" class="p-1 text-slate-400 hover:text-white rounded hover:bg-slate-800 transition" title="상세 창 열기" data-i18n-title="trans_mini_expand_tooltip">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4"></path></svg>
+      </button>
+      <button id="trans-mini-abort-btn" class="p-1 text-rose-400 hover:text-rose-200 rounded hover:bg-rose-950/60 transition" title="번역 취소" data-i18n-title="trans_abort_btn">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+      </button>
     </div>
   </div>
 
@@ -1022,7 +1045,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.6.1"></script>
+  <script src="/static/app.js?v=3.6.2"></script>
 </body>
 
 </html>

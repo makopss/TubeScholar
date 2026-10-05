@@ -483,14 +483,11 @@ async function regenerateStudyNote() {
     regenBtn.innerHTML = `<span class="animate-spin text-sm">🔄</span>`;
   }
 
-  const loadingOverlay = document.getElementById("loading-overlay");
   const loadingTitle = document.getElementById("loading-title");
   const loadingDesc = document.getElementById("loading-desc");
-  const headerCancelBtn = document.getElementById("header-cancel-btn");
 
   currentAbortController = new AbortController();
-  loadingOverlay.classList.remove("hidden");
-  headerCancelBtn.classList.remove("hidden");
+  setAnalysisRunning(true);
 
   setAnalysisStep(2);
   loadingTitle.textContent = typeof t === "function" 
@@ -530,8 +527,7 @@ async function regenerateStudyNote() {
     alert(typeof t === "function" ? t("alert_note_regen_error", { err: err.message }) : (`학습 노트 재작성 실패: ${err.message}`));
   } finally {
     currentAbortController = null;
-    loadingOverlay.classList.add("hidden");
-    headerCancelBtn.classList.add("hidden");
+    setAnalysisRunning(false);
     if (regenBtn) {
       regenBtn.disabled = false;
       regenBtn.innerHTML = origBtnContent;
@@ -772,7 +768,28 @@ function updateTranslationButtonState() {
   }
 }
 
+function minimizeTranslationModal() {
+  const modal = document.getElementById("trans-progress-modal");
+  if (modal) modal.classList.add("hidden");
+  
+  const miniWidget = document.getElementById("trans-mini-widget");
+  if (miniWidget && isTranslatingSubtitles) {
+    miniWidget.classList.remove("hidden");
+  }
+}
+
+function expandTranslationModal() {
+  const miniWidget = document.getElementById("trans-mini-widget");
+  if (miniWidget) miniWidget.classList.add("hidden");
+
+  const modal = document.getElementById("trans-progress-modal");
+  if (modal) modal.classList.remove("hidden");
+}
+
 function showTranslationModal() {
+  const miniWidget = document.getElementById("trans-mini-widget");
+  if (miniWidget) miniWidget.classList.add("hidden");
+
   const modal = document.getElementById("trans-progress-modal");
   if (!modal) return;
   modal.classList.remove("hidden");
@@ -796,15 +813,14 @@ function showTranslationModal() {
 
 function closeTranslationModal() {
   if (isTranslatingSubtitles) {
-    const confirmCancel = confirm(typeof t === "function" ? t("confirm_cancel_trans") : "현재 번역 작업이 진행 중입니다.\n번역을 취소하고 창을 닫으시겠습니까?");
-    if (confirmCancel) {
-      abortTranslation();
-    } else {
-      return;
-    }
+    // 번역 작업 진행 중 창을 닫으면 중단하지 않고 백그라운드 미니 위젯으로 전환
+    minimizeTranslationModal();
+    return;
   }
   const modal = document.getElementById("trans-progress-modal");
   if (modal) modal.classList.add("hidden");
+  const miniWidget = document.getElementById("trans-mini-widget");
+  if (miniWidget) miniWidget.classList.add("hidden");
 }
 
 function abortTranslation() {
@@ -817,6 +833,9 @@ function abortTranslation() {
   appendTransLog(typeof t === "function" ? t("trans_canceled_user") : "🛑 사용자에 의해 자막 번역 요청이 취소되었습니다.", "warn");
   isTranslatingSubtitles = false;
   updateTranslationButtonState();
+
+  const miniWidget = document.getElementById("trans-mini-widget");
+  if (miniWidget) miniWidget.classList.add("hidden");
 
   const abortBtn = document.getElementById("abort-trans-btn");
   const cancelBtn = document.getElementById("cancel-trans-btn");
@@ -977,9 +996,16 @@ async function requestTranslation(force = false) {
               if (percentEl) percentEl.textContent = `${p}%`;
               if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_batch_progress", { curr: data.batch_index, total: data.total_batches }) : `번역 진행 중: [${data.batch_index}/${data.total_batches} 배치]`;
               appendTransLog(data.message, "progress");
+
+              const miniPercent = document.getElementById("trans-mini-percent");
+              const miniBatch = document.getElementById("trans-mini-batch");
+              if (miniPercent) miniPercent.textContent = `${p}%`;
+              if (miniBatch) miniBatch.textContent = `[${data.batch_index}/${data.total_batches}]`;
             } else if (data.type === "log") {
               appendTransLog(data.message, data.level || "info");
             } else if (data.type === "cancelled") {
+              const miniWidget = document.getElementById("trans-mini-widget");
+              if (miniWidget) miniWidget.classList.add("hidden");
               appendTransLog(data.message, "warn");
               if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_canceled_label") : "번역 작업이 취소되었습니다.";
               if (data.subtitles && data.subtitles.length > 0) {
@@ -990,6 +1016,8 @@ async function requestTranslation(force = false) {
             } else if (data.type === "complete") {
               translationDone = true;
               currentTranslationSource = "gemini";
+              const miniWidget = document.getElementById("trans-mini-widget");
+              if (miniWidget) miniWidget.classList.add("hidden");
               if (bar) bar.style.width = "100%";
               if (percentEl) percentEl.textContent = "100%";
               if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_completed_label") : "번역 완료!";
@@ -1028,6 +1056,8 @@ async function requestTranslation(force = false) {
               if (abortBtn) abortBtn.classList.add("hidden");
               if (cancelBtn) cancelBtn.classList.remove("hidden");
             } else if (data.type === "error") {
+              const miniWidget = document.getElementById("trans-mini-widget");
+              if (miniWidget) miniWidget.classList.add("hidden");
               appendTransLog(data.message, "error");
               if (labelEl) labelEl.textContent = typeof t === "function" ? t("trans_error_label") : "오류 발생";
               alert(typeof t === "function" ? t("trans_error_alert", { lang: targetName, msg: data.message }) : (`${targetName} 자막 번역 중 오류: ` + data.message));
@@ -1041,6 +1071,8 @@ async function requestTranslation(force = false) {
 
     return translationDone;
   } catch (err) {
+    const miniWidget = document.getElementById("trans-mini-widget");
+    if (miniWidget) miniWidget.classList.add("hidden");
     if (err.name === "AbortError" || transAbortController === null) {
       appendTransLog(typeof t === "function" ? t("trans_canceled_user") : "🛑 번역 요청이 취소되었습니다.", "warn");
     } else {
@@ -1054,6 +1086,8 @@ async function requestTranslation(force = false) {
       isTranslatingSubtitles = false;
       transAbortController = null;
       updateTranslationButtonState();
+      const miniWidget = document.getElementById("trans-mini-widget");
+      if (miniWidget) miniWidget.classList.add("hidden");
       const abortBtn = document.getElementById("abort-trans-btn");
       const cancelBtn = document.getElementById("cancel-trans-btn");
       if (abortBtn) abortBtn.classList.add("hidden");
@@ -1856,32 +1890,55 @@ function setAnalysisStep(stepNum) {
   }
 }
 
+function setAnalysisRunning(isRunning) {
+  const loadingOverlay = document.getElementById("loading-overlay");
+  const headerCancelBtn = document.getElementById("header-cancel-btn");
+  const submitBtn = document.getElementById("submit-btn");
+
+  if (loadingOverlay) {
+    if (isRunning) {
+      loadingOverlay.classList.remove("hidden");
+    } else {
+      loadingOverlay.classList.add("hidden");
+    }
+  }
+
+  if (headerCancelBtn) {
+    if (isRunning) {
+      headerCancelBtn.classList.remove("hidden");
+    } else {
+      headerCancelBtn.classList.add("hidden");
+    }
+  }
+
+  if (submitBtn) {
+    if (isRunning) {
+      submitBtn.classList.add("hidden");
+      submitBtn.disabled = true;
+    } else {
+      submitBtn.classList.remove("hidden");
+      submitBtn.disabled = false;
+      submitBtn.classList.remove("opacity-50");
+    }
+  }
+}
+
 function abortCurrentAnalysis() {
   if (currentAbortController) {
     currentAbortController.abort();
     currentAbortController = null;
   }
-  document.getElementById("loading-overlay").classList.add("hidden");
-  document.getElementById("header-cancel-btn").classList.add("hidden");
-  const submitBtn = document.getElementById("submit-btn");
-  submitBtn.disabled = false;
-  submitBtn.classList.remove("opacity-50");
+  setAnalysisRunning(false);
   alert(typeof t === "function" ? t("alert_analysis_cancelled") : "🛑 분석 작업이 사용자에 의해 즉시 중단되었습니다.");
 }
 
 // 1. Gemini 자동 분석 실행
 async function runGeminiAnalysis(url) {
-  const loadingOverlay = document.getElementById("loading-overlay");
   const loadingTitle = document.getElementById("loading-title");
   const loadingDesc = document.getElementById("loading-desc");
-  const submitBtn = document.getElementById("submit-btn");
-  const headerCancelBtn = document.getElementById("header-cancel-btn");
 
   currentAbortController = new AbortController();
-  loadingOverlay.classList.remove("hidden");
-  headerCancelBtn.classList.remove("hidden");
-  submitBtn.disabled = true;
-  submitBtn.classList.add("opacity-50");
+  setAnalysisRunning(true);
 
   setAnalysisStep(1);
   loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step1_title") : "1단계: 자막 및 영상 정보 추출 중...";
@@ -1941,10 +1998,7 @@ async function runGeminiAnalysis(url) {
   } finally {
     clearTimeout(stepTimer);
     currentAbortController = null;
-    loadingOverlay.classList.add("hidden");
-    headerCancelBtn.classList.add("hidden");
-    submitBtn.disabled = false;
-    submitBtn.classList.remove("opacity-50");
+    setAnalysisRunning(false);
   }
 }
 
@@ -2549,8 +2603,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     } else {
       // Gemini 분석
-      const loadingOverlay = document.getElementById("loading-overlay");
-      loadingOverlay.classList.remove("hidden");
+      setAnalysisRunning(true);
       setAnalysisStep(2);
       try {
         const res = await fetch("/api/local/analyze", {
@@ -2576,7 +2629,7 @@ document.addEventListener("DOMContentLoaded", () => {
       } catch (e) {
         alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
       } finally {
-        loadingOverlay.classList.add("hidden");
+        setAnalysisRunning(false);
       }
     }
   }
@@ -2613,14 +2666,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     document.getElementById("local-file-modal").classList.add("hidden");
 
-    const loadingOverlay = document.getElementById("loading-overlay");
     const loadingTitle = document.getElementById("loading-title");
     const loadingDesc = document.getElementById("loading-desc");
-    const headerCancelBtn = document.getElementById("header-cancel-btn");
 
     currentAbortController = new AbortController();
-    loadingOverlay.classList.remove("hidden");
-    headerCancelBtn.classList.remove("hidden");
+    setAnalysisRunning(true);
 
     setAnalysisStep(1);
     loadingTitle.textContent = typeof t === "function" ? t("loading_local_step1_title") : "1단계: 영상에서 오디오 추출 중...";
@@ -2666,8 +2716,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } finally {
       clearTimeout(stepTimer);
       currentAbortController = null;
-      loadingOverlay.classList.add("hidden");
-      headerCancelBtn.classList.add("hidden");
+      setAnalysisRunning(false);
     }
   });
 
@@ -2902,7 +2951,9 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSubtitleAutoScrollUI();
   }
 
-  // 번역 상태 모달 닫기 버튼 이벤트 바인딩
+  // 번역 상태 모달 최소화/닫기 및 미니 위젯 이벤트 바인딩
+  const minimizeTransModalBtn = document.getElementById("minimize-trans-modal-btn");
+  if (minimizeTransModalBtn) minimizeTransModalBtn.addEventListener("click", minimizeTranslationModal);
   const closeTransModalBtn = document.getElementById("close-trans-modal-btn");
   if (closeTransModalBtn) closeTransModalBtn.addEventListener("click", closeTranslationModal);
   const cancelTransBtn = document.getElementById("cancel-trans-btn");
@@ -2911,6 +2962,20 @@ document.addEventListener("DOMContentLoaded", () => {
   if (completeTransBtn) completeTransBtn.addEventListener("click", closeTranslationModal);
   const abortTransBtn = document.getElementById("abort-trans-btn");
   if (abortTransBtn) abortTransBtn.addEventListener("click", abortTranslation);
+
+  // 미니 위젯 클릭 시 상세 창 복원 및 취소 바인딩
+  const transMiniExpandArea = document.getElementById("trans-mini-expand-area");
+  if (transMiniExpandArea) transMiniExpandArea.addEventListener("click", expandTranslationModal);
+  const transMiniExpandBtn = document.getElementById("trans-mini-expand-btn");
+  if (transMiniExpandBtn) transMiniExpandBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    expandTranslationModal();
+  });
+  const transMiniAbortBtn = document.getElementById("trans-mini-abort-btn");
+  if (transMiniAbortBtn) transMiniAbortBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    abortTranslation();
+  });
 
   // 자막 실시간 검색 필터링 (입력이 멈춘 뒤 200ms 후 1회만 재렌더링)
   let subtitleSearchTimer = null;
