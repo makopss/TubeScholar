@@ -90,8 +90,26 @@ Click the ⚙️ **Settings** icon in the top header:
 - **Frontend**: Vanilla JavaScript (ES6+), Tailwind CSS (Standalone build), Marked.js, DOMPurify
 - **Packaging**: PyInstaller, Inno Setup 6 (Windows Setup Wizard)
 
+## ⚠️ Disclaimer
+
+1. **Trademarks & Affiliation**:
+   - TubeScholar is an independent open-source project and is not affiliated with, endorsed by, or sponsored by YouTube, Google LLC, Alphabet Inc., Microsoft, or Groq.
+   - 'YouTube' and the YouTube logo are registered trademarks of Google LLC.
+2. **Copyright & Fair Use**:
+   - This software is strictly intended for **personal, non-commercial educational and research purposes (Fair Use)**.
+   - Users are solely responsible for ensuring compliance with applicable copyright laws and the terms of service of any third-party platform (including YouTube). Bypassing DRM or facilitating copyright infringement is strictly prohibited.
+3. **AI Accuracy & Hallucination**:
+   - Study notes, translations, and summaries are generated automatically by Large Language Models (such as Google Gemini). AI outputs may contain factual inaccuracies, omissions, or hallucinations.
+   - The authors do not guarantee the correctness, completeness, or fitness for any particular purpose of the generated content.
+4. **API Usage & Costs**:
+   - TubeScholar operates using API keys provided by the user and stored locally on the user's machine. Users are solely responsible for managing their own quotas, terms, and potential billing charges incurred with external API providers.
+5. **No Warranty & Limitation of Liability**:
+   - The software is provided "AS IS", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose, and non-infringement. In no event shall the authors be liable for any claim, damages, or other liability arising from the use of this software.
+
 ---
 
 ## 📄 License
 
-This project is licensed under the MIT License. Contributions and PRs from the open-source community are warmly welcome!
+This project is licensed under the [MIT License](LICENSE). See the [LICENSE](LICENSE) file for full details.
+Contributions and pull requests from the open-source community are warmly welcome!
+

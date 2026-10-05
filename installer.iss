@@ -34,6 +34,8 @@ WizardStyle=modern
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 
+LicenseFile=LICENSE
+
 ; UI & Icons
 ArchitecturesInstallIn64BitMode=x64compatible
 SetupIconFile=app_icon.ico
@@ -50,6 +52,7 @@ Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: checkedonce
 
 [Files]
+Source: "LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "app_icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "dist\TubeScholar\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
