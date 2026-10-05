@@ -44,8 +44,8 @@ const TUBESCHOLAR_I18N = {
     ctrl_orig_title: "원문 자막",
     ctrl_orig_label: "원문",
     ctrl_trans_title: "번역 자막",
-    ctrl_bi_title: "동시 병기 출력",
-    ctrl_bi_label: "병기",
+    ctrl_bi_title: "원문 및 번역문 모두 표시",
+    ctrl_bi_label: "모두",
     sync_wrap_title: "자막 싱크 보정 (영상별 자동 저장)",
     sync_badge_title: "자막 싱크 보정값 (클릭 또는 \\ 키: 0초로 초기화)",
     btn_sync_slower_title: "자막을 0.2초 늦게 표시 (단축키: [ )",
@@ -77,13 +77,26 @@ const TUBESCHOLAR_I18N = {
     note_regenerating: "Gemini가 {lang} 언어로 학습 노트를 재작성하고 있습니다...",
     alert_note_regen_error: "학습 노트 재작성 실패: {err}",
     alert_no_subs_to_regen: "학습 노트를 재작성할 자막 데이터가 없습니다.",
-    btn_edit: "✏️ 편집",
-    btn_preview: "👁️ 미리보기",
+    btn_edit: "노트 편집",
+    btn_preview: "미리보기",
     btn_copy: "복사",
     btn_download_md: ".md 다운로드",
     btn_audiobook_title: "edge-tts 고품질 신경망 음성으로 노트를 읽어줍니다",
     btn_audiobook: "오디오북",
-    btn_reader_mode_title: "영상과 패널을 접고 책처럼 편안하게 읽는 집중 독서 모드 (단축키: Z)",
+    btn_sub_audiobook_title: "자막 더빙 오디오북 듣기 (edge-tts 음성)",
+    btn_sub_edit_title: "자막 내용 직접 수정 (오타 교정 및 편집)",
+    sub_editor_bar_title: "자막 직접 수정 중",
+    sub_editor_hint: "각 자막 대사를 직접 타이핑하여 수정하세요. (Ctrl+Enter로 저장)",
+    sub_editor_save: "저장 및 적용",
+    sub_editor_cancel: "✕ 취소",
+    alert_sub_saved: "💾 자막 수정 사항이 성공적으로 저장되었습니다!",
+    alert_sub_save_error: "자막 저장 중 오류가 발생했습니다: {err}",
+    alert_no_subs_to_edit: "수정할 자막 데이터가 없습니다. 먼저 자막을 불러오거나 영상을 분석해주세요.",
+    confirm_discard_sub_edits: "수정 중인 자막 내용이 있습니다. 저장하지 않고 취소하시겠습니까?",
+    alert_no_subtitles_for_tts: "오디오북으로 변환할 자막이 없습니다. 먼저 자막을 불러오거나 영상을 분석해주세요.",
+    tts_card_title_note: "오디오북<br>(노트)",
+    tts_card_title_subtitles: "오디오북<br>(자막 더빙)",
+    btn_reader_mode_title: "영상과 패널을 접고 책처럼 편안하게 읽는 읽기 모드 (단축키: Z)",
     btn_reader_mode: "읽기 모드",
     btn_retranslate_title: "현재 영상의 자막을 1:1 고정밀 싱크 엔진으로 다시 번역합니다",
     btn_retranslate: "자막 재번역",
@@ -105,12 +118,16 @@ const TUBESCHOLAR_I18N = {
     zen_toc_loading: "목차를 생성하고 있습니다...",
 
     // 오디오북 (TTS)
-    tts_card_title: "AI 신경망 오디오북 (edge-tts)",
+    tts_card_title: "오디오북",
     tts_status_ready: "준비 완료",
     tts_status_generating: "생성 중...",
     tts_status_error: "생성 실패",
     tts_status_playing: "재생 중",
+    tts_status_paused: "일시 정지",
     tts_download_title: "MP3 오디오 파일 다운로드",
+    btn_tts_autoscroll_title: "오디오북 재생 시 현재 읽는 본문 위치로 자동 스크롤",
+    tts_autoscroll_on_title: "자동 스크롤이 켜져 있습니다 (오디오북 낭독 위치 추적, 클릭 시 끄기)",
+    tts_autoscroll_off_title: "자동 스크롤이 꺼져 있습니다 (본문 자유 탐색 중, 클릭 시 켜기)",
 
     // 구독 AI 인라인 카드
     paste_card_title: "📋 ChatGPT / Claude 답변 붙여넣기",
@@ -215,7 +232,7 @@ const TUBESCHOLAR_I18N = {
     trans_mini_expand_tooltip: "클릭하여 상세 번역 진행 및 로그 창 열기",
 
     // 독서 팝업 (Reader Popup Modal)
-    reader_mode_badge: "집중 독서 모드",
+    reader_mode_badge: "읽기 모드",
     reader_toc_btn_title: "좌측 목차 패널 열기/닫기",
     reader_print: "🖨️ 인쇄",
     reader_print_title: "인쇄 및 PDF로 저장 (Ctrl+P)",
@@ -311,14 +328,15 @@ const TUBESCHOLAR_I18N = {
     trans_net_error_log: "네트워크 또는 번역 처리 오류: {err}",
 
     // TTS 오디오북 상태
+    tts_loading: "오디오 준비 중...",
     tts_generating: "음성 생성 중...",
     tts_generating_short: "생성 중...",
-    tts_playing_cached: "재생 중 (캐시)",
-    tts_playing_new: "재생 중 (새 생성)",
+    tts_playing_cached: "재생 중",
+    tts_playing_new: "재생 중",
     tts_error: "오류 발생",
 
     // 집중 독서 모드 목차
-    reader_title_default: "학습 노트 집중 독서",
+    reader_title_default: "학습 노트 읽기 모드",
     toc_empty_title: "📑 감지된 제목(Heading)이 없습니다.",
     toc_empty_desc: "노트에 # 또는 ## 제목 태그가 있으면 목차가 자동 생성됩니다.",
 
@@ -413,7 +431,35 @@ const TUBESCHOLAR_I18N = {
     channel_empty: "조회된 영상이 없습니다.",
     local_channel_whisper: "내 로컬 PC 영상 (Groq Whisper 자막)",
     btn_choose_file: "파일 선택",
-    no_file_chosen: "선택된 파일 없음"
+    no_file_chosen: "선택된 파일 없음",
+
+    // 실시간 분석 진행 및 모델 폴백 상태
+    analysis_badge_connected: "🤖 연결 모델: {model}",
+    analysis_badge_fallback: "⚠️ 자동 전환 중: {model}",
+    analysis_status_extracting_yt: "유튜브 영상 정보 및 자막 추출 중...",
+    analysis_status_extracting_local: "로컬 자막 파싱 및 분석 준비 중...",
+    analysis_status_extracting_audio: "영상에서 고압축 음성 트랙(MP3) 추출 중...",
+    analysis_status_regen_prep: "기존 자막 기반으로 학습 노트 재작성 준비 중...",
+    analysis_status_connecting: "{model} 모델 연결 중... 문맥 분석 및 지식 노트를 생성하고 있습니다.{attempt}",
+    analysis_status_switching: "🔄 대체 모델 전환: {model} 모델로 학습 노트를 생성하고 있습니다...{attempt}{cycle}",
+    analysis_status_503_failover: "⚠️ {model} 서버 혼잡(503) 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다...",
+    analysis_status_rate_limit: "⏳ {model} 분당 요청 한도(429) 감지. 2초 후 재시도합니다...",
+    analysis_status_fail_next: "⚠️ {model} 호출 실패. 다음 대체 모델을 시도합니다...",
+    analysis_status_cycle2: "서버 일시 혼잡 지속으로 2차 복구 사이클을 준비 중입니다...",
+    analysis_status_completed: "✅ {model} 분석 완료! 문서 렌더링 중...",
+    analysis_status_audio_connecting: "{model} 음성 분석 중...{attempt}",
+    analysis_status_audio_switching: "🔄 대체 모델 전환: {model} 음성 분석 중...{attempt}{cycle}",
+    analysis_status_audio_completed: "✅ {model} 음성 분석 완료!",
+
+    // 친화적 모델 명칭
+    model_name_gemini_flash_latest: "Gemini 최신 Flash",
+    model_name_gemini_flash_lite_latest: "Gemini 최신 Flash Lite",
+    model_name_gemini_3_8_flash: "Gemini 3.8 Flash",
+    model_name_gemini_3_7_flash: "Gemini 3.7 Flash",
+    model_name_gemini_3_6_flash: "Gemini 3.6 Flash",
+    model_name_gemini_3_5_flash: "Gemini 3.5 Flash",
+    model_name_gemini_3_5_flash_lite: "Gemini 3.5 Flash Lite",
+    model_name_gemini_3_1_flash_lite: "Gemini 3.1 Flash Lite"
   },
 
   en: {
@@ -456,8 +502,8 @@ const TUBESCHOLAR_I18N = {
     ctrl_orig_title: "Original subtitles",
     ctrl_orig_label: "Original",
     ctrl_trans_title: "Translated subtitles",
-    ctrl_bi_title: "Bilingual display",
-    ctrl_bi_label: "Bilingual",
+    ctrl_bi_title: "Display both subtitles",
+    ctrl_bi_label: "Both",
     sync_wrap_title: "Subtitle sync offset (Auto-saved per video)",
     sync_badge_title: "Subtitle sync offset (Click or \\ to reset to 0s)",
     btn_sync_slower_title: "Delay subtitles by 0.2s (Shortcut: [)",
@@ -489,12 +535,25 @@ const TUBESCHOLAR_I18N = {
     note_regenerating: "Gemini is regenerating the study note in {lang}...",
     alert_note_regen_error: "Failed to regenerate study note: {err}",
     alert_no_subs_to_regen: "No subtitle data available to regenerate study note.",
-    btn_edit: "✏️ Edit",
-    btn_preview: "👁️ Preview",
+    btn_edit: "Edit Note",
+    btn_preview: "Preview",
     btn_copy: "Copy",
     btn_download_md: ".md Download",
     btn_audiobook_title: "Listen to this note with high-quality edge-tts neural voice",
     btn_audiobook: "Audiobook",
+    btn_sub_audiobook_title: "Listen to subtitle dubbing audiobook (edge-tts voice)",
+    btn_sub_edit_title: "Edit subtitles directly (fix typos and edit lines)",
+    sub_editor_bar_title: "Subtitle Edit Mode",
+    sub_editor_hint: "Type to edit subtitle lines. (Ctrl+Enter to save)",
+    sub_editor_save: "Save & Apply",
+    sub_editor_cancel: "✕ Cancel",
+    alert_sub_saved: "💾 Subtitle changes saved successfully!",
+    alert_sub_save_error: "Failed to save subtitles: {err}",
+    alert_no_subs_to_edit: "No subtitles found to edit. Please load subtitles or analyze the video first.",
+    confirm_discard_sub_edits: "You have unsaved subtitle edits. Discard changes?",
+    alert_no_subtitles_for_tts: "No subtitles found to convert to audiobook. Please load subtitles or analyze the video first.",
+    tts_card_title_note: "Audiobook<br>(Note)",
+    tts_card_title_subtitles: "Audiobook<br>(Subtitle Dubbing)",
     btn_reader_mode_title: "Distraction-free Reader Mode for reading like a book (Shortcut: Z)",
     btn_reader_mode: "Reader Mode",
     btn_retranslate_title: "Re-translate subtitles with 1:1 high-precision sync engine",
@@ -517,12 +576,16 @@ const TUBESCHOLAR_I18N = {
     zen_toc_loading: "Generating table of contents...",
 
     // Audiobook (TTS)
-    tts_card_title: "AI Neural Audiobook (edge-tts)",
+    tts_card_title: "Audiobook",
     tts_status_ready: "Ready",
     tts_status_generating: "Generating...",
     tts_status_error: "Generation Failed",
     tts_status_playing: "Playing",
+    tts_status_paused: "Paused",
     tts_download_title: "Download MP3 Audio File",
+    btn_tts_autoscroll_title: "Auto-scroll to currently read text during audiobook playback",
+    tts_autoscroll_on_title: "Auto-scroll is ON (tracking audiobook position, click to turn off)",
+    tts_autoscroll_off_title: "Auto-scroll is OFF (free browsing, click to turn on)",
 
     // Subscription AI Paste Card
     paste_card_title: "📋 Paste ChatGPT / Claude Response",
@@ -551,7 +614,7 @@ const TUBESCHOLAR_I18N = {
 
     // Subtitles View & Toolbar
     mode_original: "Original",
-    mode_translated: "Translated",
+    mode_translated: "Trans",
     mode_bilingual: "Both",
     label_trans_prefix: "Trans: ",
     sub_target_ko: "Trans: Korean",
@@ -627,7 +690,7 @@ const TUBESCHOLAR_I18N = {
     trans_mini_expand_tooltip: "Click to expand translation progress & logs",
 
     // Reader Popup Modal
-    reader_mode_badge: "Focused Reader Mode",
+    reader_mode_badge: "Reader Mode",
     reader_toc_btn_title: "Toggle table of contents panel",
     reader_print: "🖨️ Print",
     reader_print_title: "Print and save as PDF (Ctrl+P)",
@@ -723,10 +786,11 @@ const TUBESCHOLAR_I18N = {
     trans_net_error_log: "Network or translation error: {err}",
 
     // TTS Audiobook Status
+    tts_loading: "Preparing audio...",
     tts_generating: "Generating audio...",
     tts_generating_short: "Generating...",
-    tts_playing_cached: "Playing (Cached)",
-    tts_playing_new: "Playing (Newly Generated)",
+    tts_playing_cached: "Playing",
+    tts_playing_new: "Playing",
     tts_error: "Error occurred",
 
     // Focused Reader TOC
@@ -825,7 +889,35 @@ const TUBESCHOLAR_I18N = {
     channel_empty: "No videos found for this channel.",
     local_channel_whisper: "Local PC Video (Groq Whisper Subtitles)",
     btn_choose_file: "Choose File",
-    no_file_chosen: "No file chosen"
+    no_file_chosen: "No file chosen",
+
+    // Real-time analysis progress and model fallback status
+    analysis_badge_connected: "🤖 Connected: {model}",
+    analysis_badge_fallback: "⚠️ Auto-Switching to: {model}",
+    analysis_status_extracting_yt: "Extracting YouTube video info & subtitles...",
+    analysis_status_extracting_local: "Parsing local subtitles & preparing analysis...",
+    analysis_status_extracting_audio: "Extracting compressed audio track (MP3) from video...",
+    analysis_status_regen_prep: "Preparing to regenerate note from existing subtitles...",
+    analysis_status_connecting: "Connecting to {model}... Analyzing context & composing study notes.{attempt}",
+    analysis_status_switching: "🔄 Failover transition: Generating study note with {model}...{attempt}{cycle}",
+    analysis_status_503_failover: "⚠️ {model} high server demand (503) detected. Failing over immediately to next model...",
+    analysis_status_rate_limit: "⏳ {model} rate limit (429) detected. Retrying in 2 seconds...",
+    analysis_status_fail_next: "⚠️ {model} call failed. Trying next candidate model...",
+    analysis_status_cycle2: "High server traffic persists. Preparing secondary recovery cycle...",
+    analysis_status_completed: "✅ {model} analysis complete! Rendering document...",
+    analysis_status_audio_connecting: "Analyzing audio with {model}...{attempt}",
+    analysis_status_audio_switching: "🔄 Failover transition: Analyzing audio with {model}...{attempt}{cycle}",
+    analysis_status_audio_completed: "✅ {model} audio analysis complete!",
+
+    // Friendly Model Names
+    model_name_gemini_flash_latest: "Gemini Flash Latest",
+    model_name_gemini_flash_lite_latest: "Gemini Flash Lite Latest",
+    model_name_gemini_3_8_flash: "Gemini 3.8 Flash",
+    model_name_gemini_3_7_flash: "Gemini 3.7 Flash",
+    model_name_gemini_3_6_flash: "Gemini 3.6 Flash",
+    model_name_gemini_3_5_flash: "Gemini 3.5 Flash",
+    model_name_gemini_3_5_flash_lite: "Gemini 3.5 Flash Lite",
+    model_name_gemini_3_1_flash_lite: "Gemini 3.1 Flash Lite"
   },
 
   ja: {
@@ -868,8 +960,8 @@ const TUBESCHOLAR_I18N = {
     ctrl_orig_title: "原文の字幕",
     ctrl_orig_label: "原文",
     ctrl_trans_title: "翻訳字幕",
-    ctrl_bi_title: "2言語同時表示",
-    ctrl_bi_label: "併記",
+    ctrl_bi_title: "原文・翻訳字幕の両方を表示",
+    ctrl_bi_label: "両方",
     sync_wrap_title: "字幕同期オフセット（動画ごとに自動保存）",
     sync_badge_title: "字幕同期補正値（クリックまたは \\ キーで0秒にリセット）",
     btn_sync_slower_title: "字幕を0.2秒遅く表示 (ショートカット: [ )",
@@ -901,13 +993,26 @@ const TUBESCHOLAR_I18N = {
     note_regenerating: "Geminiが「{lang}」で学習ノートを再作成しています...",
     alert_note_regen_error: "学習ノート再作成エラー: {err}",
     alert_no_subs_to_regen: "学習ノートを再作成するための字幕データがありません。",
-    btn_edit: "✏️ 編集",
-    btn_preview: "👁️ プレビュー",
+    btn_edit: "ノート編集",
+    btn_preview: "プレビュー",
     btn_copy: "コピー",
     btn_download_md: ".md ダウンロード",
     btn_audiobook_title: "edge-tts 高品質ニューラル音声でノートを読み上げます",
     btn_audiobook: "オーディオブック",
-    btn_reader_mode_title: "集中読書モードで本のように快適に読む (ショートカット: Z)",
+    btn_sub_audiobook_title: "字幕吹き替えオーディオブックを再生 (edge-tts音声)",
+    btn_sub_edit_title: "字幕を直接編集 (誤字脱字の修正・編集)",
+    sub_editor_bar_title: "字幕直接編集中",
+    sub_editor_hint: "テキストを入力して字幕を修正してください。(Ctrl+Enterで保存)",
+    sub_editor_save: "保存して適用",
+    sub_editor_cancel: "✕ キャンセル",
+    alert_sub_saved: "💾 字幕の修正内容が正常に保存されました！",
+    alert_sub_save_error: "字幕の保存中にエラーが発生しました: {err}",
+    alert_no_subs_to_edit: "編集可能な字幕データがありません。先に字幕を読み込むか動画を分析してください。",
+    confirm_discard_sub_edits: "編集中の字幕データがあります。保存せずにキャンセルしますか？",
+    alert_no_subtitles_for_tts: "オーディオブックに変換する字幕がありません。先に字幕を読み込むか動画を分析してください。",
+    tts_card_title_note: "オーディオブック<br>(ノート)",
+    tts_card_title_subtitles: "オーディオブック<br>(字幕吹き替え)",
+    btn_reader_mode_title: "読書モードで本のように快適に読む (ショートカット: Z)",
     btn_reader_mode: "読書モード",
     btn_retranslate_title: "高精度同期エンジンで現在の動画の字幕を再翻訳します",
     btn_retranslate: "字幕再翻訳",
@@ -929,12 +1034,16 @@ const TUBESCHOLAR_I18N = {
     zen_toc_loading: "目次を生成しています...",
 
     // オーディオブック (TTS)
-    tts_card_title: "AI神経網オーディオブック (edge-tts)",
+    tts_card_title: "オーディオブック",
     tts_status_ready: "準備完了",
     tts_status_generating: "生成中...",
     tts_status_error: "生成失敗",
     tts_status_playing: "再生中",
+    tts_status_paused: "一時停止",
     tts_download_title: "MP3オーディオファイルをダウンロード",
+    btn_tts_autoscroll_title: "オーディオブック再生中に読み上げ位置へ自動スクロール",
+    tts_autoscroll_on_title: "自動スクロール ON (読み上げ位置追従、クリックでOFF)",
+    tts_autoscroll_off_title: "自動スクロール OFF (自由閲覧中、クリックでON)",
 
     // サブスクAIインライン貼り付けカード
     paste_card_title: "📋 ChatGPT / Claude 回答貼り付け",
@@ -1039,7 +1148,7 @@ const TUBESCHOLAR_I18N = {
     trans_mini_expand_tooltip: "クリックして詳細ログを開く",
 
     // 読書ポップアップ
-    reader_mode_badge: "集中読書モード",
+    reader_mode_badge: "読書モード",
     reader_toc_btn_title: "目次パネルの開閉",
     reader_print: "🖨️ 印刷",
     reader_print_title: "印刷およびPDF保存 (Ctrl+P)",
@@ -1135,14 +1244,15 @@ const TUBESCHOLAR_I18N = {
     trans_net_error_log: "ネットワークまたは翻訳処理エラー: {err}",
 
     // TTS オーディオブック状態
+    tts_loading: "音声準備中...",
     tts_generating: "音声を生成中...",
     tts_generating_short: "生成中...",
-    tts_playing_cached: "再生中 (キャッシュ)",
-    tts_playing_new: "再生中 (新規生成)",
+    tts_playing_cached: "再生中",
+    tts_playing_new: "再生中",
     tts_error: "エラー発生",
 
     // 集中読書モード 目次
-    reader_title_default: "学習ノート集中読書",
+    reader_title_default: "学習ノート読書モード",
     toc_empty_title: "📑 見出しが検出されませんでした。",
     toc_empty_desc: "ノートに # または ## 見出しタグがあると目次が自動生成されます。",
 
@@ -1237,7 +1347,35 @@ const TUBESCHOLAR_I18N = {
     channel_empty: "動画が見つかりませんでした。",
     local_channel_whisper: "ローカルPC動画 (Groq Whisper 字幕)",
     btn_choose_file: "ファイルを選択",
-    no_file_chosen: "選択されたファイルはありません"
+    no_file_chosen: "選択されたファイルはありません",
+
+    // リアルタイム分析進捗およびモデルフェイルオーバー状態
+    analysis_badge_connected: "🤖 接続モデル: {model}",
+    analysis_badge_fallback: "⚠️ 自動切り替え中: {model}",
+    analysis_status_extracting_yt: "YouTube動画情報および字幕を抽出中...",
+    analysis_status_extracting_local: "ローカル字幕のパースおよび分析準備中...",
+    analysis_status_extracting_audio: "動画から音声トラック(MP3)を抽出中...",
+    analysis_status_regen_prep: "既存の字幕を基に学習ノートの再作成を準備中...",
+    analysis_status_connecting: "{model}に接続中... 文脈分析と学習ノートを生成しています。{attempt}",
+    analysis_status_switching: "🔄 代替モデル切り替え: {model}で学習ノートを生成しています...{attempt}{cycle}",
+    analysis_status_503_failover: "⚠️ {model}のサーバー混雑(503)を検知。待機なしで次の代替モデルへ即時切り替えます...",
+    analysis_status_rate_limit: "⏳ {model}のリクエスト制限(429)を検知。2秒後に再試行します...",
+    analysis_status_fail_next: "⚠️ {model}の呼び出しに失敗。次の代替モデルを試行します...",
+    analysis_status_cycle2: "サーバー混雑が継続しているため、2次リカバリサイクルを準備中...",
+    analysis_status_completed: "✅ {model}の分析が完了しました！ドキュメントを描画中...",
+    analysis_status_audio_connecting: "{model}で音声分析中...{attempt}",
+    analysis_status_audio_switching: "🔄 代替モデル切り替え: {model}で音声分析中...{attempt}{cycle}",
+    analysis_status_audio_completed: "✅ {model}の音声分析が完了しました！",
+
+    // フレンドリーモデル名
+    model_name_gemini_flash_latest: "Gemini 最新 Flash",
+    model_name_gemini_flash_lite_latest: "Gemini 最新 Flash Lite",
+    model_name_gemini_3_8_flash: "Gemini 3.8 Flash",
+    model_name_gemini_3_7_flash: "Gemini 3.7 Flash",
+    model_name_gemini_3_6_flash: "Gemini 3.6 Flash",
+    model_name_gemini_3_5_flash: "Gemini 3.5 Flash",
+    model_name_gemini_3_5_flash_lite: "Gemini 3.5 Flash Lite",
+    model_name_gemini_3_1_flash_lite: "Gemini 3.1 Flash Lite"
   }
 };
 

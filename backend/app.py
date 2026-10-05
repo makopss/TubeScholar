@@ -54,16 +54,22 @@ from analyzer import (
     translate_subtitles_gemini,
     translate_subtitles_stream,
     DEFAULT_NOTE_MODEL,
-    DEFAULT_TRANSLATE_MODEL
+    DEFAULT_TRANSLATE_MODEL,
+    get_analysis_state,
+    update_analysis_state
 )
 from storage import (
     save_note, get_note, list_saved_notes, delete_note, update_note,
-    update_note_subtitles, is_safe_note_id, get_cached_subtitles, save_translation_cache
+    update_note_subtitles, is_safe_note_id, get_cached_subtitles, save_translation_cache,
+    clean_ai_citation_artifacts
 )
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
 from stt import transcribe_audio_groq
-from tts import generate_note_audio, list_available_voices, AUDIO_DIR
+from tts import (
+    generate_note_audio, generate_subtitles_audio, list_available_voices, AUDIO_DIR,
+    abbreviate_note_title, get_audiobook_download_filename
+)
 from typing import List, Dict, Any
 import re
 
@@ -195,6 +201,24 @@ class TTSRequest(BaseModel):
     markdown: Optional[str] = ""
     voice: Optional[str] = "injoon"
     speed: Optional[str] = "+0%"
+    title: Optional[str] = None
+
+class SubtitleTTSRequest(BaseModel):
+    video_id: Optional[str] = "temp_video"
+    note_id: Optional[str] = None
+    title: Optional[str] = None
+    mode: Optional[str] = "ko"
+    voice: Optional[str] = "injoon"
+    speed: Optional[str] = "+0%"
+    subtitles: Optional[List[Dict[str, Any]]] = None
+
+class SubtitleSaveRequest(BaseModel):
+    note_id: Optional[str] = None
+    video_id: Optional[str] = None
+    subtitles: List[Dict[str, Any]]
+    target_lang: Optional[str] = DEFAULT_TARGET_LANG
+    source_lang: Optional[str] = None
+    translation_source: Optional[str] = "manual"
 
 @app.get("/api/config")
 def get_config():
@@ -282,6 +306,12 @@ def get_languages():
         "languages": [{"code": k, "name": v} for k, v in TARGET_LANGUAGES.items()],
     }
 
+@app.get("/api/analysis/status")
+def get_analysis_status():
+    """실시간 분석 진행 및 모델 폴백 상태 조회 (프론트엔드 폴링용)"""
+    return get_analysis_state()
+
+
 
 @app.post("/api/prompt")
 def get_prompt_for_ai(req: PromptRequest):
@@ -334,6 +364,7 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
 @app.post("/api/local/analyze")
 def analyze_local_video(req: LocalAnalyzeRequest):
     """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
+    update_analysis_state("processing", event="extracting_local", message="로컬 자막 파싱 및 분석 준비 중...", step=1)
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
     target = normalize_target_lang(req.target_lang)
     note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
@@ -515,6 +546,7 @@ def manual_save_note(req: ManualSaveRequest):
 
 @app.post("/api/analyze")
 def analyze_video(req: AnalyzeRequest):
+    update_analysis_state("processing", event="extracting_yt", message="유튜브 영상 정보 및 자막 추출 중...", step=1)
     video_id = extract_video_id(req.url)
     if not video_id:
         raise HTTPException(status_code=400, detail="올바른 유튜브 영상 URL 또는 Video ID가 아닙니다.")
@@ -576,6 +608,7 @@ def analyze_video(req: AnalyzeRequest):
 @app.post("/api/note/regenerate")
 def regenerate_study_note(req: RegenerateNoteRequest):
     """기존 자막 데이터를 바탕으로 선택된 언어로 Gemini 학습 노트를 즉시 재작성"""
+    update_analysis_state("processing", event="regen_prep", message="기존 자막 기반으로 학습 노트 재작성 준비 중...", step=2)
     if req.note_id and not is_safe_note_id(req.note_id):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     if not req.subtitles:
@@ -731,6 +764,49 @@ def get_subtitle_tracks(video_id: str):
     if not v_id:
         raise HTTPException(status_code=400, detail="올바른 Video ID가 아닙니다.")
     return list_transcript_tracks(v_id)
+ 
+@app.post("/api/subtitles/save")
+def save_subtitles_endpoint(req: SubtitleSaveRequest):
+    """사용자가 직접 수정한 자막(오타 교정, 번역문 수정 등)을 영구 저장합니다."""
+    if not req.subtitles:
+        raise HTTPException(status_code=400, detail="저장할 자막 데이터가 없습니다.")
+
+    target = normalize_target_lang(req.target_lang)
+    lang_meta = {
+        "target_lang": target,
+        "source_lang": req.source_lang,
+        "translation_source": req.translation_source or "manual"
+    }
+
+    # 각 대사 텍스트에 포함되었을 수 있는 AI 인용 마커 정화
+    clean_subs = []
+    for s in req.subtitles:
+        item = dict(s)
+        if "text" in item and item["text"] is not None:
+            item["text"] = clean_ai_citation_artifacts(str(item["text"]))
+        if "ko_text" in item and item["ko_text"] is not None:
+            item["ko_text"] = clean_ai_citation_artifacts(str(item["ko_text"]))
+        clean_subs.append(item)
+
+    saved_note = False
+    if req.note_id:
+        saved_note = update_note_subtitles(req.note_id, clean_subs, lang_meta)
+
+    vid = req.video_id
+    if not vid and req.note_id:
+        n = get_note(req.note_id)
+        if n:
+            vid = n.get("metadata", {}).get("video_id") or n.get("video_id")
+
+    if vid:
+        save_translation_cache(vid, target, clean_subs, req.translation_source or "manual")
+
+    return {
+        "success": True,
+        "saved_note": saved_note,
+        "video_id": vid,
+        "message": "자막이 성공적으로 저장되었습니다."
+    }
 
 @app.post("/api/subtitles/translate-stream")
 async def translate_subtitles_stream_endpoint(req: SubtitlesRequest, request: Request):
@@ -890,10 +966,20 @@ def get_tts_voices(lang: Optional[str] = None):
 async def generate_tts_endpoint(req: TTSRequest):
     """마크다운 노트를 자연스러운 한국어 오디오북 MP3로 생성/캐싱"""
     text = req.markdown or ""
-    if not text.strip() and req.note_id:
+    title = (req.title or "").strip()
+    if req.note_id:
         note = await run_in_threadpool(get_note, req.note_id)
         if note:
-            text = note.get("markdown", "")
+            if not text.strip():
+                text = note.get("markdown", "")
+            if not title:
+                title = note.get("metadata", {}).get("title", "")
+
+    if not title and text:
+        m = re.search(r"^#+\s*(.+)$", text.strip(), re.MULTILINE)
+        if m:
+            title = m.group(1).strip()
+
     if not text.strip():
         raise HTTPException(status_code=400, detail="음성 변환할 노트 내용이 없습니다.")
     
@@ -905,18 +991,76 @@ async def generate_tts_endpoint(req: TTSRequest):
     )
     if not res.get("success"):
         raise HTTPException(status_code=500, detail=res.get("error", "음성 변환 실패"))
+
+    res["short_title"] = abbreviate_note_title(title)
+    res["download_filename"] = get_audiobook_download_filename(title)
+    return res
+
+@app.post("/api/tts/subtitles")
+async def generate_subtitles_tts_endpoint(req: SubtitleTTSRequest):
+    """자막 대사를 자연스러운 더빙 오디오북 MP3로 생성/캐싱"""
+    subs = req.subtitles or []
+    title = (req.title or "").strip()
+    if not subs and req.note_id:
+        note = await run_in_threadpool(get_note, req.note_id)
+        if note:
+            subs = note.get("metadata", {}).get("subtitles", [])
+            if not title:
+                title = note.get("metadata", {}).get("title", "")
+    
+    if not subs:
+        raise HTTPException(status_code=400, detail="음성 변환할 자막 데이터가 없습니다.")
+
+    res = await generate_subtitles_audio(
+        subtitles=subs,
+        video_id=req.video_id or req.note_id or "subtitles",
+        title=title or "자막",
+        mode=req.mode or "ko",
+        voice_key=req.voice or "injoon",
+        speed=req.speed or "+0%"
+    )
+    if not res.get("success"):
+        raise HTTPException(status_code=500, detail=res.get("error", "자막 음성 변환 실패"))
+
+    res["short_title"] = abbreviate_note_title(title or "자막")
+    res["download_filename"] = get_audiobook_download_filename(title or "자막", is_subtitles=True)
     return res
 
 @app.get("/api/tts/audio/{filename}")
-def get_tts_audio_file(filename: str):
-    """생성된 MP3 파일 스트리밍 서빙"""
+def get_tts_audio_file(
+    filename: str,
+    download: Optional[bool] = False,
+    title: Optional[str] = None
+):
+    """생성된 MP3 파일 서빙 (재생 시 inline 스트리밍, 다운로드 시 축약된 노트 제목 파일명 적용)"""
     safe_filename = os.path.basename(filename)
     if not safe_filename or not safe_filename.endswith(".mp3"):
         raise HTTPException(status_code=400, detail="오디오 파일(.mp3)만 접근할 수 있습니다.")
     filepath = os.path.join(AUDIO_DIR, safe_filename)
     if not os.path.isfile(filepath):
         raise HTTPException(status_code=404, detail="오디오 파일을 찾을 수 없습니다.")
-    return FileResponse(filepath, media_type="audio/mpeg", filename=safe_filename)
+
+    # 다운로드 요청이거나 명시적 제목 파라미터가 있는 경우
+    if download or title:
+        resolved_title = (title or "").strip()
+        is_sub = safe_filename.startswith("sub_")
+        if not resolved_title:
+            # 파일명 앞부분에서 note_id 추출하여 보관함 제목 탐색
+            for v in list_available_voices():
+                v_token = f"_{v['key']}_"
+                if v_token in safe_filename:
+                    possible_nid = safe_filename.split(v_token)[0]
+                    if possible_nid.startswith("sub_"):
+                        possible_nid = possible_nid[4:]
+                    note = get_note(possible_nid)
+                    if note:
+                        resolved_title = note.get("metadata", {}).get("title", "")
+                    break
+        dl_filename = get_audiobook_download_filename(resolved_title or ("자막" if is_sub else "학습노트"), is_subtitles=is_sub)
+        return FileResponse(filepath, media_type="audio/mpeg", filename=dl_filename)
+
+    # 기본 <audio> 태그 스트리밍 재생용 (Content-Disposition: inline)
+    return FileResponse(filepath, media_type="audio/mpeg")
 
 @app.post("/api/system/browser-close")
 def browser_close_signal():
@@ -964,7 +1108,7 @@ if os.path.exists(FRONTEND_DIR):
     def serve_favicon():
         fav_path = os.path.join(FRONTEND_DIR, "favicon.ico")
         if os.path.exists(fav_path):
-            return FileResponse(fav_path, media_type="image/x-icon")
+            return FileResponse(fav_path, media_type="image/x-icon", headers={"Cache-Control": "no-cache, must-revalidate"})
         return JSONResponse(status_code=404, content={"detail": "Not found"})
 
 if __name__ == "__main__":

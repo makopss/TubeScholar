@@ -143,9 +143,27 @@ def save_library(data: Dict[str, Any]):
                 pass
         _atomic_write_json(LIBRARY_FILE, data)
 
+def clean_ai_citation_artifacts(text: str) -> str:
+    """ChatGPT, Claude 등의 웹 복사 시 유입되는 :chatgpt-content-reference{...}, 【...†source】 등 내부 인용 잔여물 자동 정화"""
+    if not text:
+        return ""
+    # 1. ChatGPT content reference: :chatgpt-content-reference{index="0"}
+    text = re.sub(r':?[a-zA-Z0-9_-]*chatgpt-[a-zA-Z0-9_-]+\{[^}]*\}', '', text)
+    text = re.sub(r':[a-zA-Z0-9_-]+-reference\{[^}]*\}', '', text)
+    # 2. ChatGPT 웹 검색 인용 표기: 【4:0†source】, 【0†source】, 【turn0search0】
+    text = re.sub(r'【[^】]*?(?:source|turn\d+|search|출처)[^】]*?】', '', text)
+    # 3. 인용 태그: [cite: 1], [citation: 1] 등
+    text = re.sub(r'\[cite(?:ation)?:\s*[^\]]+\]', '', text, flags=re.IGNORECASE)
+    # 4. 문장부호 앞 공백 및 줄 끝 공백 정리
+    text = re.sub(r'[ \t]+([.,!?])', r'\1', text)
+    text = re.sub(r'[ \t]+\n', '\n', text)
+    text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
+    return text.strip()
+
 def strip_frontmatter(content: str) -> str:
-    """마크다운 시작 부분의 YAML Frontmatter(--- ... ---)를 제거하여 순수 마크다운만 반환합니다."""
-    return re.sub(r'^---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]*', '', content.strip())
+    """마크다운 시작 부분의 YAML Frontmatter(--- ... ---)를 제거하고 AI 인용 찌꺼기를 정화합니다."""
+    text = re.sub(r'^---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]*', '', (content or '').strip())
+    return clean_ai_citation_artifacts(text)
 
 def _normalize_subs(subtitles: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
     """저장 직전 자막 시간 겹침 제거 (유튜브/로컬 STT 등 모든 경로 공통 적용)."""

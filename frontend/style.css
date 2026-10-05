@@ -910,6 +910,7 @@ body.theme-light .toc-item.active {
   box-sizing: border-box !important;
   white-space: nowrap !important;
   flex-shrink: 0 !important;
+  overflow: hidden !important;
   border-radius: 0.5rem !important; /* rounded-lg */
   transition: all 0.15s ease-in-out !important;
 }
@@ -944,5 +945,78 @@ body.theme-light .toc-item.active {
   z-index: 50 !important;
 }
 
+/* ============================================================ */
+/* 🎧 오디오북(TTS) 실시간 낭독 위치 하이라이트 스타일 */
+/* ============================================================ */
+.ts-tts-highlight {
+  position: relative !important;
+  background-color: rgba(147, 51, 234, 0.18) !important; /* purple-900/30 */
+  border-left: 4px solid #a855f7 !important; /* purple-500 */
+  border-radius: 0 0.5rem 0.5rem 0 !important;
+  padding-left: 0.75rem !important;
+  padding-top: 0.2rem !important;
+  padding-bottom: 0.2rem !important;
+  box-shadow: 0 2px 10px rgba(168, 85, 247, 0.15) !important;
+  transition: background-color 0.25s ease, border-color 0.25s ease, box-shadow 0.25s ease !important;
+}
 
+body.theme-light .ts-tts-highlight {
+  background-color: rgba(147, 51, 234, 0.12) !important;
+  border-left: 4px solid #9333ea !important;
+  box-shadow: 0 2px 8px rgba(147, 51, 234, 0.12) !important;
+}
 
+body.theme-sepia .ts-tts-highlight {
+  background-color: rgba(168, 85, 247, 0.15) !important;
+  border-left: 4px solid #7e22ce !important;
+  box-shadow: 0 2px 8px rgba(126, 34, 206, 0.12) !important;
+}
+
+/* 🎧 자막 더빙 오디오북 실시간 낭독 위치 하이라이트 스타일 */
+.subtitle-row.sub-tts-active {
+  background-color: rgba(147, 51, 234, 0.25) !important;
+  border-color: #a855f7 !important;
+  box-shadow: 0 0 15px rgba(168, 85, 247, 0.3) !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+
+body.theme-light .subtitle-row.sub-tts-active {
+  background-color: rgba(147, 51, 234, 0.15) !important;
+  border-color: #9333ea !important;
+  box-shadow: 0 0 12px rgba(147, 51, 234, 0.2) !important;
+}
+
+/* ============================================================ */
+/* ✏️ 자막 직접 수정 모드 (Subtitle Edit Mode) 전용 스타일 */
+/* ============================================================ */
+.sub-edit-input {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+  font-family: inherit;
+  line-height: 1.5;
+}
+
+.sub-edit-input:focus {
+  outline: none;
+}
+
+body.theme-light .sub-edit-input {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+body.theme-light .sub-edit-input:focus {
+  border-color: #f59e0b !important;
+  box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.2) !important;
+}
+
+body.theme-sepia .sub-edit-input {
+  background-color: #fbf5e8 !important;
+  color: #3d3023 !important;
+  border-color: #d6c7af !important;
+}
+
+body.theme-sepia .sub-edit-input:focus {
+  border-color: #b45309 !important;
+  box-shadow: 0 0 0 2px rgba(180, 83, 9, 0.2) !important;
+}

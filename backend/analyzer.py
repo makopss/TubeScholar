@@ -18,31 +18,83 @@ warnings.filterwarnings("ignore", message=".*Automatic function calling.*")
 warnings.filterwarnings("ignore", message=".*Direct use of automatic function calling.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="google.genai.*")
 
-# 1) 학습 노트 심층 생성용 모델 (최신 Flash 모델 최우선, Lite 모델은 후순위 폴백)
-DEFAULT_NOTE_MODEL = "gemini-3.8-flash"
+# 1) 학습 노트 심층 생성용 모델 (1순위 일반 Flash Latest, 2순위 일반 Flash Lite Latest, 3순위부터 특정 버전 모델)
+DEFAULT_NOTE_MODEL = "gemini-flash-latest"
 FALLBACK_NOTE_MODELS = [
+    "gemini-flash-latest",
+    "gemini-flash-lite-latest",
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-flash-lite-latest",
 ]
 DEFAULT_GEMINI_MODEL = DEFAULT_NOTE_MODEL
 FALLBACK_GEMINI_MODELS = FALLBACK_NOTE_MODELS
 
-# 2) 한국어 및 다국어 자막 번역 전담 모델 (현재 Lite 우선순위 유지 + 후순위에 최신 Flash 모델 추가)
-DEFAULT_TRANSLATE_MODEL = "gemini-3.5-flash-lite"
+# 2) 한국어 및 다국어 자막 번역 전담 모델 (Lite 우선: 일반 Lite Latest -> 개별 Lite -> 최신 Flash 순환)
+DEFAULT_TRANSLATE_MODEL = "gemini-flash-lite-latest"
 FALLBACK_TRANSLATE_MODELS = [
+    "gemini-flash-lite-latest",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-flash-lite-latest",
+    "gemini-flash-latest",
     "gemini-3.8-flash",
     "gemini-3.7-flash",
     "gemini-3.6-flash",
     "gemini-3.5-flash",
 ]
+
+# 3) 실시간 분석 진행 및 모델 폴백 상태 추적기 (단일 데스크톱 클라이언트용)
+_current_analysis_state = {
+    "status": "idle",       # "idle", "processing", "fallback", "completed", "error"
+    "model": "",
+    "event": "",
+    "attempt": 1,
+    "cycle": 1,
+    "message": "",
+    "step": 1,
+    "timestamp": 0.0
+}
+_analysis_state_lock = threading.Lock()
+
+def get_analysis_state() -> Dict[str, Any]:
+    with _analysis_state_lock:
+        return dict(_current_analysis_state)
+
+def update_analysis_state(
+    status: str,
+    model: str = "",
+    event: str = "",
+    attempt: int = 1,
+    cycle: int = 1,
+    message: str = "",
+    step: int = 2
+):
+    with _analysis_state_lock:
+        _current_analysis_state["status"] = status
+        _current_analysis_state["model"] = model
+        _current_analysis_state["event"] = event
+        _current_analysis_state["attempt"] = attempt
+        _current_analysis_state["cycle"] = cycle
+        _current_analysis_state["message"] = message
+        _current_analysis_state["step"] = step
+        _current_analysis_state["timestamp"] = time.time()
+
+def format_model_label(model: str) -> str:
+    labels = {
+        "gemini-flash-latest": "Gemini 최신 Flash",
+        "gemini-flash-lite-latest": "Gemini 최신 Flash Lite",
+        "gemini-3.8-flash": "Gemini 3.8 Flash",
+        "gemini-3.7-flash": "Gemini 3.7 Flash",
+        "gemini-3.6-flash": "Gemini 3.6 Flash",
+        "gemini-3.5-flash": "Gemini 3.5 Flash",
+        "gemini-3.5-flash-lite": "Gemini 3.5 Flash Lite",
+        "gemini-3.1-flash-lite": "Gemini 3.1 Flash Lite",
+    }
+    return labels.get(model, model)
+
 
 # 3) 자막 번역 RPM(분당 요청수) 엄격 제어 설정
 # Gemini Free Tier (15 RPM) 기준, 5.0초 간격 보장 시 분당 최대 12회(20% 안전 버퍼)로 429 에러 원천 차단
@@ -124,7 +176,11 @@ SYSTEM_PROMPT = """당신은 세계 최고 수준의 지식 아키텍트(Knowled
 ### [핵심 분석 원칙 3: 촘촘한 타임라인 전수 분석 및 Deep Dive]
 - 타임스탬프는 반드시 `[MM:SS]` 또는 `[HH:MM:SS]` 형식으로 소제목에 포함하십시오. (클릭 시 영상 이동 연동)
 - 30분 이상 영상은 최소 10~15개 이상의 주요 전환점별로 촘촘히 나누어 영상 전체 분량을 누락 없이 분석하십시오.
-- 각 구간마다 화자가 짧게 언급하고 지나간 개념, 원리, 인물, 역사적 배경은 `> 💡 지식 보충 (Deep Dive)` 박스로 상세히 보충하십시오.
+---
+
+### [핵심 분석 원칙 4: 출처 및 인용 마커 배제 (Clean Prose Rule)]
+- 웹 검색이나 지식 참조 시 발생하는 내부 인용 태그(`:chatgpt-content-reference{...}`, `【...†source】`, `[cite: ...]`)나 각주 번호는 마크다운에 일절 포함하지 마십시오.
+- 모든 서술은 기호나 인용 태그 없이 문맥 속에 자연스럽게 녹아든 유려한 표준 마크다운 문장으로만 작성하십시오.
 
 ---
 
@@ -678,11 +734,18 @@ def generate_study_note_gemini(
     # 일시적 과부하(503) 및 트래픽 스파이크 극복을 위해 최대 2개 라운드(Safety Cycle) 실행
     for cycle in range(1, 3):
         for target_model in models_to_try:
-            # 각 모델당 최대 2회 시도 (스파이크 발생 시 2.5초 대기 후 즉시 재시도)
+            model_lbl = format_model_label(target_model)
             for attempt in range(1, 3):
                 try:
                     attempt_str = f" (재시도 {attempt}/2)" if attempt > 1 else ""
-                    cycle_str = f" [2차 복구 사이클]" if cycle > 1 else ""
+                    cycle_str = f" [2차 복구]" if cycle > 1 else ""
+                    if target_model != models_to_try[0] or cycle > 1:
+                        status_msg = f"🔄 대체 모델 전환: {model_lbl} 모델로 학습 노트를 생성하고 있습니다...{attempt_str}{cycle_str}"
+                        update_analysis_state("fallback", model=target_model, event="switching", attempt=attempt, cycle=cycle, message=status_msg, step=2)
+                    else:
+                        status_msg = f"{model_lbl} 연결 중... 문맥 분석 및 지식 노트를 생성하고 있습니다.{attempt_str}"
+                        update_analysis_state("processing", model=target_model, event="connecting", attempt=attempt, cycle=cycle, message=status_msg, step=2)
+
                     print(f"[*] Gemini ({target_name}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
                     response = client.models.generate_content(
                         model=target_model,
@@ -693,6 +756,7 @@ def generate_study_note_gemini(
                         )
                     )
                     print(f"[*] Gemini 학습 노트 생성 완료! (사용 모델: {target_model})")
+                    update_analysis_state("completed", model=target_model, event="completed", message=f"✅ {model_lbl} 분석 완료! 문서 렌더링 중...", step=3)
                     return {
                         "success": True,
                         "markdown": response.text,
@@ -701,26 +765,41 @@ def generate_study_note_gemini(
                     }
                 except Exception as e:
                     last_error = str(e)
-                    is_overloaded = any(kw in last_error for kw in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"])
-                    is_retryable = is_overloaded or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
+                    is_503 = any(kw in last_error for kw in ["503", "UNAVAILABLE", "high demand", "Overloaded"])
+                    is_rate_limit = any(kw in last_error for kw in ["429", "RESOURCE_EXHAUSTED"])
+                    is_retryable = is_503 or is_rate_limit or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
                     
                     if not is_retryable:
                         # 복구 불가능한 에러(예: 잘못된 API 키 등)인 경우 즉시 종료
+                        update_analysis_state("error", model=target_model, event="error", message=f"Gemini 오류 발생: {last_error[:100]}", step=2)
                         return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
 
-                    if is_overloaded and attempt < 2:
-                        print(f"[!] {target_model} 일시적 과부하(503/429) 감지. 2.5초 대기 후 동일 모델로 재시도합니다...")
-                        time.sleep(2.5)
+                    if is_503:
+                        # [Fast-Failover] 503 서버 혼잡(high demand)은 클러스터 과부하이므로 동일 모델 대기(2.5s) 없이 즉시 다음 모델로 초고속 전환
+                        fail_msg = f"⚠️ {model_lbl} 서버 혼잡(503) 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다..."
+                        print(f"[!] {target_model} 503 서버 과부하 감지 -> 대기 없이 다음 대체 모델로 즉시 전환")
+                        update_analysis_state("fallback", model=target_model, event="503_failover", message=fail_msg, step=2)
+                        break
+
+                    if is_rate_limit and attempt < 2:
+                        rate_msg = f"⏳ {model_lbl} 분당 요청 한도(429) 감지. 2초 후 재시도합니다..."
+                        print(f"[!] {target_model} 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
+                        update_analysis_state("processing", model=target_model, event="rate_limit", attempt=attempt, message=rate_msg, step=2)
+                        time.sleep(2.0)
                         continue
                     else:
+                        fail_msg = f"⚠️ {model_lbl} 호출 실패. 다음 대체 모델을 시도합니다..."
                         print(f"[!] {target_model} 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
-                        time.sleep(1.0)
+                        update_analysis_state("fallback", model=target_model, event="fail_next", message=fail_msg, step=2)
+                        time.sleep(0.3)
                         break
 
         if cycle == 1:
-            print("[!] 1차 모델 순회 중 일시적 서버 과부하가 지속되어 4.0초 후 2차 복구 사이클을 진행합니다...")
-            time.sleep(4.0)
+            print("[!] 1차 모델 순회 중 일시적 서버 과부하가 지속되어 2.0초 후 2차 복구 사이클을 진행합니다...")
+            update_analysis_state("fallback", event="cycle2", message="서버 일시 혼잡 지속으로 2차 복구 사이클을 준비 중입니다...", step=2)
+            time.sleep(2.0)
 
+    update_analysis_state("error", event="error", message=f"Gemini 생성 실패: {last_error}", step=2)
     return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
 
 def generate_study_note_from_audio(
@@ -794,10 +873,16 @@ Please listen carefully to the attached audio, analyze it, and output clearly di
     # 일시적 과부하(503) 및 트래픽 스파이크 극복을 위해 최대 2개 라운드(Safety Cycle) 실행
     for cycle in range(1, 3):
         for target_model in models_to_try:
+            model_lbl = format_model_label(target_model)
             for attempt in range(1, 3):
                 try:
                     attempt_str = f" (재시도 {attempt}/2)" if attempt > 1 else ""
-                    cycle_str = f" [2차 복구 사이클]" if cycle > 1 else ""
+                    cycle_str = f" [2차 복구]" if cycle > 1 else ""
+                    if target_model != models_to_try[0] or cycle > 1:
+                        update_analysis_state("fallback", model=target_model, event="audio_switching", attempt=attempt, cycle=cycle, message=f"🔄 대체 모델 전환: {model_lbl} 음성 분석 중...{attempt_str}{cycle_str}", step=2)
+                    else:
+                        update_analysis_state("processing", model=target_model, event="audio_connecting", attempt=attempt, message=f"{model_lbl} 음성 분석 중...{attempt_str}", step=2)
+
                     print(f"[*] Gemini 음성 분석 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
                     response = client.models.generate_content(
                         model=target_model,
@@ -809,22 +894,31 @@ Please listen carefully to the attached audio, analyze it, and output clearly di
                     )
                     markdown_output = response.text
                     used_model = target_model
+                    update_analysis_state("completed", model=target_model, event="audio_completed", message=f"✅ {model_lbl} 음성 분석 완료!", step=3)
                     break
                 except Exception as e:
                     last_error = str(e)
-                    is_overloaded = any(kw in last_error for kw in ["503", "UNAVAILABLE", "429", "RESOURCE_EXHAUSTED"])
-                    is_retryable = is_overloaded or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
+                    is_503 = any(kw in last_error for kw in ["503", "UNAVAILABLE", "high demand", "Overloaded"])
+                    is_rate_limit = any(kw in last_error for kw in ["429", "RESOURCE_EXHAUSTED"])
+                    is_retryable = is_503 or is_rate_limit or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
                     
                     if not is_retryable:
                         break
 
-                    if is_overloaded and attempt < 2:
-                        print(f"[!] {target_model} 음성 일시적 과부하(503/429) 감지. 2.5초 대기 후 동일 모델로 재시도합니다...")
-                        time.sleep(2.5)
+                    if is_503:
+                        print(f"[!] {target_model} 음성 503 서버 과부하 감지 -> 대기 없이 다음 대체 모델로 즉시 전환")
+                        update_analysis_state("fallback", model=target_model, event="503_failover", message=f"⚠️ {model_lbl} 서버 혼잡(503) 감지. 즉시 대체 모델로 전환합니다...", step=2)
+                        break
+
+                    if is_rate_limit and attempt < 2:
+                        print(f"[!] {target_model} 음성 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
+                        update_analysis_state("processing", model=target_model, event="rate_limit", attempt=attempt, message=f"⏳ {model_lbl} 요청 한도(429) 감지. 2초 후 재시도합니다...", step=2)
+                        time.sleep(2.0)
                         continue
                     else:
                         print(f"[!] {target_model} 음성 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
-                        time.sleep(1.0)
+                        update_analysis_state("fallback", model=target_model, event="fail_next", message=f"⚠️ {model_lbl} 호출 실패. 다음 대체 모델을 시도합니다...", step=2)
+                        time.sleep(0.3)
                         break
 
             if markdown_output:
@@ -832,8 +926,8 @@ Please listen carefully to the attached audio, analyze it, and output clearly di
         if markdown_output:
             break
         if cycle == 1:
-            print("[!] 음성 분석 1차 모델 순회 중 과부하 지속, 4.0초 후 2차 복구 사이클을 진행합니다...")
-            time.sleep(4.0)
+            print("[!] 음성 분석 1차 모델 순회 중 과부하 지속, 2.0초 후 2차 복구 사이클을 진행합니다...")
+            time.sleep(2.0)
 
     # 임시 업로드 파일 정리
     try:
@@ -1275,11 +1369,20 @@ def generate_clipboard_prompt(
     target_name = language_name(target_lang)
     header_role = f"[System Role & Instructions - Language: {target_name}]" if target_lang != "ko" else "[역할 및 지침]"
     header_task = "[Task Request]" if target_lang != "ko" else "[요청 작업]"
+    citation_guard = """==================================================
+⚠️ [출처 및 인용 마커 절대 금지 규칙 (Strict Clean Formatting Rule)]
+1. 웹 검색(Web Browsing) 또는 캔버스(Canvas) 연동 시 자동 생성되는 내부 참조 태그(예: :chatgpt-content-reference{...}, :...-reference{...}, 【...†source】, [cite: ...])나 인용 각주 번호를 본문 및 표에 절대 포함하지 마십시오.
+2. 모든 내용은 출처 기호나 내부 태그 없이, 문맥 속에 자연스럽게 녹아든 완결된 유려한 표준 마크다운 줄글로만 작성하십시오.
+""" if target_lang == "ko" else """==================================================
+⚠️ [Strict Clean Formatting Rule]
+1. DO NOT output any internal citation markers, search reference tags (e.g. :chatgpt-content-reference{...}, :...-reference{...}, 【...†source】, [cite: ...]), or numeric bracket footnotes in the text or tables.
+2. All information must be written in clean, fluent markdown prose without raw citation tags.
+"""
 
     return f"""{header_role}
 {system_prompt}
 
-==================================================
+{citation_guard}==================================================
 {header_task}
 {user_prompt}
 """

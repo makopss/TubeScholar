@@ -28,6 +28,8 @@ let isEditing = false;
 let isLocalVideo = false;
 let currentSubtitles = [];
 let currentSubLang = "original"; // 'original', 'ko', 'bilingual'
+let isSubtitleEditMode = false;
+let backupSubtitles = null;
 let currentActiveView = "note"; // 'note' or 'subtitles'
 let isCcEnabled = true;
 let currentFontScale = 100; // 70% ~ 160%
@@ -49,6 +51,18 @@ let currentTranslationTrack = null;
 let currentTracks = [];
 let supportedTargetLanguages = [];
 let isSubtitleAutoScroll = localStorage.getItem("tubescholar_sub_autoscroll") !== "false";
+let isTtsAutoScroll = localStorage.getItem("tubescholar_tts_autoscroll") !== "false";
+let currentTtsCues = [];
+let activeTtsCueIndex = -1;
+let highlightedTtsEl = null;
+let highlightedTtsReaderEl = null;
+let ttsNoteCueMap = null;
+let ttsReaderCueMap = null;
+let currentTtsType = "note"; // "note" | "subtitles"
+let ttsSessionCache = { note: null, subtitles: null };
+let subTtsCueMap = {}; // sub_index -> audio_start
+let highlightedSubTtsIdx = -1;
+const SUB_TTS_HIGHLIGHT_CLASSES = ["sub-tts-active", "border-purple-400", "bg-purple-950/70", "ring-1", "ring-purple-400/60"];
 const clientTranslationCache = new Map(); // key: `${vidKey}_${targetLang}` -> { subtitles, source }
 
 const FALLBACK_TARGET_LANGUAGES = [
@@ -87,9 +101,26 @@ window.onYouTubeIframeAPIReady = function() {
   console.log("YouTube IFrame API Ready");
 };
 
+function cleanAiCitationArtifacts(text) {
+  if (!text) return "";
+  // 1. ChatGPT content reference: :chatgpt-content-reference{index="0"}
+  text = text.replace(/:?[a-zA-Z0-9_-]*chatgpt-[a-zA-Z0-9_-]+\{[^}]*\}/g, '');
+  text = text.replace(/:[a-zA-Z0-9_-]+-reference\{[^}]*\}/g, '');
+  // 2. ChatGPT 웹 검색 인용 표기: 【4:0†source】, 【0†source】, 【turn0search0】
+  text = text.replace(/【[^】]*?(?:source|turn\d+|search|출처)[^】]*?】/g, '');
+  // 3. 인용 태그: [cite: 1], [citation: 1] 등
+  text = text.replace(/\[cite(?:ation)?:\s*[^\]]+\]/gi, '');
+  // 4. 문장부호 앞 공백 및 줄 끝 공백 정리
+  text = text.replace(/[ \t]+([.,!?])/g, '$1');
+  text = text.replace(/[ \t]+\n/g, '\n');
+  text = text.replace(/[ \t]+$/gm, '');
+  return text.trim();
+}
+
 function stripFrontmatter(md) {
   if (!md) return "";
-  return md.replace(/^---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]*/, '').trim();
+  const cleaned = md.replace(/^---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]*/, '').trim();
+  return cleanAiCitationArtifacts(cleaned);
 }
 
 function escapeHtmlStr(str) {
@@ -285,7 +316,7 @@ function renderMarkdownNote(markdownText, engineInfo = null, noteId = null) {
   // 집중 독서 팝업 모달이 켜져 있을 경우 본문, 목차 및 문서 제목 자동 갱신
   if (typeof isReaderPopupOpen !== 'undefined' && isReaderPopupOpen) {
     const docTitle = document.getElementById("reader-popup-title");
-    if (docTitle) docTitle.textContent = currentVideoInfo?.title || (typeof t === "function" ? t("reader_title_default") : "학습 노트 집중 독서");
+    if (docTitle) docTitle.textContent = currentVideoInfo?.title || (typeof t === "function" ? t("reader_title_default") : "학습 노트 읽기 모드");
     const popupArticle = document.getElementById("reader-popup-article");
     if (popupArticle) popupArticle.innerHTML = processedHtml;
     if (typeof generateReaderPopupToc === 'function') generateReaderPopupToc();
@@ -304,6 +335,21 @@ function renderMarkdownNote(markdownText, engineInfo = null, noteId = null) {
   });
 
   updateRegenerateNoteButtonState();
+
+  // 노트 갱신 시 TTS 낭독 매핑 초기화
+  ttsNoteCueMap = null;
+  ttsReaderCueMap = null;
+  if (highlightedTtsEl) {
+    highlightedTtsEl.classList.remove("ts-tts-highlight");
+    highlightedTtsEl = null;
+  }
+  if (highlightedTtsReaderEl) {
+    highlightedTtsReaderEl.classList.remove("ts-tts-highlight");
+    highlightedTtsReaderEl = null;
+  }
+  if (activeTtsCueIndex >= 0) {
+    applyTtsCueHighlight(activeTtsCueIndex, false);
+  }
 }
 
 function displayVideoMetadata(info) {
@@ -348,6 +394,8 @@ function switchMediaContext(videoId, noteId) {
   }
   currentVideoId = videoId || null;
   currentNoteId = noteId || null;
+  ttsSessionCache.note = null;
+  ttsSessionCache.subtitles = null;
   refreshSyncBadge(true);
   return mediaGeneration;
 }
@@ -363,6 +411,17 @@ function localMediaKey(file, fallbackName) {
 }
 
 function setSubtitles(subs) {
+  if (isSubtitleEditMode) {
+    isSubtitleEditMode = false;
+    backupSubtitles = null;
+    const editBtn = document.getElementById("toggle-sub-edit-btn");
+    const editorBar = document.getElementById("sub-editor-bar");
+    if (editBtn) {
+      editBtn.classList.remove("bg-amber-500/40", "border-amber-400", "text-amber-200");
+      editBtn.classList.add("bg-amber-600/20", "text-amber-300");
+    }
+    if (editorBar) editorBar.classList.add("hidden");
+  }
   currentSubtitles = subs || [];
   activeSubtitleIndex = -1;
   const badge = document.getElementById("subtitle-badge");
@@ -574,6 +633,14 @@ function updateLangLabels() {
   if (koLabel) koLabel.textContent = typeof t === "function" ? t("mode_translated") : "번역문";
   if (biLabel) {
     biLabel.textContent = typeof t === "function" ? t("mode_bilingual") : "모두";
+  }
+  const ctrlBi = document.getElementById("ctrl-sub-bi-label");
+  if (ctrlBi) {
+    ctrlBi.textContent = typeof t === "function" ? t("ctrl_bi_label") : "모두";
+  }
+  const ctrlBiBtn = document.getElementById("ctrl-sub-lang-bi");
+  if (ctrlBiBtn) {
+    ctrlBiBtn.title = typeof t === "function" ? t("ctrl_bi_title") : "원문 및 번역문 모두 표시";
   }
   if (ctrlKo) {
     const short = typeof t === "function" ? t("ctrl_trans_btn_label") : null;
@@ -1586,7 +1653,160 @@ function escapeHtml(str) {
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function flushSubtitleEditInputs() {
+  if (!isSubtitleEditMode) return;
+  const container = document.getElementById("subtitle-list");
+  if (!container) return;
+  container.querySelectorAll("textarea.sub-edit-input").forEach(ta => {
+    const idx = Number(ta.dataset.idx);
+    const field = ta.dataset.field;
+    if (currentSubtitles && currentSubtitles[idx] && field) {
+      currentSubtitles[idx][field] = ta.value;
+    }
+  });
+}
+
+function toggleSubtitleEdit(forceState) {
+  const targetState = typeof forceState === 'boolean' ? forceState : !isSubtitleEditMode;
+
+  if (!targetState && isSubtitleEditMode) {
+    flushSubtitleEditInputs();
+    const hasChanges = backupSubtitles && JSON.stringify(currentSubtitles) !== JSON.stringify(backupSubtitles);
+    if (hasChanges) {
+      const confirmDiscard = confirm(typeof t === "function" ? t("confirm_discard_sub_edits") : "수정 중인 자막 내용이 있습니다. 저장하지 않고 취소하시겠습니까?");
+      if (!confirmDiscard) return;
+    }
+    cancelEditedSubtitles();
+    return;
+  }
+
+  if (!currentSubtitles || currentSubtitles.length === 0) {
+    alert(typeof t === "function" ? t("alert_no_subs_to_edit") : "수정할 자막 데이터가 없습니다. 먼저 자막을 불러오거나 영상을 분석해주세요.");
+    return;
+  }
+
+  isSubtitleEditMode = true;
+  backupSubtitles = JSON.parse(JSON.stringify(currentSubtitles));
+
+  const editBtn = document.getElementById("toggle-sub-edit-btn");
+  const editorBar = document.getElementById("sub-editor-bar");
+
+  if (editBtn) {
+    editBtn.classList.add("bg-amber-500/40", "border-amber-400", "text-amber-200");
+    editBtn.classList.remove("bg-amber-600/20", "text-amber-300");
+  }
+  if (editorBar) editorBar.classList.remove("hidden");
+
+  const searchInput = document.getElementById("subtitle-search-input");
+  renderSubtitlesList(searchInput ? searchInput.value : "");
+}
+
+function cancelEditedSubtitles() {
+  if (backupSubtitles) {
+    currentSubtitles = backupSubtitles;
+    backupSubtitles = null;
+  }
+  isSubtitleEditMode = false;
+
+  const editBtn = document.getElementById("toggle-sub-edit-btn");
+  const editorBar = document.getElementById("sub-editor-bar");
+
+  if (editBtn) {
+    editBtn.classList.remove("bg-amber-500/40", "border-amber-400", "text-amber-200");
+    editBtn.classList.add("bg-amber-600/20", "text-amber-300");
+  }
+  if (editorBar) editorBar.classList.add("hidden");
+
+  const searchInput = document.getElementById("subtitle-search-input");
+  renderSubtitlesList(searchInput ? searchInput.value : "");
+}
+
+async function saveEditedSubtitles() {
+  if (!currentSubtitles || currentSubtitles.length === 0) return;
+
+  const saveBtn = document.getElementById("save-sub-edit-btn");
+  let origBtnHtml = "";
+  if (saveBtn) {
+    origBtnHtml = saveBtn.innerHTML;
+    saveBtn.disabled = true;
+    saveBtn.innerHTML = `<span>⏳</span><span>저장 중...</span>`;
+  }
+
+  flushSubtitleEditInputs();
+
+  // 대사 내용의 AI 인용 표기 정리
+  currentSubtitles.forEach(sub => {
+    if (sub.text) sub.text = cleanAiCitationArtifacts(sub.text);
+    if (sub.ko_text) sub.ko_text = cleanAiCitationArtifacts(sub.ko_text);
+  });
+
+  try {
+    const vid = currentVideoInfo ? (currentVideoInfo.video_id || currentVideoId) : (currentVideoId || null);
+    const payload = {
+      note_id: currentNoteId || null,
+      video_id: vid || null,
+      subtitles: currentSubtitles,
+      target_lang: currentTargetLang || "ko",
+      source_lang: currentSourceLang || null,
+      translation_source: currentTranslationSource || "manual"
+    };
+
+    const res = await fetch("/api/subtitles/save", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "자막 저장 실패");
+    }
+
+    if (currentNoteId) {
+      clientTranslationCache.set(`${currentNoteId}_${currentTargetLang}`, {
+        subtitles: currentSubtitles,
+        translation_source: "manual",
+        target_lang: currentTargetLang
+      });
+    }
+    if (vid) {
+      clientTranslationCache.set(`${vid}_${currentTargetLang}`, {
+        subtitles: currentSubtitles,
+        translation_source: "manual",
+        target_lang: currentTargetLang
+      });
+    }
+
+    ttsSessionCache.subtitles = null;
+    backupSubtitles = null;
+    isSubtitleEditMode = false;
+
+    const editBtn = document.getElementById("toggle-sub-edit-btn");
+    const editorBar = document.getElementById("sub-editor-bar");
+    if (editBtn) {
+      editBtn.classList.remove("bg-amber-500/40", "border-amber-400", "text-amber-200");
+      editBtn.classList.add("bg-amber-600/20", "text-amber-300");
+    }
+    if (editorBar) editorBar.classList.add("hidden");
+
+    const searchInput = document.getElementById("subtitle-search-input");
+    renderSubtitlesList(searchInput ? searchInput.value : "");
+    loadLibrary();
+
+    alert(typeof t === "function" ? t("alert_sub_saved") : "💾 자막 수정 사항이 성공적으로 저장되었습니다!");
+  } catch (err) {
+    console.error("자막 저장 오류:", err);
+    alert(typeof t === "function" ? t("alert_sub_save_error", { err: err.message }) : ("자막 저장 실패: " + err.message));
+  } finally {
+    if (saveBtn) {
+      saveBtn.disabled = false;
+      saveBtn.innerHTML = origBtnHtml || `<span>💾</span><span>${typeof t === "function" ? t("sub_editor_save") : "저장 및 적용"}</span>`;
+    }
+  }
+}
+
 function renderSubtitlesList(filterKeyword = "") {
+  flushSubtitleEditInputs();
   const container = document.getElementById("subtitle-list");
   if (!container) return;
   
@@ -1611,7 +1831,7 @@ function renderSubtitlesList(filterKeyword = "") {
 
   const hasKo = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
   let noticeHtml = "";
-  if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !hasKo && !isSameLanguage) {
+  if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !hasKo && !isSameLanguage && !isSubtitleEditMode) {
     const noticeTitle = typeof t === "function" ? t("sub_notice_title", { lang: targetName }) : `${targetName} 번역이 아직 생성되지 않았습니다.`;
     const noticeDesc = typeof t === "function" ? t("sub_notice_desc", { lang: targetName }) : `Gemini AI로 번역을 요청하면 ${targetName} 자막을 확인할 수 있습니다.`;
     const noticeBtnText = typeof t === "function" ? t("sub_notice_btn", { lang: targetName }) : `⚡ ${targetName} 번역 요청`;
@@ -1646,37 +1866,102 @@ function renderSubtitlesList(filterKeyword = "") {
     matchedCount++;
 
     let displayTextHtml = "";
-    if (currentSubLang === "ko") {
-      if (koText) {
-        displayTextHtml = `<div class="text-slate-100 text-xs leading-relaxed">${escapeHtml(koText)}</div>`;
-      } else {
-        displayTextHtml = `<div class="text-slate-300 text-xs leading-relaxed italic">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans not-italic bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">${waitingSimpleBadge}</span></div>`;
-      }
-    } else if (currentSubLang === "bilingual") {
-      if (koText) {
+    if (isSubtitleEditMode) {
+      if (currentSubLang === "ko") {
         displayTextHtml = `
-          <div class="text-sky-300 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(koText)}</div>
-          <div class="text-slate-400 text-[11px] leading-relaxed">${escapeHtml(origText)}</div>
+          <div class="w-full">
+            <textarea 
+              class="sub-edit-input w-full bg-slate-900/90 border border-amber-500/50 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/50 rounded-lg px-2.5 py-1.5 text-xs text-white leading-relaxed resize-y transition shadow-inner font-sans min-h-[34px]"
+              rows="1"
+              data-idx="${subIdx}"
+              data-field="ko_text"
+              placeholder="번역 대사 수정..."
+            >${escapeHtml(koText || origText)}</textarea>
+          </div>
+        `;
+      } else if (currentSubLang === "bilingual") {
+        displayTextHtml = `
+          <div class="w-full space-y-1.5">
+            <div>
+              <div class="text-[10px] text-sky-400 font-semibold mb-0.5 flex items-center justify-between">
+                <span>번역문 (${targetName})</span>
+              </div>
+              <textarea 
+                class="sub-edit-input w-full bg-slate-900/90 border border-sky-500/50 focus:border-sky-400 focus:ring-1 focus:ring-sky-400/50 rounded-lg px-2.5 py-1.5 text-xs text-sky-100 leading-relaxed resize-y transition shadow-inner font-sans min-h-[34px]"
+                rows="1"
+                data-idx="${subIdx}"
+                data-field="ko_text"
+                placeholder="번역문 수정..."
+              >${escapeHtml(koText)}</textarea>
+            </div>
+            <div>
+              <div class="text-[10px] text-slate-400 font-semibold mb-0.5 flex items-center justify-between">
+                <span>원문 자막</span>
+              </div>
+              <textarea 
+                class="sub-edit-input w-full bg-slate-900/60 border border-slate-700 focus:border-slate-500 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 leading-relaxed resize-y transition font-sans min-h-[34px]"
+                rows="1"
+                data-idx="${subIdx}"
+                data-field="text"
+                placeholder="원문 수정..."
+              >${escapeHtml(origText)}</textarea>
+            </div>
+          </div>
         `;
       } else {
         displayTextHtml = `
-          <div class="text-slate-200 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans font-normal bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">${waitingTargetBadge}</span></div>
+          <div class="w-full">
+            <textarea 
+              class="sub-edit-input w-full bg-slate-900/90 border border-amber-500/50 focus:border-amber-400 focus:ring-1 focus:ring-amber-400/50 rounded-lg px-2.5 py-1.5 text-xs text-white leading-relaxed resize-y transition shadow-inner font-sans min-h-[34px]"
+              rows="1"
+              data-idx="${subIdx}"
+              data-field="text"
+              placeholder="원문 대사 수정..."
+            >${escapeHtml(origText)}</textarea>
+          </div>
         `;
       }
     } else {
-      displayTextHtml = `<div class="text-slate-100 text-xs leading-relaxed">${escapeHtml(origText)}</div>`;
+      if (currentSubLang === "ko") {
+        if (koText) {
+          displayTextHtml = `<div class="text-slate-100 text-xs leading-relaxed">${escapeHtml(koText)}</div>`;
+        } else {
+          displayTextHtml = `<div class="text-slate-300 text-xs leading-relaxed italic">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans not-italic bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">${waitingSimpleBadge}</span></div>`;
+        }
+      } else if (currentSubLang === "bilingual") {
+        if (koText) {
+          displayTextHtml = `
+            <div class="text-sky-300 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(koText)}</div>
+            <div class="text-slate-400 text-[11px] leading-relaxed">${escapeHtml(origText)}</div>
+          `;
+        } else {
+          displayTextHtml = `
+            <div class="text-slate-200 font-semibold text-xs leading-relaxed mb-1">${escapeHtml(origText)} <span class="text-[10px] text-amber-400/90 ml-1 font-sans font-normal bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">${waitingTargetBadge}</span></div>
+          `;
+        }
+      } else {
+        displayTextHtml = `<div class="text-slate-100 text-xs leading-relaxed">${escapeHtml(origText)}</div>`;
+      }
     }
+
+    const rowClass = isSubtitleEditMode
+      ? "subtitle-row p-2.5 rounded-xl bg-slate-900/80 border border-amber-500/30 transition flex items-start space-x-3 group"
+      : "subtitle-row p-2.5 rounded-xl bg-slate-900/60 hover:bg-slate-800/90 border border-slate-800 hover:border-sky-500/50 cursor-pointer transition flex items-start space-x-3 group";
+
+    const timeBtnClass = isSubtitleEditMode
+      ? "sub-time-btn flex-shrink-0 px-2 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500 text-sky-300 hover:text-white font-mono text-[11px] font-bold transition flex items-center space-x-1 cursor-pointer"
+      : "sub-time-btn flex-shrink-0 px-2 py-1 rounded-lg bg-sky-500/10 group-hover:bg-sky-500 text-sky-400 group-hover:text-white font-mono text-[11px] font-bold transition flex items-center space-x-1";
 
     const jumpTooltip = typeof t === "function" ? t("sub_jump_tooltip", { time: timeStr }) : `클릭하여 ${timeStr} 구간으로 이동`;
 
     html += `
       <div 
-        class="subtitle-row p-2.5 rounded-xl bg-slate-900/60 hover:bg-slate-800/90 border border-slate-800 hover:border-sky-500/50 cursor-pointer transition flex items-start space-x-3 group"
+        class="${rowClass}"
         data-seconds="${secs}"
         data-idx="${subIdx}"
-        title="${jumpTooltip}"
+        title="${isSubtitleEditMode ? '' : jumpTooltip}"
       >
-        <button type="button" class="flex-shrink-0 px-2 py-1 rounded-lg bg-sky-500/10 group-hover:bg-sky-500 text-sky-400 group-hover:text-white font-mono text-[11px] font-bold transition flex items-center space-x-1">
+        <button type="button" class="${timeBtnClass}" title="${jumpTooltip}">
           <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
           <span>${timeStr}</span>
         </button>
@@ -1710,18 +1995,58 @@ function renderSubtitlesList(filterKeyword = "") {
   highlightedRowIdx = -1;
   if (activeSubtitleIndex >= 0) applyRowHighlight(activeSubtitleIndex, false);
 
+  // 수정 모드인 경우 텍스트에어리어 높이 자동 조절 및 이벤트 등록
+  if (isSubtitleEditMode) {
+    container.querySelectorAll("textarea.sub-edit-input").forEach(ta => {
+      ta.style.height = "auto";
+      ta.style.height = Math.max(34, ta.scrollHeight) + "px";
+
+      ta.addEventListener("input", () => {
+        ta.style.height = "auto";
+        ta.style.height = Math.max(34, ta.scrollHeight) + "px";
+        const idx = Number(ta.dataset.idx);
+        const field = ta.dataset.field;
+        if (currentSubtitles && currentSubtitles[idx] && field) {
+          currentSubtitles[idx][field] = ta.value;
+        }
+      });
+
+      ta.addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          saveEditedSubtitles();
+        }
+      });
+    });
+  }
+
   // 클릭 이벤트는 컨테이너에 한 번만 위임 바인딩
   if (!container.dataset.clickBound) {
     container.dataset.clickBound = "1";
     container.addEventListener("click", (e) => {
       const row = e.target.closest(".subtitle-row");
       if (!row || !container.contains(row)) return;
+      if (isSubtitleEditMode) {
+        if (e.target.closest("input, textarea")) return;
+        if (!e.target.closest(".sub-time-btn")) return;
+      }
+      const subIdx = Number(row.dataset.idx);
+      if (currentTtsType === "subtitles") {
+        const audioEl = document.getElementById("tts-audio-element");
+        if (audioEl && audioEl.src && subTtsCueMap && subTtsCueMap[subIdx] !== undefined) {
+          audioEl.currentTime = subTtsCueMap[subIdx];
+          if (audioEl.paused) audioEl.play().catch(() => {});
+        }
+      }
       seekVideo(parseFloat(row.dataset.seconds));
     });
   }
 }
 
 function switchViewTab(tabName) {
+  if (isSubtitleEditMode) {
+    flushSubtitleEditInputs();
+  }
   currentActiveView = tabName;
   const tabNoteBtn = document.getElementById("view-tab-note");
   const tabSubsBtn = document.getElementById("view-tab-subtitles");
@@ -1755,6 +2080,9 @@ function switchViewTab(tabName) {
     noteContainer.classList.remove("hidden");
     subsToolbar.classList.add("hidden");
     noteToolbar.classList.remove("hidden");
+    if (isTtsAutoScroll && activeTtsCueIndex >= 0) {
+      setTimeout(() => scrollToActiveTtsCue(activeTtsCueIndex), 100);
+    }
   }
 }
 
@@ -1901,6 +2229,91 @@ function setAnalysisStep(stepNum) {
   }
 }
 
+let analysisStatusTimer = null;
+
+function getFriendlyModelName(model) {
+  if (!model) return "";
+  const key = "model_name_" + model.replace(/[\.\-]/g, "_");
+  if (typeof t === "function") {
+    const translated = t(key);
+    if (translated && translated !== key) return translated;
+  }
+  return model;
+}
+
+function getI18nAnalysisMessage(data) {
+  if (!data) return "";
+  const modelName = getFriendlyModelName(data.model);
+  const lang = typeof currentUiLang !== "undefined" ? currentUiLang : "ko";
+  const attemptStr = (data.attempt && data.attempt > 1) 
+    ? (lang === "en" ? ` (Retry ${data.attempt}/2)` : (lang === "ja" ? ` (再試行 ${data.attempt}/2)` : ` (재시도 ${data.attempt}/2)`))
+    : "";
+  const cycleStr = (data.cycle && data.cycle > 1)
+    ? (lang === "en" ? " [Cycle 2]" : (lang === "ja" ? " [2次リカバリ]" : " [2차 복구]"))
+    : "";
+
+  if (data.event && typeof t === "function") {
+    const key = "analysis_status_" + data.event;
+    const translated = t(key, { model: modelName, attempt: attemptStr, cycle: cycleStr });
+    if (translated && translated !== key) return translated;
+  }
+  return data.message || "";
+}
+
+function startAnalysisStatusPolling() {
+  stopAnalysisStatusPolling();
+  analysisStatusTimer = setInterval(async () => {
+    try {
+      const res = await fetch("/api/analysis/status");
+      if (!res.ok) return;
+      const data = await res.json();
+      if (!data || data.status === "idle") return;
+
+      const loadingDesc = document.getElementById("loading-desc");
+      const statusBadge = document.getElementById("analysis-model-status-badge");
+
+      const displayMessage = getI18nAnalysisMessage(data);
+      if (displayMessage && loadingDesc) {
+        loadingDesc.textContent = displayMessage;
+      }
+      if (data.step && typeof setAnalysisStep === "function") {
+        setAnalysisStep(data.step);
+      }
+      if (statusBadge) {
+        if (data.model) {
+          statusBadge.classList.remove("hidden");
+          const modelName = getFriendlyModelName(data.model);
+          if (data.status === "fallback") {
+            statusBadge.className = "mb-2 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse";
+            statusBadge.textContent = typeof t === "function" 
+              ? t("analysis_badge_fallback", { model: modelName }) 
+              : `⚠️ 자동 전환 중: ${modelName}`;
+          } else {
+            statusBadge.className = "mb-2 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30";
+            statusBadge.textContent = typeof t === "function" 
+              ? t("analysis_badge_connected", { model: modelName }) 
+              : `🤖 연결 모델: ${modelName}`;
+          }
+        }
+      }
+    } catch (e) {
+      // Background status polling error ignore
+    }
+  }, 350);
+}
+
+function stopAnalysisStatusPolling() {
+  if (analysisStatusTimer) {
+    clearInterval(analysisStatusTimer);
+    analysisStatusTimer = null;
+  }
+  const statusBadge = document.getElementById("analysis-model-status-badge");
+  if (statusBadge) {
+    statusBadge.classList.add("hidden");
+    statusBadge.textContent = "";
+  }
+}
+
 function setAnalysisRunning(isRunning) {
   const loadingOverlay = document.getElementById("loading-overlay");
   const headerCancelBtn = document.getElementById("header-cancel-btn");
@@ -1909,8 +2322,10 @@ function setAnalysisRunning(isRunning) {
   if (loadingOverlay) {
     if (isRunning) {
       loadingOverlay.classList.remove("hidden");
+      startAnalysisStatusPolling();
     } else {
       loadingOverlay.classList.add("hidden");
+      stopAnalysisStatusPolling();
     }
   }
 
@@ -1958,7 +2373,10 @@ async function runGeminiAnalysis(url) {
   const stepTimer = setTimeout(() => {
     setAnalysisStep(2);
     loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step2_title") : "2단계: Gemini가 문맥 오류 교정 및 Deep Dive 생성 중...";
-    loadingDesc.textContent = typeof t === "function" ? t("loading_yt_step2_desc") : "초대형 컨텍스트 윈도우로 전체 흐름을 정밀 분석하고 지식 해설을 작성합니다.";
+    const statusBadge = document.getElementById("analysis-model-status-badge");
+    if (!statusBadge || statusBadge.classList.contains("hidden")) {
+      loadingDesc.textContent = typeof t === "function" ? t("loading_yt_step2_desc") : "초대형 컨텍스트 윈도우로 전체 흐름을 정밀 분석하고 지식 해설을 작성합니다.";
+    }
   }, 1200);
 
   try {
@@ -2283,7 +2701,7 @@ function toggleEditor(forceState) {
     markdownContainer.classList.add("hidden");
     if (editBtnText) editBtnText.textContent = "👁️";
     if (toggleEditBtn) {
-      toggleEditBtn.title = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
+      toggleEditBtn.title = typeof t === "function" ? t("btn_preview") : "미리보기";
       toggleEditBtn.setAttribute("data-i18n-title", "btn_preview");
     }
     document.getElementById("note-editor-textarea").value = currentMarkdown;
@@ -2293,7 +2711,7 @@ function toggleEditor(forceState) {
     markdownContainer.classList.remove("hidden");
     if (editBtnText) editBtnText.textContent = "✏️";
     if (toggleEditBtn) {
-      toggleEditBtn.title = typeof t === "function" ? t("btn_edit") : "✏️ 편집";
+      toggleEditBtn.title = typeof t === "function" ? t("btn_edit") : "노트 편집";
       toggleEditBtn.setAttribute("data-i18n-title", "btn_edit");
     }
   }
@@ -2372,6 +2790,8 @@ document.addEventListener("DOMContentLoaded", () => {
     loadTtsVoices();
     refreshSyncBadge(true);
     updateSubtitleAutoScrollUI();
+    updateTtsAutoScrollUI();
+    updateTtsCardUI();
     updateLocalFileInputLabels();
     checkConfig();
     updateEngineTag();
@@ -2388,9 +2808,20 @@ document.addEventListener("DOMContentLoaded", () => {
       }
     }
 
+    const editBtnText = document.getElementById("edit-btn-text");
+    const toggleEditBtn = document.getElementById("toggle-edit-btn");
     if (isEditing) {
-      const editBtnText = document.getElementById("edit-btn-text");
-      if (editBtnText) editBtnText.textContent = typeof t === "function" ? t("btn_preview") : "👁️ 미리보기";
+      if (editBtnText) editBtnText.textContent = "👁️";
+      if (toggleEditBtn) {
+        toggleEditBtn.title = typeof t === "function" ? t("btn_preview") : "미리보기";
+        toggleEditBtn.setAttribute("data-i18n-title", "btn_preview");
+      }
+    } else {
+      if (editBtnText) editBtnText.textContent = "✏️";
+      if (toggleEditBtn) {
+        toggleEditBtn.title = typeof t === "function" ? t("btn_edit") : "노트 편집";
+        toggleEditBtn.setAttribute("data-i18n-title", "btn_edit");
+      }
     }
     const searchInput = document.getElementById("subtitle-search-input");
     renderSubtitlesList(searchInput ? searchInput.value : "");
@@ -2449,7 +2880,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 편집 내용 저장 버튼
   document.getElementById("save-edited-note-btn").addEventListener("click", async () => {
-    const editedMd = document.getElementById("note-editor-textarea").value;
+    const editedMd = cleanAiCitationArtifacts(document.getElementById("note-editor-textarea").value);
     if (!currentNoteId) {
       // 새 임의 저장
       currentNoteId = `note_${Date.now()}`;
@@ -2465,6 +2896,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!res.ok) throw new Error("저장 실패");
 
       renderMarkdownNote(editedMd, { key: "note_status_modified" }, currentNoteId);
+      ttsSessionCache.note = null;
       toggleEditor(false);
       loadLibrary();
       alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
@@ -2499,11 +2931,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // 인라인 붙여넣기 적용 버튼
   document.getElementById("inline-paste-apply-btn").addEventListener("click", async () => {
     const url = document.getElementById("url-input").value.trim() || (currentVideoInfo ? currentVideoInfo.url : "");
-    const rawMd = document.getElementById("inline-paste-textarea").value.trim();
-    if (!rawMd) {
+    const rawInput = document.getElementById("inline-paste-textarea").value.trim();
+    if (!rawInput) {
       alert(typeof t === "function" ? t("alert_paste_empty") : "붙여넣을 마크다운 내용을 입력해 주세요.");
       return;
     }
+    const rawMd = cleanAiCitationArtifacts(rawInput);
 
     try {
       const res = await fetch("/api/manual-save", {
@@ -2538,6 +2971,25 @@ document.addEventListener("DOMContentLoaded", () => {
       alert(typeof t === "function" ? t("alert_error_prefix", { err: e.message }) : ("오류: " + e.message));
     }
   });
+
+  // 구독 AI 붙여넣기 및 에디터 입력 시 실시간 인용 태그 정화
+  const inlinePasteTextarea = document.getElementById("inline-paste-textarea");
+  if (inlinePasteTextarea) {
+    inlinePasteTextarea.addEventListener("paste", () => {
+      setTimeout(() => {
+        inlinePasteTextarea.value = cleanAiCitationArtifacts(inlinePasteTextarea.value);
+      }, 20);
+    });
+  }
+
+  const noteEditorTextarea = document.getElementById("note-editor-textarea");
+  if (noteEditorTextarea) {
+    noteEditorTextarea.addEventListener("paste", () => {
+      setTimeout(() => {
+        noteEditorTextarea.value = cleanAiCitationArtifacts(noteEditorTextarea.value);
+      }, 20);
+    });
+  }
 
   // 로컬 비디오 모달 열기/닫기 및 커스텀 파일 인풋 라벨 동기화
   function updateLocalFileInputLabels() {
@@ -2712,7 +3164,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const stepTimer = setTimeout(() => {
       setAnalysisStep(2);
       loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: Groq Whisper 자막 & Gemini 지식 노트 생성 중...";
-      loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.";
+      const statusBadge = document.getElementById("analysis-model-status-badge");
+      if (!statusBadge || statusBadge.classList.contains("hidden")) {
+        loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.";
+      }
     }, 2200);
 
     const formData = new FormData();
@@ -3048,6 +3503,20 @@ document.addEventListener("DOMContentLoaded", () => {
     subtitleSearchTimer = setTimeout(() => renderSubtitlesList(value), 200);
   });
 
+  // 자막 직접 수정 모드 토글, 저장, 취소
+  const toggleSubEditBtn = document.getElementById("toggle-sub-edit-btn");
+  if (toggleSubEditBtn) {
+    toggleSubEditBtn.addEventListener("click", () => toggleSubtitleEdit());
+  }
+  const saveSubEditBtn = document.getElementById("save-sub-edit-btn");
+  if (saveSubEditBtn) {
+    saveSubEditBtn.addEventListener("click", () => saveEditedSubtitles());
+  }
+  const cancelSubEditBtn = document.getElementById("cancel-sub-edit-btn");
+  if (cancelSubEditBtn) {
+    cancelSubEditBtn.addEventListener("click", () => cancelEditedSubtitles());
+  }
+
   // 자막 파일 다운로드 및 재번역
   const retransBtn = document.getElementById("retranslate-sub-btn");
   if (retransBtn) {
@@ -3162,6 +3631,64 @@ document.addEventListener("DOMContentLoaded", () => {
 // ============================================================
 let isGeneratingAudio = false;
 
+function getNoteTitleForAudiobook() {
+  if (currentVideoInfo && currentVideoInfo.title && currentVideoInfo.title.trim()) {
+    return currentVideoInfo.title.trim();
+  }
+  const vt = document.getElementById("video-title");
+  if (vt && vt.textContent && vt.textContent.trim()) {
+    return vt.textContent.trim();
+  }
+  if (currentMarkdown) {
+    const lines = currentMarkdown.split("\n");
+    for (const l of lines) {
+      const trimmed = l.trim();
+      if (trimmed.startsWith("# ") || trimmed.startsWith("## ")) {
+        return trimmed.replace(/^#+\s*/, "").trim();
+      }
+    }
+  }
+  return "";
+}
+
+function updateTtsCardUI() {
+  const titleText = document.getElementById("tts-card-title-text");
+  const badge = document.getElementById("tts-status-badge");
+  const audio = document.getElementById("tts-audio-element");
+
+  if (titleText) {
+    if (currentTtsType === "subtitles") {
+      titleText.innerHTML = typeof t === "function" ? t("tts_card_title_subtitles") : "오디오북<br>(자막 더빙)";
+      titleText.setAttribute("data-i18n-html", "tts_card_title_subtitles");
+      titleText.removeAttribute("data-i18n");
+    } else {
+      titleText.innerHTML = typeof t === "function" ? t("tts_card_title_note") : "오디오북<br>(노트)";
+      titleText.setAttribute("data-i18n-html", "tts_card_title_note");
+      titleText.removeAttribute("data-i18n");
+    }
+  }
+
+  if (badge) {
+    if (isGeneratingAudio) {
+      badge.textContent = typeof t === "function" ? t("tts_loading") || "오디오 준비 중..." : "오디오 준비 중...";
+      badge.className = "px-2 py-0.5 bg-sky-500/20 text-sky-300 rounded text-[10px] font-mono animate-pulse flex-shrink-0";
+      badge.setAttribute("data-i18n", "tts_loading");
+    } else if (audio && !audio.paused && !audio.ended) {
+      badge.textContent = typeof t === "function" ? t("tts_status_playing") : "재생 중";
+      badge.className = "px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-mono flex-shrink-0";
+      badge.setAttribute("data-i18n", "tts_status_playing");
+    } else if (audio && audio.paused && audio.currentTime > 0 && !audio.ended) {
+      badge.textContent = typeof t === "function" ? t("tts_status_paused") || "일시 정지" : "일시 정지";
+      badge.className = "px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded text-[10px] font-mono flex-shrink-0";
+      badge.setAttribute("data-i18n", "tts_status_paused");
+    } else if (audio && audio.src) {
+      badge.textContent = typeof t === "function" ? t("tts_status_ready") : "준비 완료";
+      badge.className = "px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-mono flex-shrink-0";
+      badge.setAttribute("data-i18n", "tts_status_ready");
+    }
+  }
+}
+
 async function triggerAudiobookPlay() {
   if (isGeneratingAudio) return;
 
@@ -3171,21 +3698,56 @@ async function triggerAudiobookPlay() {
     return;
   }
 
-  const btn = document.getElementById("tts-audiobook-btn");
-  const icon = document.getElementById("tts-btn-icon");
-  const text = document.getElementById("tts-btn-text");
-  const spinner = document.getElementById("tts-btn-spinner");
+  const voiceSelect = document.getElementById("tts-voice-select");
+  const speedSelect = document.getElementById("tts-speed-select");
+  const selectedVoice = voiceSelect ? voiceSelect.value : "injoon";
+  const noteTitle = getNoteTitleForAudiobook();
+  const noteKey = currentNoteId || "current_note";
+
   const card = document.getElementById("tts-player-card");
   const badge = document.getElementById("tts-status-badge");
   const audio = document.getElementById("tts-audio-element");
   const dlBtn = document.getElementById("tts-download-btn");
-  const voiceSelect = document.getElementById("tts-voice-select");
-  const speedSelect = document.getElementById("tts-speed-select");
+
+  // 1. 이미 이번 세션에 로드된 노트 오디오북이 있고 음성 변경이 없다면 0ms 즉시 재생
+  if (ttsSessionCache.note && ttsSessionCache.note.noteId === noteKey && ttsSessionCache.note.voice === selectedVoice) {
+    currentTtsType = "note";
+    updateTtsCardUI();
+    currentTtsCues = ttsSessionCache.note.cues || [];
+    ttsNoteCueMap = null;
+    ttsReaderCueMap = null;
+    clearTtsCueHighlight();
+
+    if (card) card.classList.remove("hidden");
+    if (audio) {
+      if (audio.src !== ttsSessionCache.note.audioUrl) {
+        audio.src = ttsSessionCache.note.audioUrl;
+      }
+      const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
+      audio.playbackRate = curSpeed;
+      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
+    }
+    if (dlBtn) {
+      dlBtn.href = `/api/tts/audio/${ttsSessionCache.note.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.note.shortTitle || noteTitle || "학습노트")}`;
+      dlBtn.download = ttsSessionCache.note.downloadFilename || `${noteTitle || "학습노트"}_오디오북.mp3`;
+      dlBtn.classList.remove("hidden");
+    }
+    return;
+  }
+
+  currentTtsType = "note";
+  updateTtsCardUI();
+  clearSubTtsHighlight();
+
+  const btn = document.getElementById("tts-audiobook-btn");
+  const icon = document.getElementById("tts-btn-icon");
+  const text = document.getElementById("tts-btn-text");
+  const spinner = document.getElementById("tts-btn-spinner");
 
   isGeneratingAudio = true;
   if (btn) {
     btn.disabled = true;
-    btn.title = typeof t === "function" ? t("tts_status_generating") : "음성 생성 중...";
+    btn.title = typeof t === "function" ? t("tts_loading") || "오디오 준비 중..." : "오디오 준비 중...";
   }
   if (icon) icon.classList.add("hidden");
   if (spinner) spinner.classList.remove("hidden");
@@ -3193,11 +3755,9 @@ async function triggerAudiobookPlay() {
 
   if (card) card.classList.remove("hidden");
   if (badge) {
-    badge.textContent = typeof t === "function" ? t("tts_generating") : "음성 생성 중...";
-    badge.className = "px-2 py-0.5 bg-amber-500/20 text-amber-300 rounded text-[10px] font-mono animate-pulse";
+    badge.textContent = typeof t === "function" ? t("tts_loading") || "오디오 준비 중..." : "오디오 준비 중...";
+    badge.className = "px-2 py-0.5 bg-sky-500/20 text-sky-300 rounded text-[10px] font-mono animate-pulse";
   }
-
-  const selectedVoice = voiceSelect ? voiceSelect.value : "injoon";
 
   try {
     const res = await fetch("/api/tts/generate", {
@@ -3207,7 +3767,8 @@ async function triggerAudiobookPlay() {
         note_id: currentNoteId || "current_note",
         markdown: mdText,
         voice: selectedVoice,
-        speed: "+0%"
+        speed: "+0%",
+        title: noteTitle
       })
     });
 
@@ -3219,22 +3780,40 @@ async function triggerAudiobookPlay() {
     const data = await res.json();
     const audioUrl = `/api/tts/audio/${data.filename}`;
 
+    currentTtsCues = data.cues || [];
+    ttsNoteCueMap = null;
+    ttsReaderCueMap = null;
+    clearTtsCueHighlight();
+
+    ttsSessionCache.note = {
+      noteId: noteKey,
+      audioUrl: audioUrl,
+      cues: data.cues || [],
+      shortTitle: data.short_title || noteTitle || "학습노트",
+      filename: data.filename,
+      downloadFilename: data.download_filename,
+      voice: selectedVoice
+    };
+
     if (audio) {
       audio.src = audioUrl;
       const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
       audio.playbackRate = curSpeed;
-      audio.play().catch(e => console.log("자동 재생 대기:", e));
+      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
     }
 
     if (dlBtn) {
-      dlBtn.href = audioUrl;
-      dlBtn.download = `${currentVideoInfo?.title || 'study_note'}_audiobook.mp3`;
+      const shortTitle = data.short_title || noteTitle || "학습노트";
+      const downloadFilename = data.download_filename || `${shortTitle}_오디오북.mp3`;
+      dlBtn.href = `/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
+      dlBtn.download = downloadFilename;
       dlBtn.classList.remove("hidden");
     }
 
     if (badge) {
-      badge.textContent = data.cached ? (typeof t === "function" ? t("tts_playing_cached") : "재생 중 (캐시)") : (typeof t === "function" ? t("tts_playing_new") : "재생 중 (새 생성)");
+      badge.textContent = data.cached ? (typeof t === "function" ? t("tts_playing_cached") : "재생 중") : (typeof t === "function" ? t("tts_playing_new") : "재생 중");
       badge.className = "px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-mono";
+      badge.setAttribute("data-i18n", "tts_status_playing");
     }
   } catch (err) {
     alert(typeof t === "function" ? t("alert_tts_error", { err: err.message }) : ("오디오북 음성 생성 실패: " + err.message));
@@ -3254,9 +3833,440 @@ async function triggerAudiobookPlay() {
   }
 }
 
+async function triggerSubtitleAudiobookPlay() {
+  if (isGeneratingAudio) return;
+
+  if (!currentSubtitles || currentSubtitles.length === 0) {
+    alert(typeof t === "function" ? t("alert_no_subtitles_for_tts") : "오디오북으로 변환할 자막이 없습니다. 먼저 자막을 불러오거나 영상을 분석해주세요.");
+    return;
+  }
+
+  const voiceSelect = document.getElementById("tts-voice-select");
+  const speedSelect = document.getElementById("tts-speed-select");
+
+  // 자막 모드와 언어에 따른 기본 음성 자동 제안
+  let selectedVoice = voiceSelect ? voiceSelect.value : "injoon";
+  if (currentSubLang === "original" && currentSourceLang && !currentSourceLang.startsWith("ko")) {
+    if (currentSourceLang.startsWith("en") && !["christopher", "jenny", "guy"].includes(selectedVoice)) {
+      selectedVoice = "christopher";
+      if (voiceSelect) voiceSelect.value = "christopher";
+    } else if (currentSourceLang.startsWith("ja") && !["keita", "nanami"].includes(selectedVoice)) {
+      selectedVoice = "keita";
+      if (voiceSelect) voiceSelect.value = "keita";
+    }
+  } else if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !["injoon", "sunhi", "hyunsu"].includes(selectedVoice)) {
+    selectedVoice = "injoon";
+    if (voiceSelect) voiceSelect.value = "injoon";
+  }
+
+  const vidKey = currentVideoId || currentNoteId || "temp_video";
+  const subTitle = getNoteTitleForAudiobook() || (currentVideoInfo ? currentVideoInfo.title : "자막");
+
+  const card = document.getElementById("tts-player-card");
+  const badge = document.getElementById("tts-status-badge");
+  const audio = document.getElementById("tts-audio-element");
+  const dlBtn = document.getElementById("tts-download-btn");
+
+  // 1. 이미 이번 세션에 로드된 자막 더빙 오디오북이 있고 음성 변경이 없다면 0ms 즉시 재생
+  if (ttsSessionCache.subtitles && ttsSessionCache.subtitles.videoId === vidKey && ttsSessionCache.subtitles.voice === selectedVoice) {
+    currentTtsType = "subtitles";
+    updateTtsCardUI();
+    currentTtsCues = ttsSessionCache.subtitles.cues || [];
+    subTtsCueMap = ttsSessionCache.subtitles.subCueMap || {};
+    clearSubTtsHighlight();
+
+    if (card) card.classList.remove("hidden");
+    if (audio) {
+      if (audio.src !== ttsSessionCache.subtitles.audioUrl) {
+        audio.src = ttsSessionCache.subtitles.audioUrl;
+      }
+      const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
+      audio.playbackRate = curSpeed;
+      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
+    }
+    if (dlBtn) {
+      dlBtn.href = `/api/tts/audio/${ttsSessionCache.subtitles.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.subtitles.shortTitle || subTitle || "자막")}`;
+      dlBtn.download = ttsSessionCache.subtitles.downloadFilename || `${subTitle || "자막"}_자막_더빙.mp3`;
+      dlBtn.classList.remove("hidden");
+    }
+    return;
+  }
+
+  currentTtsType = "subtitles";
+  updateTtsCardUI();
+  clearTtsCueHighlight();
+
+  const btn = document.getElementById("subtitle-tts-audiobook-btn");
+  const icon = document.getElementById("sub-tts-btn-icon");
+  const spinner = document.getElementById("sub-tts-btn-spinner");
+
+  isGeneratingAudio = true;
+  if (btn) {
+    btn.disabled = true;
+    btn.title = typeof t === "function" ? t("tts_loading") || "오디오 준비 중..." : "오디오 준비 중...";
+  }
+  if (icon) icon.classList.add("hidden");
+  if (spinner) spinner.classList.remove("hidden");
+
+  if (card) card.classList.remove("hidden");
+  if (badge) {
+    badge.textContent = typeof t === "function" ? t("tts_loading") || "오디오 준비 중..." : "오디오 준비 중...";
+    badge.className = "px-2 py-0.5 bg-sky-500/20 text-sky-300 rounded text-[10px] font-mono animate-pulse";
+  }
+
+  try {
+    const res = await fetch("/api/tts/subtitles", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        video_id: vidKey,
+        note_id: currentNoteId,
+        title: subTitle,
+        mode: currentSubLang || "ko",
+        voice: selectedVoice,
+        speed: "+0%",
+        subtitles: currentSubtitles
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.detail || `서버 오류 (${res.status})`);
+    }
+
+    const data = await res.json();
+    const audioUrl = `/api/tts/audio/${data.filename}`;
+
+    currentTtsCues = data.cues || [];
+    subTtsCueMap = data.sub_cue_map || {};
+    clearSubTtsHighlight();
+
+    ttsSessionCache.subtitles = {
+      videoId: vidKey,
+      audioUrl: audioUrl,
+      cues: data.cues || [],
+      subCueMap: data.sub_cue_map || {},
+      shortTitle: data.short_title || subTitle || "자막",
+      filename: data.filename,
+      downloadFilename: data.download_filename,
+      voice: selectedVoice
+    };
+
+    if (audio) {
+      audio.src = audioUrl;
+      const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
+      audio.playbackRate = curSpeed;
+      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
+    }
+
+    if (dlBtn) {
+      const shortTitle = data.short_title || subTitle || "자막";
+      const downloadFilename = data.download_filename || `${shortTitle}_자막_더빙.mp3`;
+      dlBtn.href = `/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
+      dlBtn.download = downloadFilename;
+      dlBtn.classList.remove("hidden");
+    }
+
+    if (badge) {
+      badge.textContent = data.cached ? (typeof t === "function" ? t("tts_playing_cached") : "재생 중") : (typeof t === "function" ? t("tts_playing_new") : "재생 중");
+      badge.className = "px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-mono";
+      badge.setAttribute("data-i18n", "tts_status_playing");
+    }
+  } catch (err) {
+    alert(typeof t === "function" ? t("alert_tts_error", { err: err.message }) : ("자막 오디오북 음성 생성 실패: " + err.message));
+    if (badge) {
+      badge.textContent = typeof t === "function" ? t("tts_error") : "오류 발생";
+      badge.className = "px-2 py-0.5 bg-rose-500/20 text-rose-300 rounded text-[10px] font-mono";
+    }
+  } finally {
+    isGeneratingAudio = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.title = typeof t === "function" ? t("btn_sub_audiobook_title") : "자막 더빙 오디오북 듣기";
+    }
+    if (icon) icon.classList.remove("hidden");
+    if (spinner) spinner.classList.add("hidden");
+  }
+}
+
+function applySubTtsHighlight(subIdx, allowScroll = true) {
+  if (highlightedSubTtsIdx === subIdx) return;
+  const prev = subtitleRowByIdx.get(highlightedSubTtsIdx);
+  if (prev) prev.classList.remove(...SUB_TTS_HIGHLIGHT_CLASSES);
+  highlightedSubTtsIdx = subIdx;
+  if (subIdx < 0) return;
+  const row = subtitleRowByIdx.get(subIdx);
+  if (!row) return;
+  row.classList.add(...SUB_TTS_HIGHLIGHT_CLASSES);
+  if (allowScroll && currentActiveView === 'subtitles' && (isSubtitleAutoScroll || isTtsAutoScroll)) {
+    const container = document.getElementById("subtitle-list");
+    if (container) {
+      const rowTop = row.offsetTop - container.offsetTop;
+      const rowBottom = rowTop + row.clientHeight;
+      const containerTop = container.scrollTop;
+      const containerBottom = containerTop + container.clientHeight;
+      if (rowTop < containerTop || rowBottom > containerBottom) {
+        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    }
+  }
+}
+
+function clearSubTtsHighlight() {
+  if (highlightedSubTtsIdx >= 0) {
+    const prev = subtitleRowByIdx.get(highlightedSubTtsIdx);
+    if (prev) prev.classList.remove(...SUB_TTS_HIGHLIGHT_CLASSES);
+    highlightedSubTtsIdx = -1;
+  }
+}
+
+function updateTtsAutoScrollUI() {
+  const label = document.getElementById("tts-autoscroll-toggle-btn");
+  const cb = document.getElementById("tts-autoscroll-checkbox");
+  const icon = document.getElementById("tts-autoscroll-icon");
+  if (cb) cb.checked = isTtsAutoScroll;
+  if (!label) return;
+
+  if (isTtsAutoScroll) {
+    label.className = "px-2 py-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm cursor-pointer select-none whitespace-nowrap flex-shrink-0";
+    label.title = typeof t === "function" ? t("tts_autoscroll_on_title") : "자동 스크롤이 켜져 있습니다 (오디오북 낭독 위치 추적, 클릭 시 끄기)";
+    if (icon) icon.textContent = "📜";
+  } else {
+    label.className = "px-2 py-1 bg-slate-800 hover:bg-slate-700 text-slate-400 border border-slate-700 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm cursor-pointer select-none whitespace-nowrap flex-shrink-0";
+    label.title = typeof t === "function" ? t("tts_autoscroll_off_title") : "자동 스크롤이 꺼져 있습니다 (본문 자유 탐색 중, 클릭 시 켜기)";
+    if (icon) icon.textContent = "📜";
+  }
+}
+
+function toggleTtsAutoScroll() {
+  isTtsAutoScroll = !isTtsAutoScroll;
+  try {
+    localStorage.setItem("tubescholar_tts_autoscroll", isTtsAutoScroll);
+  } catch (e) {}
+  updateTtsAutoScrollUI();
+
+  if (isTtsAutoScroll && activeTtsCueIndex >= 0) {
+    scrollToActiveTtsCue(activeTtsCueIndex);
+  }
+}
+
+function normalizeTtsText(str) {
+  if (!str) return "";
+  return str
+    .replace(/\[\d{1,2}:\d{2}(?::\d{2})?\]/g, "")
+    .replace(/[^\p{L}\p{N}]/gu, "")
+    .toLowerCase();
+}
+
+function buildTtsCueMapping(container) {
+  if (!container || !currentTtsCues || currentTtsCues.length === 0) return [];
+
+  const allElements = Array.from(container.querySelectorAll("h1, h2, h3, h4, h5, h6, p, li, blockquote, tr"));
+  const candidates = allElements.filter(el => {
+    if (el.tagName === "BLOCKQUOTE" && el.querySelector("p, li")) return false;
+    if (el.tagName === "TR" && el.closest("thead")) return false;
+    const txt = (el.innerText || el.textContent || "").trim();
+    return txt.length > 0;
+  });
+
+  if (candidates.length === 0) return [];
+
+  const blockNorms = candidates.map(el => normalizeTtsText(el.innerText || el.textContent));
+  const cueMap = [];
+  let blockPtr = 0;
+
+  for (let c = 0; c < currentTtsCues.length; c++) {
+    const cue = currentTtsCues[c];
+    const cueNorm = normalizeTtsText(cue.text);
+    if (!cueNorm) {
+      cueMap[c] = candidates[blockPtr] || candidates[0];
+      continue;
+    }
+
+    let matchedIdx = -1;
+    const maxLookahead = Math.min(candidates.length, blockPtr + 10);
+    for (let b = blockPtr; b < maxLookahead; b++) {
+      const bNorm = blockNorms[b];
+      if (bNorm.includes(cueNorm) || cueNorm.includes(bNorm)) {
+        matchedIdx = b;
+        break;
+      }
+      const checkLen = Math.min(16, Math.max(6, Math.floor(cueNorm.length * 0.6)));
+      if (cueNorm.length >= 6) {
+        const prefix = cueNorm.slice(0, checkLen);
+        if (bNorm.includes(prefix)) {
+          matchedIdx = b;
+          break;
+        }
+      }
+    }
+
+    if (matchedIdx === -1 && blockPtr > 0) {
+      const prevNorm = blockNorms[blockPtr];
+      if (prevNorm.includes(cueNorm)) {
+        matchedIdx = blockPtr;
+      }
+    }
+
+    if (matchedIdx !== -1) {
+      cueMap[c] = candidates[matchedIdx];
+      blockPtr = matchedIdx;
+    } else {
+      cueMap[c] = candidates[blockPtr] || candidates[0];
+    }
+  }
+
+  return cueMap;
+}
+
+function findActiveTtsCueIndex(currentTime) {
+  if (!currentTtsCues || currentTtsCues.length === 0) return -1;
+  if (currentTime < currentTtsCues[0].start) return 0;
+  for (let i = 0; i < currentTtsCues.length; i++) {
+    const cue = currentTtsCues[i];
+    const nextStart = (i + 1 < currentTtsCues.length) ? currentTtsCues[i + 1].start : (cue.end + 2.0);
+    if (currentTime >= cue.start && currentTime < Math.max(cue.end, nextStart)) {
+      return i;
+    }
+  }
+  return currentTtsCues.length - 1;
+}
+
+function scrollToTtsElement(el) {
+  if (!el) return;
+  const rect = el.getBoundingClientRect();
+  const vh = window.innerHeight || document.documentElement.clientHeight;
+  if (rect.top < vh * 0.2 || rect.bottom > vh * 0.8) {
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+}
+
+function scrollToActiveTtsCue(idx) {
+  if (idx < 0) return;
+  if (!isReaderPopupOpen) {
+    if (currentActiveView !== 'note') return;
+    const noteContainer = document.getElementById("note-content");
+    if (!ttsNoteCueMap || ttsNoteCueMap.length === 0) {
+      ttsNoteCueMap = buildTtsCueMapping(noteContainer);
+    }
+    const targetEl = ttsNoteCueMap ? ttsNoteCueMap[idx] : null;
+    if (targetEl) {
+      targetEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  } else {
+    const readerContainer = document.getElementById("reader-popup-article");
+    if (!ttsReaderCueMap || ttsReaderCueMap.length === 0) {
+      ttsReaderCueMap = buildTtsCueMapping(readerContainer);
+    }
+    const readerEl = ttsReaderCueMap ? ttsReaderCueMap[idx] : null;
+    if (readerEl) {
+      readerEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  }
+}
+
+function applyTtsCueHighlight(cueIdx, allowScroll = true) {
+  if (currentTtsType === "subtitles") {
+    activeTtsCueIndex = cueIdx;
+    if (cueIdx < 0 || !currentTtsCues || cueIdx >= currentTtsCues.length) {
+      clearSubTtsHighlight();
+      return;
+    }
+    const subIdx = currentTtsCues[cueIdx].sub_index;
+    applySubTtsHighlight(subIdx, allowScroll);
+    return;
+  }
+
+  if (cueIdx === activeTtsCueIndex && highlightedTtsEl) return;
+
+  if (highlightedTtsEl) {
+    highlightedTtsEl.classList.remove("ts-tts-highlight");
+    highlightedTtsEl = null;
+  }
+  if (highlightedTtsReaderEl) {
+    highlightedTtsReaderEl.classList.remove("ts-tts-highlight");
+    highlightedTtsReaderEl = null;
+  }
+
+  activeTtsCueIndex = cueIdx;
+  if (cueIdx < 0 || !currentTtsCues || cueIdx >= currentTtsCues.length) return;
+
+  // 1. 일반 노트 뷰 하이라이트 & 자동 스크롤
+  const noteContainer = document.getElementById("note-content");
+  if (noteContainer && !noteContainer.classList.contains("hidden")) {
+    if (!ttsNoteCueMap || ttsNoteCueMap.length === 0) {
+      ttsNoteCueMap = buildTtsCueMapping(noteContainer);
+    }
+    const targetEl = ttsNoteCueMap ? ttsNoteCueMap[cueIdx] : null;
+    if (targetEl) {
+      targetEl.classList.add("ts-tts-highlight");
+      highlightedTtsEl = targetEl;
+      if (allowScroll && isTtsAutoScroll && currentActiveView === 'note' && !isReaderPopupOpen) {
+        scrollToTtsElement(targetEl);
+      }
+    }
+  }
+
+  // 2. 읽기 모드 팝업 하이라이트 & 자동 스크롤
+  if (isReaderPopupOpen) {
+    const readerContainer = document.getElementById("reader-popup-article");
+    if (readerContainer) {
+      if (!ttsReaderCueMap || ttsReaderCueMap.length === 0) {
+        ttsReaderCueMap = buildTtsCueMapping(readerContainer);
+      }
+      const readerTargetEl = ttsReaderCueMap ? ttsReaderCueMap[cueIdx] : null;
+      if (readerTargetEl) {
+        readerTargetEl.classList.add("ts-tts-highlight");
+        highlightedTtsReaderEl = readerTargetEl;
+        if (allowScroll && isTtsAutoScroll) {
+          scrollToTtsElement(readerTargetEl);
+        }
+      }
+    }
+  }
+}
+
+function clearTtsCueHighlight() {
+  clearSubTtsHighlight();
+  if (highlightedTtsEl) {
+    highlightedTtsEl.classList.remove("ts-tts-highlight");
+    highlightedTtsEl = null;
+  }
+  if (highlightedTtsReaderEl) {
+    highlightedTtsReaderEl.classList.remove("ts-tts-highlight");
+    highlightedTtsReaderEl = null;
+  }
+  activeTtsCueIndex = -1;
+}
+
 function initTtsEvents() {
   const ttsBtn = document.getElementById("tts-audiobook-btn");
-  if (ttsBtn) ttsBtn.addEventListener("click", triggerAudiobookPlay);
+  if (ttsBtn) {
+    ttsBtn.addEventListener("click", () => {
+      const card = document.getElementById("tts-player-card");
+      const audio = document.getElementById("tts-audio-element");
+      if (currentTtsType === "note" && card && !card.classList.contains("hidden") && audio && audio.src) {
+        if (audio.paused) audio.play();
+        else audio.pause();
+      } else {
+        triggerAudiobookPlay();
+      }
+    });
+  }
+
+  const subTtsBtn = document.getElementById("subtitle-tts-audiobook-btn");
+  if (subTtsBtn) {
+    subTtsBtn.addEventListener("click", () => {
+      const card = document.getElementById("tts-player-card");
+      const audio = document.getElementById("tts-audio-element");
+      if (currentTtsType === "subtitles" && card && !card.classList.contains("hidden") && audio && audio.src) {
+        if (audio.paused) audio.play();
+        else audio.pause();
+      } else {
+        triggerSubtitleAudiobookPlay();
+      }
+    });
+  }
 
   const closeTtsBtn = document.getElementById("close-tts-player-btn");
   const ttsCard = document.getElementById("tts-player-card");
@@ -3265,6 +4275,7 @@ function initTtsEvents() {
     closeTtsBtn.addEventListener("click", () => {
       if (audioEl) audioEl.pause();
       if (ttsCard) ttsCard.classList.add("hidden");
+      clearTtsCueHighlight();
     });
   }
 
@@ -3280,8 +4291,61 @@ function initTtsEvents() {
     voiceSelect.addEventListener("change", (e) => {
       try { localStorage.setItem("tubescholar_tts_voice", e.target.value); } catch (err) {}
       if (audioEl && audioEl.src) {
-        triggerAudiobookPlay();
+        if (currentTtsType === "subtitles") {
+          triggerSubtitleAudiobookPlay();
+        } else {
+          triggerAudiobookPlay();
+        }
       }
+    });
+  }
+
+  // TTS 자동 스크롤 토글 체크박스 이벤트 바인딩
+  const ttsAutoScrollCb = document.getElementById("tts-autoscroll-checkbox");
+  if (ttsAutoScrollCb) {
+    ttsAutoScrollCb.addEventListener("change", (e) => {
+      isTtsAutoScroll = e.target.checked;
+      try { localStorage.setItem("tubescholar_tts_autoscroll", isTtsAutoScroll); } catch (err) {}
+      updateTtsAutoScrollUI();
+      if (isTtsAutoScroll && activeTtsCueIndex >= 0) {
+        scrollToActiveTtsCue(activeTtsCueIndex);
+      }
+    });
+    updateTtsAutoScrollUI();
+  }
+
+  // TTS 오디오 재생 시간 연동 (하이라이트 및 자동 스크롤)
+  if (audioEl) {
+    audioEl.addEventListener("timeupdate", () => {
+      if (!currentTtsCues || currentTtsCues.length === 0) return;
+      const curTime = audioEl.currentTime;
+      const cueIdx = findActiveTtsCueIndex(curTime);
+      if (cueIdx !== activeTtsCueIndex) {
+        applyTtsCueHighlight(cueIdx, true);
+      }
+    });
+
+    audioEl.addEventListener("seeked", () => {
+      if (!currentTtsCues || currentTtsCues.length === 0) return;
+      const cueIdx = findActiveTtsCueIndex(audioEl.currentTime);
+      applyTtsCueHighlight(cueIdx, true);
+    });
+
+    audioEl.addEventListener("play", () => {
+      updateTtsCardUI();
+    });
+
+    audioEl.addEventListener("playing", () => {
+      updateTtsCardUI();
+    });
+
+    audioEl.addEventListener("pause", () => {
+      updateTtsCardUI();
+    });
+
+    audioEl.addEventListener("ended", () => {
+      clearTtsCueHighlight();
+      updateTtsCardUI();
     });
   }
 
@@ -3553,7 +4617,7 @@ function openReaderPopup() {
   const popupArticle = document.getElementById("reader-popup-article");
 
   if (popupTitle) {
-    popupTitle.textContent = currentVideoInfo?.title || document.getElementById("video-title")?.textContent || (typeof t === "function" ? t("reader_title_default") : "학습 노트 집중 독서");
+    popupTitle.textContent = currentVideoInfo?.title || document.getElementById("video-title")?.textContent || (typeof t === "function" ? t("reader_title_default") : "학습 노트 읽기 모드");
   }
 
   if (popupArticle) {
@@ -3587,6 +4651,10 @@ function openReaderPopup() {
   if (popup) {
     popup.classList.remove("hidden");
     isReaderPopupOpen = true;
+    ttsReaderCueMap = null;
+    if (activeTtsCueIndex >= 0) {
+      setTimeout(() => applyTtsCueHighlight(activeTtsCueIndex, isTtsAutoScroll), 50);
+    }
   }
 }
 
@@ -3595,6 +4663,14 @@ function closeReaderPopup() {
   if (popup) {
     popup.classList.add("hidden");
     isReaderPopupOpen = false;
+    ttsReaderCueMap = null;
+    if (highlightedTtsReaderEl) {
+      highlightedTtsReaderEl.classList.remove("ts-tts-highlight");
+      highlightedTtsReaderEl = null;
+    }
+    if (isTtsAutoScroll && activeTtsCueIndex >= 0) {
+      setTimeout(() => scrollToActiveTtsCue(activeTtsCueIndex), 50);
+    }
   }
 }
 

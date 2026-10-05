@@ -4,27 +4,29 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>TubeScholar - 유튜브 & 로컬 비디오 LLM 심층 지식 확장 학습기</title>
-  <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="icon" type="image/png" sizes="32x32" href="/static/icon.png?v=3.0.0">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico?v=3.0.0">
+  <link rel="shortcut icon" href="/favicon.ico?v=3.0.0">
+  <link rel="apple-touch-icon" href="/static/icon.png?v=3.0.0">
   <!-- Marked.js (v15.0.12, 로컬 고정) + DOMPurify (HTML 정화) : 오프라인 동작 및 버전 고정 -->
   <script src="/static/vendor/marked.min.js"></script>
   <script src="/static/vendor/purify.min.js"></script>
   <!-- YouTube IFrame API -->
   <script src="https://www.youtube.com/iframe_api"></script>
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="/static/style.css?v=2.2.0">
+  <link rel="stylesheet" href="/static/style.css?v=2.2.2">
   <!-- Tailwind CSS (로컬 정적 빌드: npm run build:css / 설정은 tailwind.config.js)
-       기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에 둠 -->
+       기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
   <!-- i18n 다국어 지원 시스템 (ko, en, ja) -->
-  <script src="/static/i18n.js?v=1.0.5"></script>
+  <script src="/static/i18n.js?v=1.0.8"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
   <!-- 상단 네비게이션 바 -->
   <header class="h-14 flex-shrink-0 border-b border-slate-800 bg-slate-900/95 backdrop-blur z-40 px-4 flex items-center justify-between">
     <div class="flex items-center space-x-2.5 flex-shrink-0 cursor-default" title="유튜브 & 로컬 비디오 LLM 심층 학습기" data-i18n-title="brand_subtitle">
-      <img src="/static/icon.png" class="w-8 h-8 rounded-lg shadow-md shadow-sky-500/20 object-cover flex-shrink-0 border border-sky-500/30" alt="TubeScholar Logo">
+      <img src="/static/icon.png?v=3.0.0" class="w-8 h-8 rounded-lg shadow-md shadow-sky-500/20 object-cover flex-shrink-0 border border-sky-500/30" alt="TubeScholar Logo">
       <h1 class="text-base font-bold tracking-tight bg-gradient-to-r from-white to-slate-300 bg-clip-text text-transparent select-none">TubeScholar</h1>
     </div>
 
@@ -282,8 +284,8 @@
               <button type="button" id="ctrl-sub-lang-ko" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="번역 자막" data-i18n-title="ctrl_trans_title">
                 <span id="ctrl-sub-ko-label">한글</span>
               </button>
-              <button type="button" id="ctrl-sub-lang-bi" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="동시 병기 출력" data-i18n-title="ctrl_bi_title">
-                <span id="ctrl-sub-bi-label" data-i18n="ctrl_bi_label">병기</span>
+              <button type="button" id="ctrl-sub-lang-bi" class="px-2 py-0.5 rounded font-semibold text-slate-400 hover:text-white transition text-[11px]" title="원문 및 번역문 모두 표시" data-i18n-title="ctrl_bi_title">
+                <span id="ctrl-sub-bi-label" data-i18n="ctrl_bi_label">모두</span>
               </button>
             </div>
           </div>
@@ -402,13 +404,20 @@
               <span id="tts-btn-spinner" class="hidden w-3.5 h-3.5 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
               <span id="tts-btn-text" class="hidden"></span>
             </button>
-            <button id="zen-mode-toggle-btn" class="ts-toolbar-icon-btn bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 font-semibold shadow-sm" title="영상과 패널을 접고 책처럼 편안하게 읽는 집중 독서 모드 (단축키: Z)" data-i18n-title="btn_reader_mode_title">
+            <button id="zen-mode-toggle-btn" class="ts-toolbar-icon-btn bg-sky-600/20 hover:bg-sky-600/30 text-sky-300 border border-sky-500/40 font-semibold shadow-sm" title="영상과 패널을 접고 책처럼 편안하게 읽는 읽기 모드 (단축키: Z)" data-i18n-title="btn_reader_mode_title">
               <span class="text-xs">📖</span>
             </button>
           </div>
 
-          <!-- 2) 자막 스크립트용 버튼들 (내보내기) -->
+          <!-- 2) 자막 스크립트용 버튼들 (수정 모드, 더빙 오디오북 및 내보내기) -->
           <div id="subtitle-toolbar-buttons" class="hidden flex items-center space-x-1 flex-shrink-0">
+            <button id="toggle-sub-edit-btn" class="ts-toolbar-icon-btn bg-amber-600/20 hover:bg-amber-600/30 text-amber-300 border border-amber-500/40 font-semibold shadow-sm transition" title="자막 내용 직접 수정 (오타 교정 및 편집)" data-i18n-title="btn_sub_edit_title">
+              <span id="sub-edit-btn-icon" class="text-xs">✏️</span>
+            </button>
+            <button id="subtitle-tts-audiobook-btn" class="ts-toolbar-icon-btn bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 font-semibold shadow-sm" title="자막 더빙 오디오북 듣기 (edge-tts 음성)" data-i18n-title="btn_sub_audiobook_title">
+              <span id="sub-tts-btn-icon" class="text-xs">🎧</span>
+              <span id="sub-tts-btn-spinner" class="hidden w-3.5 h-3.5 border-2 border-purple-300 border-t-transparent rounded-full animate-spin"></span>
+            </button>
             <button id="download-srt-btn" class="ts-toolbar-btn px-2.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-transparent font-semibold shadow-sm" title=".SRT 자막 다운로드">
               <span>📥 .SRT</span>
             </button>
@@ -484,8 +493,8 @@
         <div class="flex items-center justify-between">
           <div class="flex items-center space-x-2">
             <span class="w-6 h-6 rounded-lg bg-purple-500/20 text-purple-300 flex items-center justify-center text-xs">🎧</span>
-            <span class="text-xs font-bold text-purple-200" data-i18n="tts_card_title">AI 신경망 오디오북 (edge-tts)</span>
-            <span id="tts-status-badge" class="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-mono" data-i18n="tts_status_ready">준비 완료</span>
+            <span id="tts-card-title-text" class="text-xs font-bold text-purple-200 leading-tight inline-block" data-i18n-html="tts_card_title_note">오디오북<br>(노트)</span>
+            <span id="tts-status-badge" class="px-2 py-0.5 bg-purple-500/20 text-purple-300 rounded text-[10px] font-mono flex-shrink-0" data-i18n="tts_status_ready">준비 완료</span>
           </div>
           <div class="flex items-center space-x-2">
             <select id="tts-voice-select" class="px-2 py-1 bg-slate-900 border border-purple-700/50 rounded-lg text-xs text-purple-200 focus:outline-none focus:border-purple-400">
@@ -498,8 +507,18 @@
               <option value="1.25">1.25x</option>
               <option value="1.5">1.5x</option>
             </select>
-            <a id="tts-download-btn" href="#" download class="hidden px-2.5 py-1 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs rounded-lg transition flex items-center space-x-1" title="MP3 오디오 파일 다운로드" data-i18n-title="tts_download_title">
-              <span>📥 MP3</span>
+            <!-- 📜 TTS 본문 자동 스크롤 토글 버튼 (자막 자동 스크롤과 동일한 형태) -->
+            <label 
+              id="tts-autoscroll-toggle-btn" 
+              class="px-2 py-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/50 rounded-lg text-xs font-semibold transition flex items-center space-x-1 shadow-sm cursor-pointer select-none whitespace-nowrap flex-shrink-0"
+              title="오디오북 재생 시 현재 읽는 본문 위치로 자동 스크롤"
+              data-i18n-title="btn_tts_autoscroll_title"
+            >
+              <input type="checkbox" id="tts-autoscroll-checkbox" class="w-3.5 h-3.5 rounded bg-slate-900 border-slate-600 text-purple-500 focus:ring-0 cursor-pointer accent-purple-500" checked>
+              <span id="tts-autoscroll-icon" class="text-xs select-none">📜</span>
+            </label>
+            <a id="tts-download-btn" href="#" download class="hidden p-1.5 bg-purple-600/30 hover:bg-purple-600/50 text-purple-200 border border-purple-500/40 text-xs rounded-lg transition flex items-center justify-center" title="MP3 다운로드" data-i18n-title="tts_download_title">
+              <span class="text-xs">📥</span>
             </a>
             <button id="close-tts-player-btn" class="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition">
               <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -561,6 +580,7 @@
         
         <div>
           <h3 id="loading-title" class="text-base font-bold text-white mb-2" data-i18n="loading_title_youtube">유튜브 영상 분석 중...</h3>
+          <div id="analysis-model-status-badge" class="hidden mb-2 inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30"></div>
           <p id="loading-desc" class="text-xs text-slate-400 max-w-sm leading-relaxed" data-i18n="loading_desc_youtube">
             자막을 추출하고 학습 노트를 구성하고 있습니다.
           </p>
@@ -682,6 +702,26 @@
               </svg>
             </div>
             <span id="sub-count-text" class="text-[11px] text-slate-400 font-mono whitespace-nowrap flex-shrink-0">0개 대사</span>
+          </div>
+        </div>
+
+        <!-- 자막 수정 모드 전용 액션 바 (수정 모드일 때만 표시) -->
+        <div id="sub-editor-bar" class="hidden px-3.5 py-2 bg-amber-500/10 border-b border-amber-500/30 flex items-center justify-between flex-shrink-0 animate-fadeIn">
+          <div class="flex items-center space-x-2 min-w-0">
+            <span class="text-xs text-amber-300 font-bold flex items-center space-x-1.5 flex-shrink-0">
+              <span class="text-xs">✏️</span>
+              <span data-i18n="sub_editor_bar_title">자막 직접 수정 중</span>
+            </span>
+            <span class="text-[11px] text-amber-300/70 truncate hidden sm:inline" data-i18n="sub_editor_hint">대사를 직접 타이핑하여 수정하세요. (Ctrl+Enter로 저장)</span>
+          </div>
+          <div class="flex items-center space-x-2 flex-shrink-0">
+            <button type="button" id="cancel-sub-edit-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold rounded-lg transition" data-i18n="sub_editor_cancel">
+              ✕ 취소
+            </button>
+            <button type="button" id="save-sub-edit-btn" class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-lg transition shadow flex items-center space-x-1" data-i18n="sub_editor_save">
+              <span>💾</span>
+              <span data-i18n="editor_save_btn">저장 및 적용</span>
+            </button>
           </div>
         </div>
 
@@ -952,7 +992,7 @@
       <div class="flex items-center space-x-3 truncate max-w-sm md:max-w-md lg:max-w-xl">
         <span class="px-2.5 py-1 bg-sky-500/15 text-sky-300 border border-sky-500/30 rounded-lg text-xs font-bold flex items-center space-x-1 flex-shrink-0">
           <span>📖</span>
-          <span data-i18n="reader_mode_badge">집중 독서 모드</span>
+          <span data-i18n="reader_mode_badge">읽기 모드</span>
         </span>
         <h2 id="reader-popup-title" class="text-xs md:text-sm font-bold text-white truncate"></h2>
       </div>
@@ -1034,7 +1074,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.6.5"></script>
+  <script src="/static/app.js?v=3.7.6"></script>
 </body>
 
 </html>
