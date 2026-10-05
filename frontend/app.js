@@ -110,7 +110,27 @@ function cleanAiCitationArtifacts(text) {
   text = text.replace(/【[^】]*?(?:source|turn\d+|search|출처)[^】]*?】/g, '');
   // 3. 인용 태그: [cite: 1], [citation: 1] 등
   text = text.replace(/\[cite(?:ation)?:\s*[^\]]+\]/gi, '');
-  // 4. 문장부호 앞 공백 및 줄 끝 공백 정리
+
+  // 4. LaTeX 수식 블록 정리 (\[ ... \] 또는 $$ ... $$) -> 깔끔한 마크다운 공식 박스로 변환
+  text = text.replace(/\\\[\s*([\s\S]*?)\s*\\\]|\$\$\s*([\s\S]*?)\s*\$\$/g, (m, p1, p2) => {
+    let content = (p1 || p2 || '').trim();
+    if (!content) return '';
+    content = content.replace(/\\([ \t])/g, ' ');
+    content = content.replace(/\\text\{([^}]+)\}/g, '$1');
+    content = content.replace(/_\{([^}]+)\}/g, '($1)');
+    content = content.replace(/\\times/g, '×').replace(/\\cdot/g, '·').replace(/\\to/g, '➔');
+    content = content.replace(/\s*\n\s*/g, ' ');
+    content = content.replace(/\s*([=+*×·➔])\s*/g, ' $1 ');
+    content = content.replace(/\s+/g, ' ').trim();
+    return `> 📐 **공식**: \`${content}\``;
+  });
+
+  // 5. 일반 텍스트 내 잔여 LaTeX 기호 정제 (\공백, _{아래첨자}, \text{...})
+  text = text.replace(/([a-zA-Z0-9가-힣])\\ ([a-zA-Z0-9가-힣])/g, '$1 $2');
+  text = text.replace(/([a-zA-Z0-9가-힣]+)_\{([^}]+)\}/g, '$1($2)');
+  text = text.replace(/\\text\{([^}]+)\}/g, '$1');
+
+  // 6. 문장부호 앞 공백 및 줄 끝 공백 정리
   text = text.replace(/[ \t]+([.,!?])/g, '$1');
   text = text.replace(/[ \t]+\n/g, '\n');
   text = text.replace(/[ \t]+$/gm, '');

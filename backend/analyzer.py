@@ -1370,13 +1370,15 @@ def generate_clipboard_prompt(
     header_role = f"[System Role & Instructions - Language: {target_name}]" if target_lang != "ko" else "[역할 및 지침]"
     header_task = "[Task Request]" if target_lang != "ko" else "[요청 작업]"
     citation_guard = """==================================================
-⚠️ [출처 및 인용 마커 절대 금지 규칙 (Strict Clean Formatting Rule)]
+⚠️ [출처 마커 및 수식 표기 절대 금지/표준화 규칙 (Clean Formatting & Formula Rule)]
 1. 웹 검색(Web Browsing) 또는 캔버스(Canvas) 연동 시 자동 생성되는 내부 참조 태그(예: :chatgpt-content-reference{...}, :...-reference{...}, 【...†source】, [cite: ...])나 인용 각주 번호를 본문 및 표에 절대 포함하지 마십시오.
 2. 모든 내용은 출처 기호나 내부 태그 없이, 문맥 속에 자연스럽게 녹아든 완결된 유려한 표준 마크다운 줄글로만 작성하십시오.
+3. [수식 및 공식 표기 규칙]: 복잡한 LaTeX 수식 문법(\\[...\\], _{...}, \\ )을 사용하지 마십시오. 공식이나 핵심 메커니즘을 표현할 때는 누구나 쉽게 읽을 수 있도록 표준 마크다운 백틱 코드 블록(```)이나 인용구(>), 볼드체를 사용하여 직관적인 표준 텍스트로 작성하십시오. (예: `최종 영상 = 움직임(비디오 참조) + 외형(이미지 참조) + 연출(프롬프트)`)
 """ if target_lang == "ko" else """==================================================
-⚠️ [Strict Clean Formatting Rule]
+⚠️ [Strict Clean Formatting & Formula Standardization Rule]
 1. DO NOT output any internal citation markers, search reference tags (e.g. :chatgpt-content-reference{...}, :...-reference{...}, 【...†source】, [cite: ...]), or numeric bracket footnotes in the text or tables.
 2. All information must be written in clean, fluent markdown prose without raw citation tags.
+3. [Formula & Mechanism Rule]: DO NOT use raw LaTeX math syntax (\\[...\\], _{...}, \\ ). When expressing formulas or mechanisms, write them in plain text, standard markdown code blocks (```), or blockquotes (>) so that they are universally readable across any markdown editor without LaTeX rendering engines. (e.g. `Final Shot = Motion(VideoRef) + Appearance(ImageRefs) + Direction(Prompt)`)
 """
 
     return f"""{header_role}

@@ -144,7 +144,7 @@ def save_library(data: Dict[str, Any]):
         _atomic_write_json(LIBRARY_FILE, data)
 
 def clean_ai_citation_artifacts(text: str) -> str:
-    """ChatGPT, Claude 등의 웹 복사 시 유입되는 :chatgpt-content-reference{...}, 【...†source】 등 내부 인용 잔여물 자동 정화"""
+    """ChatGPT, Claude 등의 웹 복사 시 유입되는 :chatgpt-content-reference{...}, 【...†source】 및 깨진 LaTeX 수식 블록 자동 정화"""
     if not text:
         return ""
     # 1. ChatGPT content reference: :chatgpt-content-reference{index="0"}
@@ -154,7 +154,29 @@ def clean_ai_citation_artifacts(text: str) -> str:
     text = re.sub(r'【[^】]*?(?:source|turn\d+|search|출처)[^】]*?】', '', text)
     # 3. 인용 태그: [cite: 1], [citation: 1] 등
     text = re.sub(r'\[cite(?:ation)?:\s*[^\]]+\]', '', text, flags=re.IGNORECASE)
-    # 4. 문장부호 앞 공백 및 줄 끝 공백 정리
+
+    # 4. LaTeX 수식 블록 정리 (\[ ... \] 또는 $$ ... $$) -> 깔끔한 마크다운 인용 공식 블록으로 변환
+    def _repl_math_block(m):
+        content = (m.group(1) or m.group(2) or '').strip()
+        if not content:
+            return ''
+        content = re.sub(r'\\([ \t])', ' ', content)
+        content = re.sub(r'\\text\{([^}]+)\}', r'\1', content)
+        content = re.sub(r'_\{([^}]+)\}', r'(\1)', content)
+        content = content.replace(r'\times', '×').replace(r'\cdot', '·').replace(r'\to', '➔')
+        content = re.sub(r'\s*\n\s*', ' ', content)
+        content = re.sub(r'\s*([=+*×·➔])\s*', r' \1 ', content)
+        content = re.sub(r'\s+', ' ', content).strip()
+        return f'> 📐 **공식**: `{content}`'
+
+    text = re.sub(r'\\\[\s*([\s\S]*?)\s*\\\]|\$\$\s*([\s\S]*?)\s*\$\$', _repl_math_block, text)
+
+    # 5. 일반 텍스트 내 잔여 LaTeX 기호 정제 (\공백, _{아래첨자}, \text{...})
+    text = re.sub(r'([a-zA-Z0-9가-힣])\\ ([a-zA-Z0-9가-힣])', r'\1 \2', text)
+    text = re.sub(r'([a-zA-Z0-9가-힣]+)_\{([^}]+)\}', r'\1(\2)', text)
+    text = re.sub(r'\\text\{([^}]+)\}', r'\1', text)
+
+    # 6. 문장부호 앞 공백 및 줄 끝 공백 정리
     text = re.sub(r'[ \t]+([.,!?])', r'\1', text)
     text = re.sub(r'[ \t]+\n', '\n', text)
     text = re.sub(r'[ \t]+$', '', text, flags=re.MULTILINE)
