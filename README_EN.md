@@ -101,11 +101,41 @@ Click the ⚙️ **Settings** icon in the top header (saved locally and securely
 
 ---
 
+## 📁 Directory Structure
+
+```
+TubeScholar/
+├── backend/
+│   ├── app.py              # FastAPI server & API routing
+│   ├── extractor.py        # YouTube subtitle & metadata extractor
+│   ├── analyzer.py         # Google Gemini knowledge expansion & smart fallback engine
+│   ├── storage.py          # Markdown notes & AI artifact cleaner & library store
+│   ├── tts.py              # edge-tts neural audiobook & subtitle dubbing engine
+│   ├── stt.py              # Groq Cloud Whisper-large-v3 ultrafast STT engine
+│   └── languages.py        # 17-language catalog & normalization
+├── frontend/
+│   ├── index.html          # Interactive split-view dashboard UI
+│   ├── app.js              # Unified interactive client JS (Player, Subtitle Editor, Audiobooks)
+│   ├── i18n.js             # Multilingual (English, Korean, Japanese) catalog
+│   ├── style.css           # Custom dark theme & reader styling
+│   └── vendor/             # Standalone offline vendor libraries (Tailwind, Marked, DOMPurify)
+├── data/
+│   ├── notes/              # Permanent Markdown (.md) study notes
+│   └── library.json        # Video metadata & study session index
+├── run.py                  # One-click server launcher & browser watchdog
+├── requirements.txt        # Python backend dependency manifest
+├── build_installer.bat     # Windows one-click installer build script
+├── installer.iss           # Inno Setup 6 installer specification
+└── TubeScholar.spec        # PyInstaller desktop bundling spec
+```
+
+---
+
 ## 🛠️ Tech Stack
 
-- **Backend**: FastAPI, Python 3.12, Uvicorn, yt-dlp, youtube-transcript-api, edge-tts
+- **Backend**: FastAPI, Python 3.12, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, yt-dlp, youtube-transcript-api, edge-tts
 - **Frontend**: Vanilla JavaScript (ES6+), Tailwind CSS (Standalone build), Marked.js, DOMPurify
-- **Packaging**: PyInstaller, Inno Setup 6 (Windows Setup Wizard)
+- **Packaging**: PyInstaller (onedir mode), Inno Setup 6 (lzma2/ultra64 Windows Setup Wizard)
 
 ## ⚠️ Disclaimer
 

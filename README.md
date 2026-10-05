@@ -106,21 +106,26 @@
 TubeScholar/
 ├── backend/
 │   ├── app.py              # FastAPI 메인 서버 & API 라우터
-│   ├── extractor.py        # 유튜브 자막 및 채널 메타데이터 추출기
-│   ├── analyzer.py         # Gemini API 지식 확장 프롬프트 엔진
-│   ├── storage.py          # 마크다운 노트 및 라이브러리 저장소 관리
-│   └── tts.py              # edge-tts 신경망 오디오북 생성기
+│   ├── extractor.py        # 유튜브 자막 및 메타데이터 추출기
+│   ├── analyzer.py         # Google Gemini 지식 확장 & 스마트 모델 엔진
+│   ├── storage.py          # 마크다운 노트 & AI 잔여물 정제기 & 라이브러리 저장소
+│   ├── tts.py              # edge-tts 신경망 오디오북 & 자막 더빙 엔진
+│   ├── stt.py              # Groq Cloud Whisper-large-v3 초고속 음성인식
+│   └── languages.py        # 17개 다국어 지원 언어 카탈로그
 ├── frontend/
-│   ├── index.html          # 스플릿 뷰 대시보드 HTML
-│   ├── app.js              # 통합 인터랙티브 클라이언트 JS
-│   ├── i18n.js             # 다국어(i18n) 번역 카탈로그
-│   └── style.css           # 다크 테마 및 전용 UI 스타일
+│   ├── index.html          # 스플릿 뷰 대시보드 UI
+│   ├── app.js              # 통합 인터랙티브 클라이언트 JS (플레이어, 자막 편집기, 오디오북)
+│   ├── i18n.js             # 다국어(한국어, 영어, 일본어) 번역 카탈로그
+│   ├── style.css           # 전용 다크 테마 & 커스텀 UI 스타일
+│   └── vendor/             # 독립 오프라인 라이브러리 (Tailwind, Marked, DOMPurify)
 ├── data/
-│   ├── notes/              # 생성된 마크다운(.md) 문서 보관 폴더
-│   └── library.json        # 저장된 영상 메타데이터 인덱스
-├── run.py                  # 원클릭 실행 & 워치독 스크립트
-├── requirements.txt        # Python 의존성 목록
-└── installer.iss           # Windows 인스톨러 빌드 스크립트
+│   ├── notes/              # 영구 보관 마크다운(.md) 학습 노트
+│   └── library.json        # 영상 메타데이터 및 학습 기록 색인
+├── run.py                  # 원클릭 서버 실행 및 브라우저 자동 실행
+├── requirements.txt        # Python 백엔드 의존성 목록
+├── build_installer.bat     # Windows 원클릭 설치 프로그램 빌드 스크립트
+├── installer.iss           # Inno Setup 6 설치 마법사 정의 파일
+└── TubeScholar.spec        # PyInstaller 데스크톱 앱 번들링 명세서
 ```
 
 ---
