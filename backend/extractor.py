@@ -445,15 +445,31 @@ def get_video_transcript(
             "error": f"자막을 불러올 수 없습니다: {str(e)}"
         }
 
+def is_valid_youtube_channel_url(channel_url: str) -> bool:
+    """유효한 유튜브 채널 URL 또는 @핸들 형식인지 검증합니다."""
+    u = (channel_url or "").strip()
+    if re.fullmatch(r"^@[A-Za-z0-9_.-]{2,60}$", u):
+        return True
+    pattern = r"^https?:\/\/(?:[a-zA-Z0-9-]+\.)?youtube\.com\/(?:@|channel\/|c\/|user\/)[A-Za-z0-9_.-]+"
+    return bool(re.match(pattern, u, re.IGNORECASE))
+
 def get_channel_videos(channel_url: str, max_results: int = 15) -> List[Dict[str, Any]]:
     """채널 URL(또는 핸들 @...)에서 최근 영상 목록을 가져옵니다."""
-    clean_url = channel_url.rstrip('/')
+    if not is_valid_youtube_channel_url(channel_url):
+        return []
+
+    u = channel_url.strip()
+    if u.startswith('@'):
+        u = f"https://www.youtube.com/{u}"
+    clean_url = u.rstrip('/')
     if not clean_url.endswith('/videos') and not clean_url.endswith('/streams'):
         clean_url += '/videos'
 
+    safe_max_results = min(max(1, int(max_results or 15)), 50)
+
     ydl_opts = {
         'extract_flat': 'in_playlist',
-        'playlistend': max_results,
+        'playlistend': safe_max_results,
         'quiet': True,
         'no_warnings': True,
         'skip_download': True

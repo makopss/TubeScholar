@@ -42,6 +42,7 @@ from extractor import (
     get_video_transcript, 
     list_transcript_tracks,
     get_channel_videos, 
+    is_valid_youtube_channel_url,
     parse_srt_vtt_text,
     convert_to_srt,
     convert_to_txt
@@ -572,6 +573,8 @@ def analyze_video(req: AnalyzeRequest):
 @app.post("/api/note/regenerate")
 def regenerate_study_note(req: RegenerateNoteRequest):
     """기존 자막 데이터를 바탕으로 선택된 언어로 Gemini 학습 노트를 즉시 재작성"""
+    if req.note_id and not is_safe_note_id(req.note_id):
+        raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     if not req.subtitles:
         raise HTTPException(status_code=400, detail="학습 노트 재작성을 위한 자막 데이터가 없습니다.")
 
@@ -822,14 +825,17 @@ def update_single_note(note_id: str, req: UpdateNoteRequest):
 
 @app.delete("/api/notes/{note_id}")
 def remove_note(note_id: str):
+    if not is_safe_note_id(note_id):
+        raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     success = delete_note(note_id)
     return {"success": success}
 
 @app.post("/api/channel/videos")
 def channel_videos(req: ChannelRequest):
-    if not req.channel_url:
-        raise HTTPException(status_code=400, detail="채널 URL을 입력해주세요.")
-    videos = get_channel_videos(req.channel_url, max_results=req.max_results or 15)
+    if not req.channel_url or not is_valid_youtube_channel_url(req.channel_url):
+        raise HTTPException(status_code=400, detail="올바른 유튜브 채널 URL(예: @채널명 또는 https://youtube.com/@...)을 입력해주세요.")
+    safe_max = min(max(1, int(req.max_results or 15)), 50)
+    videos = get_channel_videos(req.channel_url, max_results=safe_max)
     return {"videos": videos}
 
 # ============================================================
@@ -865,8 +871,10 @@ async def generate_tts_endpoint(req: TTSRequest):
 def get_tts_audio_file(filename: str):
     """생성된 MP3 파일 스트리밍 서빙"""
     safe_filename = os.path.basename(filename)
+    if not safe_filename or not safe_filename.endswith(".mp3"):
+        raise HTTPException(status_code=400, detail="오디오 파일(.mp3)만 접근할 수 있습니다.")
     filepath = os.path.join(AUDIO_DIR, safe_filename)
-    if not os.path.exists(filepath):
+    if not os.path.isfile(filepath):
         raise HTTPException(status_code=404, detail="오디오 파일을 찾을 수 없습니다.")
     return FileResponse(filepath, media_type="audio/mpeg", filename=safe_filename)
 
