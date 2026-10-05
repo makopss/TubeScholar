@@ -2,7 +2,11 @@
 
 [🇰🇷 한국어 설명서](README.md) | **English**
 
-**TubeScholar** is an AI-powered interactive learning workstation designed for mastering technical talks, academic lectures, and knowledge-dense videos. Powered by **Google Gemini LLM**, it goes beyond simple translation to deliver **[subtitle error correction + timestamped summaries + Deep Dive knowledge expansion + technical glossaries + comprehension self-checks]**.
+**TubeScholar** is an all-in-one desktop AI study companion that turns YouTube videos and local video files (`.mp4`, `.webm`, `.mkv`) into structured, permanent learning materials.
+
+Going far beyond simple subtitle translation and generic summaries, it delivers **[Subtitle Error Correction + Timestamped Timeline Summaries + Deep Dive Conceptual Callouts + Technical Glossaries + In-Place Subtitle Editing + Dual Neural Audiobooks (Note Narration & Full Voice Dubbing)]**.
+
+Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Claude Pro subscriptions, with all study notes saved locally on your machine in standard Markdown (`.md`)—100% compatible with Notion, Obsidian, and Logseq.
 
 ---
 
@@ -85,10 +89,15 @@ Download and run `TubeScholar-Setup-v1.0.0.exe` from the [Latest Release](https:
 
 ## ⚙️ Configuration
 
-Click the ⚙️ **Settings** icon in the top header:
-- **Gemini API Key**: Enter your free [Google AI Studio API key](https://aistudio.google.com/). Stored locally and securely in `.env`.
-- **Model Selection**: Choose between `Gemini 2.5 Flash` (default, ultrafast) or `Gemini 2.5 Pro` (deep reasoning).
-- **Groq API Key (Optional)**: For ultra-fast transcript Whisper processing.
+Click the ⚙️ **Settings** icon in the top header (saved locally and securely in `.env`):
+
+1. **Google Gemini Free API Key**: Get a free API key from [Google AI Studio](https://aistudio.google.com/app/apikey) and enter it.
+   - **Smart Automatic Engine**: No tedious model configuration required. TubeScholar automatically pairs high-performance `gemini-flash-latest` for in-depth knowledge notes and `gemini-flash-lite` for high-speed subtitle translations, with seamless multi-tier fallback upon hitting quota limits.
+2. **Groq Cloud Free API Key (Optional)**: Get a free key from [Groq Console](https://console.groq.com/keys).
+   - Used for ultra-fast local video/audio speech recognition (Whisper-large-v3) when analyzing local files without existing subtitle tracks.
+3. **💡 Subscription AI Users (Free without API Keys)**:
+   - If you already subscribe to ChatGPT Plus or Claude Pro, you can use TubeScholar **100% free with no API keys required**.
+   - Simply click [📋 Copy Prompt], paste into your ChatGPT/Claude chat, and paste the response back into TubeScholar to enjoy persistent markdown notes, automatic formula & citation cleaning, timestamp jumps, and dual audiobooks!
 
 ---
 
