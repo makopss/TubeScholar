@@ -21,6 +21,7 @@ let currentVideoId = null;
 let currentNoteId = null;
 let currentMarkdown = "";
 let currentVideoInfo = null;
+let currentEngineTagInfo = null;
 let currentAbortController = null;
 let currentMode = "gemini"; // 'gemini' or 'subscription'
 let isEditing = false;
@@ -226,7 +227,41 @@ function processMarkdownHtml(html) {
   return tempDiv.innerHTML;
 }
 
-function renderMarkdownNote(markdownText, engineInfo = "", noteId = null) {
+function updateEngineTag(info = null) {
+  if (info !== null) {
+    currentEngineTagInfo = info;
+  }
+  const engineTag = document.getElementById("engine-tag");
+  if (!engineTag) return;
+
+  if (!currentEngineTagInfo) {
+    engineTag.classList.add("hidden");
+    engineTag.textContent = "";
+    engineTag.removeAttribute("data-i18n");
+    return;
+  }
+
+  let text = "";
+  if (typeof currentEngineTagInfo === "object" && currentEngineTagInfo.key) {
+    engineTag.setAttribute("data-i18n", currentEngineTagInfo.key);
+    text = typeof t === "function" ? t(currentEngineTagInfo.key, currentEngineTagInfo.params) : currentEngineTagInfo.key;
+  } else if (typeof currentEngineTagInfo === "string") {
+    engineTag.removeAttribute("data-i18n");
+    text = currentEngineTagInfo;
+  } else if (currentEngineTagInfo && currentEngineTagInfo.text) {
+    engineTag.removeAttribute("data-i18n");
+    text = currentEngineTagInfo.text;
+  }
+
+  if (text) {
+    engineTag.textContent = text;
+    engineTag.classList.remove("hidden");
+  } else {
+    engineTag.classList.add("hidden");
+  }
+}
+
+function renderMarkdownNote(markdownText, engineInfo = null, noteId = null) {
   if (noteId) currentNoteId = noteId;
   const cleanMd = stripFrontmatter(markdownText);
   currentMarkdown = cleanMd;
@@ -240,10 +275,10 @@ function renderMarkdownNote(markdownText, engineInfo = "", noteId = null) {
   document.getElementById("empty-note-placeholder").classList.add("hidden");
   document.getElementById("status-tag").classList.remove("hidden");
 
-  if (engineInfo) {
-    const engineTag = document.getElementById("engine-tag");
-    engineTag.textContent = engineInfo;
-    engineTag.classList.remove("hidden");
+  if (engineInfo !== null) {
+    updateEngineTag(engineInfo);
+  } else if (currentEngineTagInfo) {
+    updateEngineTag();
   }
 
   // 집중 독서 팝업 모달이 켜져 있을 경우 본문, 목차 및 문서 제목 자동 갱신
@@ -2057,7 +2092,7 @@ async function loadSingleSavedNote(noteIdOrVid) {
       if (lp) lp.pause();
     }
     displayVideoMetadata(data.metadata);
-    renderMarkdownNote(data.markdown, typeof t === "function" ? t("note_status_saved") : "저장된 보관 노트", currentNoteId);
+    renderMarkdownNote(data.markdown, { key: "note_status_saved" }, currentNoteId);
     document.getElementById("inline-paste-card").classList.add("hidden");
 
     const meta = data.metadata || {};
@@ -2252,6 +2287,7 @@ document.addEventListener("DOMContentLoaded", () => {
     updateSubtitleAutoScrollUI();
     updateLocalFileInputLabels();
     checkConfig();
+    updateEngineTag();
 
     if (currentVideoInfo) {
       displayVideoMetadata(currentVideoInfo);
@@ -2341,7 +2377,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const data = await res.json();
       if (!res.ok) throw new Error("저장 실패");
 
-      renderMarkdownNote(editedMd, typeof t === "function" ? t("note_status_modified") : "수정 및 저장됨", currentNoteId);
+      renderMarkdownNote(editedMd, { key: "note_status_modified" }, currentNoteId);
       toggleEditor(false);
       loadLibrary();
       alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
@@ -2363,7 +2399,7 @@ document.addEventListener("DOMContentLoaded", () => {
         });
         const d2 = await res2.json();
         currentNoteId = d2.note_id;
-        renderMarkdownNote(editedMd, typeof t === "function" ? t("note_status_modified") : "수정 및 저장됨", currentNoteId);
+        renderMarkdownNote(editedMd, { key: "note_status_modified" }, currentNoteId);
         toggleEditor(false);
         loadLibrary();
         alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
@@ -2407,7 +2443,7 @@ document.addEventListener("DOMContentLoaded", () => {
         currentNoteId = data.note_id;
       }
       displayVideoMetadata(data.video_info);
-      renderMarkdownNote(data.markdown, typeof t === "function" ? t("note_status_sub_ai") : "구독 AI 연동 노트", data.note_id);
+      renderMarkdownNote(data.markdown, { key: "note_status_sub_ai" }, data.note_id);
       loadLibrary();
       document.getElementById("inline-paste-textarea").value = "";
       alert(typeof t === "function" ? t("alert_paste_applied") : "✅ 구독 AI 학습 노트가 독립된 새 노트로 영구 저장되었습니다!");
@@ -2619,7 +2655,7 @@ document.addEventListener("DOMContentLoaded", () => {
       setAnalysisStep(3);
       loadingTitle.textContent = typeof t === "function" ? t("loading_local_step3_title") : "3단계: 노트 렌더링 및 보관함 저장 완료!";
 
-      renderMarkdownNote(data.markdown, typeof t === "function" ? t("note_status_model_prefix", { model: data.model_used }) : `분석 엔진: ${data.model_used}`, data.note_id);
+      renderMarkdownNote(data.markdown, { key: "note_status_model_prefix", params: { model: data.model_used } }, data.note_id);
       if (data.subtitles) {
         setSubtitles(data.subtitles);
       }
