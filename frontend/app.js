@@ -1,16 +1,48 @@
 // TubeScholar Frontend Application Logic (Dual-Mode, Local Video & Live Editor Edition)
 
-// 🔒 로컬 서버 CSRF 방어: 같은 출처의 /api 요청에 전용 헤더를 자동 첨부
-// (다른 웹사이트는 이 커스텀 헤더를 붙여 127.0.0.1 로 요청할 수 없음 → 서버가 403 거부)
+// 🌐 API Base URL 동적 결정 (로컬 데스크톱 vs 웹 배포 호환)
+function getApiBaseUrl() {
+  const isLocal = window.location.hostname === "127.0.0.1" || window.location.hostname === "localhost";
+  const custom = localStorage.getItem("tubescholar_api_base_url");
+  if (custom && custom.trim()) {
+    return custom.trim().replace(/\/+$/, "");
+  }
+  if (!isLocal) {
+    return (window.__TUBESCHOLAR_API_BASE__ || "").replace(/\/+$/, "");
+  }
+  return "";
+}
+
+function getApiUrl(path) {
+  if (!path) return "";
+  if (path.startsWith("http://") || path.startsWith("https://") || path.startsWith("blob:") || path.startsWith("data:")) {
+    return path;
+  }
+  const base = getApiBaseUrl();
+  const cleanPath = path.startsWith("/") ? path : "/" + path;
+  return base ? `${base}${cleanPath}` : cleanPath;
+}
+
+// 🔒 로컬 서버 CSRF 방어 및 API Base URL 자동 라우팅
 (() => {
   const nativeFetch = window.fetch.bind(window);
   window.fetch = (input, init = {}) => {
-    const url = typeof input === "string" ? input : (input && input.url) || String(input || "");
-    if (url.startsWith("/api/") || url.startsWith(location.origin + "/api/")) {
+    let url = typeof input === "string" ? input : (input && input.url) || String(input || "");
+    const isApi = url.startsWith("/api/") || url.startsWith(location.origin + "/api/");
+    if (isApi) {
       const base = init.headers || (input instanceof Request ? input.headers : undefined);
       const headers = new Headers(base);
       headers.set("X-TubeScholar", "1");
       init = { ...init, headers };
+
+      if (url.startsWith("/api/")) {
+        const fullUrl = getApiUrl(url);
+        if (typeof input === "string") {
+          input = fullUrl;
+        } else if (input instanceof Request) {
+          input = new Request(fullUrl, init);
+        }
+      }
     }
     return nativeFetch(input, init);
   };
@@ -2764,6 +2796,10 @@ function toggleDrawer(open) {
 }
 
 async function checkConfig() {
+  const apiBaseInput = document.getElementById("api-base-url-input");
+  if (apiBaseInput) {
+    apiBaseInput.value = localStorage.getItem("tubescholar_api_base_url") || "";
+  }
   try {
     const res = await fetch("/api/config");
     const data = await res.json();
@@ -3367,18 +3403,42 @@ document.addEventListener("DOMContentLoaded", () => {
     const key = document.getElementById("api-key-input").value.trim();
     const groqKeyInput = document.getElementById("groq-api-key-input");
     const groqKey = groqKeyInput ? groqKeyInput.value.trim() : "";
+    const apiBaseInput = document.getElementById("api-base-url-input");
+    let apiBaseChanged = false;
+
+    if (apiBaseInput) {
+      const val = apiBaseInput.value.trim().replace(/\/+$/, "");
+      const oldVal = localStorage.getItem("tubescholar_api_base_url") || "";
+      if (val !== oldVal) {
+        apiBaseChanged = true;
+        if (val) {
+          localStorage.setItem("tubescholar_api_base_url", val);
+        } else {
+          localStorage.removeItem("tubescholar_api_base_url");
+        }
+      }
+    }
 
     const payload = {};
     if (key) payload.api_key = key;
     if (groqKey) payload.groq_api_key = groqKey;
 
+    let savedApiServer = false;
     if (Object.keys(payload).length > 0) {
-      const res = await fetch("/api/config", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-      });
-      if (res.ok) alert(typeof t === "function" ? t("alert_apikey_saved") : "API 키가 성공적으로 저장되었습니다.");
+      try {
+        const res = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) savedApiServer = true;
+      } catch (err) {
+        console.warn("Config save failed:", err);
+      }
+    }
+
+    if (savedApiServer || apiBaseChanged) {
+      alert(typeof t === "function" ? (t("alert_apikey_saved") || "설정이 성공적으로 저장되었습니다.") : "설정이 성공적으로 저장되었습니다.");
     }
     document.getElementById("settings-modal").classList.add("hidden");
     checkConfig();
@@ -3748,7 +3808,7 @@ async function triggerAudiobookPlay() {
       audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
     }
     if (dlBtn) {
-      dlBtn.href = `/api/tts/audio/${ttsSessionCache.note.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.note.shortTitle || noteTitle || "학습노트")}`;
+      dlBtn.href = getApiUrl(`/api/tts/audio/${ttsSessionCache.note.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.note.shortTitle || noteTitle || "학습노트")}`);
       dlBtn.download = ttsSessionCache.note.downloadFilename || `${noteTitle || "학습노트"}_오디오북.mp3`;
       dlBtn.classList.remove("hidden");
     }
@@ -3798,7 +3858,7 @@ async function triggerAudiobookPlay() {
     }
 
     const data = await res.json();
-    const audioUrl = `/api/tts/audio/${data.filename}`;
+    const audioUrl = getApiUrl(`/api/tts/audio/${data.filename}`);
 
     currentTtsCues = data.cues || [];
     ttsNoteCueMap = null;
@@ -3825,7 +3885,7 @@ async function triggerAudiobookPlay() {
     if (dlBtn) {
       const shortTitle = data.short_title || noteTitle || "학습노트";
       const downloadFilename = data.download_filename || `${shortTitle}_오디오북.mp3`;
-      dlBtn.href = `/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
+      dlBtn.href = getApiUrl(`/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`);
       dlBtn.download = downloadFilename;
       dlBtn.classList.remove("hidden");
     }
@@ -3905,7 +3965,7 @@ async function triggerSubtitleAudiobookPlay() {
       audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
     }
     if (dlBtn) {
-      dlBtn.href = `/api/tts/audio/${ttsSessionCache.subtitles.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.subtitles.shortTitle || subTitle || "자막")}`;
+      dlBtn.href = getApiUrl(`/api/tts/audio/${ttsSessionCache.subtitles.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.subtitles.shortTitle || subTitle || "자막")}`);
       dlBtn.download = ttsSessionCache.subtitles.downloadFilename || `${subTitle || "자막"}_자막_더빙.mp3`;
       dlBtn.classList.remove("hidden");
     }
@@ -3955,7 +4015,7 @@ async function triggerSubtitleAudiobookPlay() {
     }
 
     const data = await res.json();
-    const audioUrl = `/api/tts/audio/${data.filename}`;
+    const audioUrl = getApiUrl(`/api/tts/audio/${data.filename}`);
 
     currentTtsCues = data.cues || [];
     subTtsCueMap = data.sub_cue_map || {};
@@ -3982,7 +4042,7 @@ async function triggerSubtitleAudiobookPlay() {
     if (dlBtn) {
       const shortTitle = data.short_title || subTitle || "자막";
       const downloadFilename = data.download_filename || `${shortTitle}_자막_더빙.mp3`;
-      dlBtn.href = `/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
+      dlBtn.href = getApiUrl(`/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`);
       dlBtn.download = downloadFilename;
       dlBtn.classList.remove("hidden");
     }

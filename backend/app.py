@@ -64,6 +64,7 @@ from storage import (
     clean_ai_citation_artifacts
 )
 from starlette.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.cors import CORSMiddleware
 from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
 from stt import transcribe_audio_groq
 from tts import (
@@ -73,14 +74,25 @@ from tts import (
 from typing import List, Dict, Any
 import re
 
+WEB_MODE = os.environ.get("WEB_MODE", "0").lower() in ("1", "true", "yes")
+
 app = FastAPI(title="TubeScholar API")
 
-# 🔒 로컬 서버 보안
-# 1) DNS 리바인딩 방지: Host 헤더가 127.0.0.1/localhost 인 요청만 허용
-app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost"])
+# 🔒 보안 및 CORS 설정
+if not WEB_MODE:
+    # 1) 로컬 데스크톱 전용 모드: DNS 리바인딩 방지 (127.0.0.1/localhost 인 요청만 허용)
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+else:
+    # 2) 웹 배포 모드 (Cloudflare Pages, Hugging Face 등): CORS 전체 허용
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# 2) CSRF 방지: 상태를 바꾸는 /api 요청은 전용 헤더 필수
-#    (외부 웹사이트가 커스텀 헤더를 붙이면 CORS preflight 가 발생하는데, 이 서버는 CORS 를 허용하지 않으므로 차단됨)
+# CSRF 방지: 상태를 바꾸는 /api 요청은 전용 헤더 필수
 _CSRF_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 
 _last_heartbeat = time.time()
@@ -101,7 +113,11 @@ def _perform_exit():
 
 @app.middleware("http")
 async def csrf_guard(request: Request, call_next):
-    if _shutdown_timer is not None and not request.url.path.startswith("/api/system/browser-close"):
+    # CORS Preflight OPTIONS 요청은 헤더 검사 없이 통과
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
+    if not WEB_MODE and _shutdown_timer is not None and not request.url.path.startswith("/api/system/browser-close"):
         cancel_shutdown()
     if request.method in _CSRF_METHODS and request.url.path.startswith("/api/"):
         if request.headers.get("x-tubescholar") != "1":
@@ -1064,7 +1080,9 @@ def get_tts_audio_file(
 
 @app.post("/api/system/browser-close")
 def browser_close_signal():
-    """브라우저 창/탭 닫힘 시 3.0초 후 프로세스 종료 (F5 새로고침인 경우 다음 요청 수신 시 취소)"""
+    """브라우저 창/탭 닫힘 시 3.0초 후 프로세스 종료 (F5 새로고침인 경우 다음 요청 수신 시 취소, 웹 모드에서는 비활성화)"""
+    if WEB_MODE:
+        return {"status": "ignored_in_web_mode"}
     global _shutdown_timer
     with _shutdown_lock:
         if _shutdown_timer is not None:
@@ -1077,6 +1095,8 @@ def browser_close_signal():
 @app.post("/api/system/heartbeat")
 def system_heartbeat():
     """브라우저 활성 생존 신호 수신 (브라우저 창 종료 감지용)"""
+    if WEB_MODE:
+        return {"status": "ok"}
     global _last_heartbeat, _heartbeat_received
     _last_heartbeat = time.time()
     _heartbeat_received = True
@@ -1085,7 +1105,9 @@ def system_heartbeat():
 
 @app.post("/api/system/shutdown")
 def shutdown_app():
-    """웹 UI에서 안전하게 애플리케이션 종료"""
+    """웹 UI에서 안전하게 애플리케이션 종료 (웹 모드에서는 보안상 비활성화)"""
+    if WEB_MODE:
+        return {"success": False, "message": "웹 배포 모드에서는 서버 원격 종료가 허용되지 않습니다."}
     def _shutdown():
         time.sleep(0.5)
         os._exit(0)
@@ -1113,4 +1135,6 @@ if os.path.exists(FRONTEND_DIR):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app:app", host="127.0.0.1", port=8000, reload=True)
+    port = int(os.environ.get("PORT", 8000))
+    host = os.environ.get("HOST", "0.0.0.0" if WEB_MODE else "127.0.0.1")
+    uvicorn.run("app:app", host=host, port=port, reload=True)

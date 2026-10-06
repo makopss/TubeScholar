@@ -8,6 +8,10 @@
 
 무료 Google Gemini API는 물론, 이미 구독 중인 ChatGPT Plus / Claude Pro 등의 외부 LLM과도 유연하게 연동되며, 모든 학습 결과는 내 PC에 표준 마크다운(`.md`)으로 영구 보관되어 노션(Notion) 및 옵시디언(Obsidian)과 완벽하게 호환됩니다.
 
+<p align="center">
+  <img src="docs/images/tubescholar_main_splitview.png" alt="TubeScholar 메인 스플릿 뷰" width="100%" />
+</p>
+
 ---
 
 ## 🌟 주요 핵심 기능
@@ -30,15 +34,27 @@
 - **실시간 싱크 자동 스크롤**: 영상 재생 위치에 맞춰 현재 자막이 자동으로 스크롤 및 하이라이트 (컴팩트 `📜` 체크박스 토글).
 - **실시간 검색 및 내보내기**: 자막 키워드 검색, `.SRT` 및 `.TXT` 파일 다운로드.
 
+<p align="center">
+  <img src="docs/images/tubescholar_subtitles_studio.png" alt="인터랙티브 자막 스튜디오" width="100%" />
+</p>
+
 ### 4. 🎧 듀얼 AI 신경망 오디오북 & 더빙 시스템 (edge-tts)
 - **학습 노트 오디오북**: 마크다운 학습 노트를 Microsoft 고품질 신경망 음성으로 낭독하는 오디오북 플레이어.
 - **자막 더빙 오디오북 (Subtitle Dubbing)**: 영상의 자막 대사 전체를 성우 음성으로 더빙하여 들려주며, 대사별 실시간 하이라이트 및 자동 스크롤 추적 지원.
 - **0ms 즉각 세션 전환**: 학습 노트 오디오북과 자막 더빙 오디오북 간 지연 없는 즉각 전환 및 상태 배지(Playing / Paused / Ready) 정밀 연동.
 - 배속 조절, 다채로운 음성 모델 선택 및 맞춤형 `.mp3` 다운로드 지원.
 
+<p align="center">
+  <img src="docs/images/tubescholar_audiobook_player.png" alt="듀얼 AI 신경망 오디오북" width="100%" />
+</p>
+
 ### 5. 📖 집중 독서 모드 (Zen Reader View)
 - 영상과 패널을 접고 책처럼 편안하게 읽는 집중 독서 모드 (단축키: `Z`).
 - 다크 / 세피아(종이책) / 라이트 테마 지원, 글자 크기 조절, 자동 목차(TOC) 패널 제공.
+
+<p align="center">
+  <img src="docs/images/tubescholar_zen_reader.png" alt="집중 독서 모드 (Zen Reader View)" width="100%" />
+</p>
 
 ### 6. 📋 구독형 AI(ChatGPT / Claude) 연동, 수식 표준화 및 출처 태그 자동 정제
 - 이미 사용 중인 ChatGPT Plus, Claude Pro 등에서 분석한 답변을 인라인으로 붙여넣어 TubeScholar 전용 학습 노트로 즉시 적용 및 영구 저장.
@@ -49,6 +65,10 @@
 - **한국어 / 영어 2개 공식 UI** 언어 지원 (헤더 드롭다운으로 즉시 전환).
 - 생성된 모든 학습 문서는 로컬 `data/notes/` 폴더에 표준 `.md` 파일로 영구 보관되며, **Obsidian**, **Logseq**, **Notion** 등에 즉시 복사/연동 가능.
 - 보관함 드로어(Drawer)를 통해 과거 학습한 영상을 빠르게 검색 및 복원.
+
+<p align="center">
+  <img src="docs/images/tubescholar_library_drawer.png" alt="학습 보관함 드로어" width="100%" />
+</p>
 
 ---
 

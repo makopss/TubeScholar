@@ -1,0 +1,16 @@
+.venv
+node_modules
+build
+dist
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.git
+.github
+.gitignore
+.env
+TubeScholar.spec
+installer.iss
+build_installer.bat
+*.exe

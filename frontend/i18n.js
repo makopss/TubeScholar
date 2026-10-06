@@ -213,6 +213,8 @@ const TUBESCHOLAR_I18N = {
     settings_groq_badge: "",
     settings_groq_link: "무료 키 발급받기",
     settings_groq_tip: "",
+    settings_api_server_label: "🌐 백엔드 API 서버 주소",
+    settings_api_server_hint: "로컬 비워둠 / 웹 배포 시 입력",
     settings_save_btn_simple: "저장하기",
 
     // 자막 번역 진행 모달
@@ -671,6 +673,8 @@ const TUBESCHOLAR_I18N = {
     settings_groq_badge: "",
     settings_groq_link: "Get Free Key",
     settings_groq_tip: "",
+    settings_api_server_label: "🌐 Backend API Server URL",
+    settings_api_server_hint: "Leave empty for local / Set for web",
     settings_save_btn_simple: "Save",
 
     // Subtitle Translation Progress Modal
@@ -1129,6 +1133,8 @@ const TUBESCHOLAR_I18N = {
     settings_groq_badge: "",
     settings_groq_link: "無料キーを取得",
     settings_groq_tip: "",
+    settings_api_server_label: "🌐 バックエンドAPIサーバーURL",
+    settings_api_server_hint: "ローカルは空欄 / Web公開時に入力",
     settings_save_btn_simple: "保存する",
 
     // 字幕翻訳進行モーダル
