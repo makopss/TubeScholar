@@ -16,6 +16,7 @@ else:
 DATA_DIR = os.environ.get("TUBESCHOLAR_DATA_DIR") or DEFAULT_DATA_DIR
 NOTES_DIR = os.path.join(DATA_DIR, "notes")
 TRANSLATIONS_DIR = os.path.join(DATA_DIR, "translations")
+PROMPTS_DIR = os.path.join(DATA_DIR, "prompts")
 LIBRARY_FILE = os.path.join(DATA_DIR, "library.json")
 LIBRARY_BACKUP = LIBRARY_FILE + ".bak"
 
@@ -54,6 +55,7 @@ def ensure_dirs():
     """데이터 및 노트 저장 디렉토리를 확인하고 생성합니다."""
     os.makedirs(NOTES_DIR, exist_ok=True)
     os.makedirs(TRANSLATIONS_DIR, exist_ok=True)
+    os.makedirs(PROMPTS_DIR, exist_ok=True)
     if not os.path.exists(LIBRARY_FILE) and not os.path.exists(LIBRARY_BACKUP):
         _atomic_write_json(LIBRARY_FILE, {"notes": {}})
 

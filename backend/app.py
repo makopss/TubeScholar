@@ -63,6 +63,7 @@ from storage import (
     update_note_subtitles, is_safe_note_id, get_cached_subtitles, save_translation_cache,
     clean_ai_citation_artifacts
 )
+from prompt_loader import list_available_templates, get_user_prompts_dir
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
 from stt import transcribe_audio_groq
@@ -1091,6 +1092,29 @@ def shutdown_app():
         os._exit(0)
     threading.Thread(target=_shutdown, daemon=True).start()
     return {"success": True, "message": "TubeScholar 서버가 종료됩니다."}
+
+@app.get("/api/prompts/templates")
+def api_list_prompt_templates():
+    """사용 가능한 마크다운 템플릿 목록 및 커스텀 상태 반환"""
+    return {
+        "success": True,
+        "templates": list_available_templates(),
+        "user_prompts_dir": get_user_prompts_dir()
+    }
+
+@app.post("/api/prompts/open-folder")
+def api_open_prompts_folder():
+    """사용자 커스텀 프롬프트 마크다운 폴더를 윈도우 탐색기로 엽니다."""
+    folder = get_user_prompts_dir()
+    try:
+        if os.name == "nt":
+            os.startfile(folder)
+        else:
+            import subprocess
+            subprocess.run(["xdg-open", folder])
+        return {"success": True, "path": folder}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 # 프론트엔드 정적 파일 서빙
 FRONTEND_DIR = os.path.join(BUNDLE_DIR, "frontend")

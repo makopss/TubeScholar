@@ -5,9 +5,10 @@ from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
-# 번들링할 프론트엔드 정적 파일 및 아이콘
+# 번들링할 프론트엔드 정적 파일 및 아이콘, 프롬프트 템플릿 마크다운
 datas = [
     ('frontend', 'frontend'),
+    ('prompts', 'prompts'),
     ('app_icon.ico', '.'),
 ]
 binaries = []

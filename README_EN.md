@@ -69,6 +69,11 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
   <img src="docs/images/tubescholar_library_drawer.png" alt="Study Library Drawer" width="100%" />
 </p>
 
+### 8. 📝 Decoupled Markdown Templates & User Customization (Prompt & Markdown Templates)
+- **Zero-Code Format Customization**: System prompts and note templates have been decoupled from source code into independent markdown files (`prompts/system_*.md`). Modify any markdown file and your custom format applies immediately to subsequent video analyses.
+- **Dedicated Multilingual Templates**: Pre-configured templates for foreign-to-Korean translation (`system_ko.md`), native Korean enhancement (`system_ko_native.md`), English master notes (`system_en.md`), Japanese master notes (`system_ja.md`), and general multilingual (`system_default.md`).
+- **User Overlay System**: Place customized `.md` files in your user data directory (`data/prompts/`) to prioritize personal note formats over default built-ins, with instantaneous fallback upon removal.
+
 ---
 
 ## 🚀 Quick Start
@@ -76,7 +81,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run `TubeScholar-Setup-v1.0.0.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
+Download and run `TubeScholar-Setup-v1.1.0.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
 
 #### Option B: Run from Source
 1. **Clone the repository:**
@@ -127,12 +132,20 @@ Click the ⚙️ **Settings** icon in the top header (saved locally and securely
 TubeScholar/
 ├── backend/
 │   ├── app.py              # FastAPI server & API routing
+│   ├── prompt_loader.py    # Dynamic markdown template loader & user overlay manager
 │   ├── extractor.py        # YouTube subtitle & metadata extractor
 │   ├── analyzer.py         # Google Gemini knowledge expansion & smart fallback engine
 │   ├── storage.py          # Markdown notes & AI artifact cleaner & library store
 │   ├── tts.py              # edge-tts neural audiobook & subtitle dubbing engine
 │   ├── stt.py              # Groq Cloud Whisper-large-v3 ultrafast STT engine
 │   └── languages.py        # 17-language catalog & normalization
+├── prompts/                # [NEW] Decoupled markdown system prompt templates
+│   ├── system_ko.md        # Korean (foreign video translation/analysis)
+│   ├── system_ko_native.md # Korean (native content enhancement)
+│   ├── system_en.md        # English master knowledge note
+│   ├── system_ja.md        # Japanese master knowledge note
+│   ├── system_default.md   # General multilingual template
+│   └── README.md           # Prompt customization guide
 ├── frontend/
 │   ├── index.html          # Interactive split-view dashboard UI
 │   ├── app.js              # Unified interactive client JS (Player, Subtitle Editor, Audiobooks)
@@ -141,6 +154,7 @@ TubeScholar/
 │   └── vendor/             # Standalone offline vendor libraries (Tailwind, Marked, DOMPurify)
 ├── data/
 │   ├── notes/              # Permanent Markdown (.md) study notes
+│   ├── prompts/            # User custom markdown templates (Optional)
 │   └── library.json        # Video metadata & study session index
 ├── run.py                  # One-click server launcher & browser watchdog
 ├── requirements.txt        # Python backend dependency manifest

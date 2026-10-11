@@ -76,7 +76,7 @@ echo  ✨ TubeScholar Windows 설치 파일이 성공적으로 제작되었습�
 echo ================================================================
 echo.
 echo  📍 설치 파일 위치:
-echo     dist\installer\TubeScholar-Setup-v1.0.0.exe
+echo     dist\installer\TubeScholar-Setup-v1.1.0.exe
 echo.
 echo  이제 위 Setup 파일을 다른 PC로 전달하여 설치 마법사로 설치할 수 있습니다.
 echo ================================================================
