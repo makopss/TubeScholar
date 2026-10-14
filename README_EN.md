@@ -29,20 +29,21 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 - **Multi-language Generation**: Generates study notes in 17 world languages.
 
 ### 3. 💬 Interactive Subtitle Studio & Direct Editing
-- **3 Reading Modes**: `Original`, `Trans` (translated), and `Both` (bilingual display).
+- **3 Reading Modes & Multilingual Cache Preservation**: Switch seamlessly between `Original`, `Trans` (translated), and `Both` (bilingual display) while automatically preserving and restoring translated subtitle tracks per saved note.
 - **In-Place Subtitle Editor**: Directly edit and correct subtitle typos/mistranslations in the browser (`✏️`) with instant saving (`Ctrl+Enter`) while preserving exact video timestamps.
 - **Synchronized Auto-Scroll**: Highlights and scrolls automatically to the currently playing subtitle line (with a compact `📜` toggle).
-- **Instant Search & Export**: Full-text keyword search across lines; export to `.SRT` and `.TXT`.
+- **Instant Search & Resilient Export**: Full-text keyword search across lines; one-click export to `.SRT` and `.TXT` with automatic client-side memory fallback so exports work before and after saving.
 
 <p align="center">
   <img src="docs/images/tubescholar_subtitles_studio.png" alt="Interactive Subtitle Studio" width="100%" />
 </p>
 
-### 4. 🎧 Dual AI Neural Audiobook & Dubbing System (edge-tts)
-- **Study Note Audiobook**: Listen to generated markdown study notes with Microsoft Neural voices (`edge-tts`).
+### 4. 🎧 Dual AI Neural Audiobook & Persistent Sync System (edge-tts)
+- **7 Languages & 16 Microsoft Neural Voices**: Choose from 16 expressive neural voices across Korean, English, Japanese, Chinese, Spanish, French, and German.
+- **Study Note Audiobook**: Listen to generated markdown study notes with paragraph-by-paragraph highlight synchronization.
 - **Subtitle Dubbing Audiobook (Subtitle Dubbing)**: Voices entire subtitle transcripts in natural spoken tone, synchronized with real-time text highlight cues and auto-scroll.
-- **Zero-Latency Session Switching**: Instantly toggle between Note Audiobook and Subtitle Dubbing with 0ms delay and reactive status badges (Playing / Paused / Ready).
-- Configurable narration speed, multiple voice tone options, and one-click `.mp3` download.
+- **Persistent Note-Audiobook Binding & Library Sync**: Generated audiobooks (`.mp3`) and timeline cue maps (`.json`) are permanently bound to your saved study notes. Re-opening a note from the Library **instantly restores the audiobook player and 100% cue highlight sync without regenerating TTS**.
+- **Zero-Latency Session Switching**: Instantly toggle between Note Audiobook and Subtitle Dubbing with 0ms delay, configurable narration speed (`0.75x` – `2.0x`), and one-click `.mp3` download.
 
 <p align="center">
   <img src="docs/images/tubescholar_audiobook_player.png" alt="Dual AI Neural Audiobook & Dubbing System" width="100%" />
@@ -60,10 +61,11 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 - Clipboard prompts enforce plain Markdown formulas rather than unrendered LaTeX math markup.
 - Automatically cleans search citations and reference tags (e.g. `:chatgpt-content-reference{...}`, `【...】`, `[cite: ...]`) and transforms raw LaTeX math blocks (`\[...\]`, `_{...}`) into clean, universal formula quote boxes (`> 📐 **공식**: ...`).
 
-### 7. 🌐 Clean Bilingual UI & Persistent Storage
-- Streamlined modern interface available in **Korean** and **English**.
-- All study notes are stored permanently on your machine in standard Markdown (`data/notes/`), ready to be synced with **Obsidian**, **Logseq**, or **Notion**.
-- Built-in library drawer for lightning-fast search and management of previously analyzed videos.
+### 7. 🌐 Clean Bilingual UI & High-Speed Decoupled Storage
+- Streamlined modern interface available in **Korean** and **English** (instant header dropdown switch).
+- **Decoupled High-Speed Storage Architecture**: Separates Markdown notes (`data/notes/`), heavy multilingual subtitle bundles (`data/subtitles/`), and neural audiobooks/cues (`data/audio/`) with `mtime`-based in-memory index caching—keeping library loading instantaneous even with hundreds of saved notes.
+- **Library Audiobook Badge (`🎧`) & Auto-Reset**: Easily spot notes with saved audiobooks via the `🎧` badge in the Library drawer. Switching notes cleanly resets any active audio playback and immediately synchronizes the newly selected note's saved audiobook.
+- All study notes are stored permanently in standard Markdown, ready to be synced with **Obsidian**, **Logseq**, or **Notion**.
 
 <p align="center">
   <img src="docs/images/tubescholar_library_drawer.png" alt="Study Library Drawer" width="100%" />
@@ -170,9 +172,12 @@ TubeScholar/
 
 ## 🛠️ Tech Stack
 
-- **Backend**: FastAPI, Python 3.12, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, yt-dlp, youtube-transcript-api, edge-tts
-- **Frontend**: Vanilla JavaScript (ES6+), Tailwind CSS (Standalone build), Marked.js, DOMPurify
-- **Packaging**: PyInstaller (onedir mode), Inno Setup 6 (lzma2/ultra64 Windows Setup Wizard)
+- **Backend**: FastAPI, Python 3.12, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `edge-tts` (`7.3.1+`)
+- **Frontend**: Vanilla JavaScript (ES6+), Web Worker Heartbeat, Tailwind CSS (Standalone build), Marked.js, DOMPurify
+- **Security & Stability**: Localhost Origin/Host validation middleware, atomic file writes (`os.replace`), `threading.RLock` concurrency protection
+- **Packaging**: PyInstaller (`onedir` mode), Inno Setup 6 (`lzma2/ultra64` Windows Setup Wizard)
+
+---
 
 ## ⚠️ Disclaimer
 

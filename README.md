@@ -29,20 +29,21 @@
 - **17개 다국어 노트 생성 지원**: 한국어, 영어, 일본어 등 원하는 언어로 학습 노트를 즉시 생성 및 재작성(`🔄`).
 
 ### 3. 💬 인터랙티브 자막 스튜디오 & 실시간 직접 편집
-- **3대 뷰 모드**: `원문`, `번역문(Trans)`, `모두(Both)` 3가지 모드로 대사 시청.
+- **3대 뷰 모드 & 다국어 번역 캐시 보존**: `원문`, `번역문(Trans)`, `모두(Both)` 3가지 모드로 대사를 시청하며, 번역된 다국어 자막 데이터를 노트별로 자동 보존·복원합니다.
 - **자막 직접 수정 모드 (In-Place Editor)**: 오타나 어색한 번역 대사를 UI에서 바로 타이핑 수정(`✏️`) 및 즉각 저장(`Ctrl+Enter`). 원본 타임스탬프를 100% 안전하게 보존.
 - **실시간 싱크 자동 스크롤**: 영상 재생 위치에 맞춰 현재 자막이 자동으로 스크롤 및 하이라이트 (컴팩트 `📜` 체크박스 토글).
-- **실시간 검색 및 내보내기**: 자막 키워드 검색, `.SRT` 및 `.TXT` 파일 다운로드.
+- **실시간 검색 및 무중단 내보내기**: 자막 키워드 검색, `.SRT` 및 `.TXT` 파일 즉시 다운로드(클라이언트 메모리 폴백 지원으로 저장 전·후 언제든 내보내기 가능).
 
 <p align="center">
   <img src="docs/images/tubescholar_subtitles_studio.png" alt="인터랙티브 자막 스튜디오" width="100%" />
 </p>
 
-### 4. 🎧 듀얼 AI 신경망 오디오북 & 더빙 시스템 (edge-tts)
-- **학습 노트 오디오북**: 마크다운 학습 노트를 Microsoft 고품질 신경망 음성으로 낭독하는 오디오북 플레이어.
-- **자막 더빙 오디오북 (Subtitle Dubbing)**: 영상의 자막 대사 전체를 성우 음성으로 더빙하여 들려주며, 대사별 실시간 하이라이트 및 자동 스크롤 추적 지원.
-- **0ms 즉각 세션 전환**: 학습 노트 오디오북과 자막 더빙 오디오북 간 지연 없는 즉각 전환 및 상태 배지(Playing / Paused / Ready) 정밀 연동.
-- 배속 조절, 다채로운 음성 모델 선택 및 맞춤형 `.mp3` 다운로드 지원.
+### 4. 🎧 듀얼 AI 신경망 오디오북 & 영구 동기화 시스템 (edge-tts)
+- **7개 국어 · 16종 고품질 신경망 성우 지원**: 한국어, 영어, 일본어, 중국어, 스페인어, 프랑스어, 독일어 등 7개 언어 총 16종의 Microsoft Neural 음성을 선택하여 자연스러운 낭독 및 더빙을 생성합니다.
+- **학습 노트 오디오북**: 마크다운 학습 노트를 문단별 하이라이트와 함께 고품질 신경망 음성으로 낭독하는 오디오북 플레이어.
+- **자막 더빙 오디오북 (Subtitle Dubbing)**: 영상의 자막 대사 전체를 성우 음성으로 더빙하여 들려주며, 대사별 실시간 하이라이트 및 자동 스크롤 추적을 지원합니다.
+- **노트-오디오북 영구 결합 & 보관함 완벽 복원**: 노트를 저장할 때 생성된 오디오북(`.mp3`)과 타임라인 큐(`.json`)가 함께 영구 바인딩되어, 나중에 보관함에서 노트를 다시 열면 **재생성 없이 즉시 오디오북 재생 및 문단/자막 실시간 하이라이트 싱크가 100% 복원**됩니다.
+- **0ms 즉각 세션 전환 & 배속/다운로드**: 학습 노트 오디오북과 자막 더빙 오디오북 간 지연 없는 전환, 배속 조절(`0.75x` ~ `2.0x`), 맞춤형 `.mp3` 다운로드 지원.
 
 <p align="center">
   <img src="docs/images/tubescholar_audiobook_player.png" alt="듀얼 AI 신경망 오디오북" width="100%" />
@@ -61,10 +62,11 @@
 - 클립보드 프롬프트 자동 생성 시 복잡한 LaTeX 대신 표준 마크다운(코드 블록, 인용구)으로 수식을 작성하도록 유도.
 - AI 답변에 섞여 들어오는 `:chatgpt-content-reference{...}`, `【4:0†source】`, `[cite: 1]` 등의 출처 참조 찌꺼기 및 깨진 원시 LaTeX 수식 코드(`\[...\]`, `_{...}`)를 미려한 표준 마크다운 공식 박스(`> 📐 **공식**: ...`)로 자동 필터링 및 정제.
 
-### 7. 🌐 직관적인 UI 및 영구 보관
+### 7. 🌐 직관적인 UI 및 초고속 분리형 영구 보관소
 - **한국어 / 영어 2개 공식 UI** 언어 지원 (헤더 드롭다운으로 즉시 전환).
-- 생성된 모든 학습 문서는 로컬 `data/notes/` 폴더에 표준 `.md` 파일로 영구 보관되며, **Obsidian**, **Logseq**, **Notion** 등에 즉시 복사/연동 가능.
-- 보관함 드로어(Drawer)를 통해 과거 학습한 영상을 빠르게 검색 및 복원.
+- **분리형 고속 스토리지 아키텍처**: 마크다운 노트(`data/notes/`), 대용량 다국어 자막 번들(`data/subtitles/`), 신경망 오디오북 및 타임라인 큐(`data/audio/`)를 독립 분리하고 `mtime` 기반 인메모리 캐싱을 적용하여 수백 개의 노트가 쌓여도 보관함을 즉각 로딩합니다.
+- **보관함 오디오북 배지 (`🎧`) & 자동 리셋**: 보관함 드로어(Drawer)에서 오디오북이 함께 저장된 노트를 `🎧` 배지로 한눈에 식별하며, 다른 노트로 전환 시 이전 오디오 세션을 깔끔하게 초기화하고 해당 노트의 오디오북을 즉시 동기화합니다.
+- 생성된 모든 학습 문서는 표준 `.md` 파일로 영구 보관되어 **Obsidian**, **Logseq**, **Notion** 등에 즉시 복사/연동 가능.
 
 <p align="center">
   <img src="docs/images/tubescholar_library_drawer.png" alt="학습 보관함 드로어" width="100%" />
@@ -164,6 +166,15 @@ TubeScholar/
 ├── installer.iss           # Inno Setup 6 설치 마법사 정의 파일
 └── TubeScholar.spec        # PyInstaller 데스크톱 앱 번들링 명세서
 ```
+
+---
+
+## 🛠️ 기술 스택 (Tech Stack)
+
+- **Backend**: FastAPI, Python 3.12, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `edge-tts` (`7.3.1+`)
+- **Frontend**: Vanilla JavaScript (ES6+), Web Worker Heartbeat, Tailwind CSS (Standalone build), Marked.js, DOMPurify
+- **Security & Stability**: Localhost Origin/Host 검증 미들웨어, `os.replace` 원자적 파일 쓰기(Atomic Write), `threading.RLock` 동시성 보호
+- **Packaging**: PyInstaller (`onedir` 모드), Inno Setup 6 (`lzma2/ultra64` Windows 설치 마법사)
 
 ---
 
