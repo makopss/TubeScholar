@@ -2,7 +2,7 @@
 ; Generates TubeScholar-Setup-v1.0.0.exe
 
 #define MyAppName "TubeScholar"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.1"
 #define MyAppPublisher "TubeScholar Team"
 #define MyAppURL "https://github.com/makopss/TubeScholar"
 #define MyAppExeName "TubeScholar.exe"
@@ -25,7 +25,7 @@ DisableProgramGroupPage=yes
 
 ; Output Configuration
 OutputDir=dist\installer
-OutputBaseFilename=TubeScholar-Setup-v1.2.0
+OutputBaseFilename=TubeScholar-Setup-v1.2.1
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

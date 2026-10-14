@@ -39,11 +39,11 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 </p>
 
 ### 4. 🎧 Dual AI Neural Audiobook & Persistent Sync System (edge-tts)
-- **7 Languages & 16 Microsoft Neural Voices**: Choose from 16 expressive neural voices across Korean, English, Japanese, Chinese, Spanish, French, and German.
+- **7 Languages, 16 Microsoft Neural Voices & Smart Voice Matching**: Choose from 16 expressive neural voices across Korean, English, Japanese, Chinese, Spanish, French, and German, with automatic language-compatible voice selection when switching between notes and subtitle tracks.
 - **Study Note Audiobook**: Listen to generated markdown study notes with paragraph-by-paragraph highlight synchronization.
 - **Subtitle Dubbing Audiobook (Subtitle Dubbing)**: Voices entire subtitle transcripts in natural spoken tone, synchronized with real-time text highlight cues and auto-scroll.
-- **Persistent Note-Audiobook Binding & Library Sync**: Generated audiobooks (`.mp3`) and timeline cue maps (`.json`) are permanently bound to your saved study notes. Re-opening a note from the Library **instantly restores the audiobook player and 100% cue highlight sync without regenerating TTS**.
-- **Zero-Latency Session Switching**: Instantly toggle between Note Audiobook and Subtitle Dubbing with 0ms delay, configurable narration speed (`0.75x` – `2.0x`), and one-click `.mp3` download.
+- **Persistent Note-Audiobook Binding & Stale Cache Cleanup**: Generated audiobooks (`.mp3`) and timeline cue maps (`.json`) are permanently bound to your saved study notes—instantly restoring the player and 100% cue highlight sync on reload—while automatically cleaning up outdated audio files when notes or subtitles are edited.
+- **Zero-Latency Session Switching & Clean Download Filenames**: Toggle seamlessly between Note Audiobook (`{Title}_Audiobook.mp3`) and Subtitle Dubbing (`sub_{Title}_Audiobook.mp3`) with configurable narration speed (`0.75x` – `2.0x`) and clean title-based `.mp3` downloads.
 
 <p align="center">
   <img src="docs/images/tubescholar_audiobook_player.png" alt="Dual AI Neural Audiobook & Dubbing System" width="100%" />
@@ -73,7 +73,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 
 ### 8. 📝 Decoupled Markdown Templates & User Customization (Prompt & Markdown Templates)
 - **Zero-Code Format Customization**: System prompts and note templates have been decoupled from source code into independent markdown files (`prompts/system_*.md`). Modify any markdown file and your custom format applies immediately to subsequent video analyses.
-- **Dedicated Multilingual Templates**: Pre-configured templates for foreign-to-Korean translation (`system_ko.md`), native Korean enhancement (`system_ko_native.md`), English master notes (`system_en.md`), Japanese master notes (`system_ja.md`), and general multilingual (`system_default.md`).
+- **Dedicated Multilingual Templates & Local Subtitle Auto-Detection**: Automatically detects source languages for both YouTube and local `.srt`/`.vtt`/video files, routing appropriately to foreign-to-Korean translation (`system_ko.md`), native Korean enhancement (`system_ko_native.md`), English (`system_en.md`), Japanese (`system_ja.md`), or general multilingual (`system_default.md`) templates.
 - **User Overlay System**: Place customized `.md` files in your user data directory (`data/prompts/`) to prioritize personal note formats over default built-ins, with instantaneous fallback upon removal.
 
 ---
@@ -83,7 +83,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run `TubeScholar-Setup-v1.2.0.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
+Download and run `TubeScholar-Setup-v1.2.1.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
 
 #### Option B: Run from Source
 1. **Clone the repository:**

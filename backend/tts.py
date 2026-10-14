@@ -353,26 +353,19 @@ def abbreviate_note_title(title: str, max_len: int = 40) -> str:
     return s or "학습노트"
 
 def get_audiobook_download_filename(title: str, max_len: int = 40, is_subtitles: bool = False) -> str:
-    """오디오북 다운로드용 최종 MP3 파일명 생성 (예: '제목축약_오디오북.mp3' 또는 '제목축약_자막_더빙.mp3')"""
+    """오디오북 다운로드용 최종 MP3 파일명 생성 (노트: '제목축약_오디오북.mp3', 자막: 'sub_제목축약_오디오북.mp3')"""
     short_title = abbreviate_note_title(title, max_len=max_len)
     
-    # 언어별 자연스러운 접미사
-    if is_subtitles:
-        if re.search(r'[\uac00-\ud7a3]', short_title):
-            suffix = "_자막_더빙"
-        elif re.search(r'[\u3040-\u30ff]', short_title):
-            suffix = "_字幕_吹き替え"
-        else:
-            suffix = "_Subtitle_Dub"
+    # 언어별 자연스러운 접미사 (노트 오디오북과 동일한 형식에 자막 오디오북은 sub_ 접두사 부여)
+    if re.search(r'[\uac00-\ud7a3]', short_title):
+        suffix = "_오디오북"
+    elif re.search(r'[\u3040-\u30ff]', short_title):
+        suffix = "_オーディオブック"
     else:
-        if re.search(r'[\uac00-\ud7a3]', short_title):
-            suffix = "_오디오북"
-        elif re.search(r'[\u3040-\u30ff]', short_title):
-            suffix = "_オーディオブック"
-        else:
-            suffix = "_Audiobook"
+        suffix = "_Audiobook"
         
-    return f"{short_title}{suffix}.mp3"
+    prefix = "sub_" if is_subtitles else ""
+    return f"{prefix}{short_title}{suffix}.mp3"
 
 def clean_subtitle_line_for_tts(text: str) -> str:
     """자막 한 줄을 음성 합성용으로 정제 (효과음/음악 괄호, AI 태그, HTML 태그 등 제거)"""
@@ -675,6 +668,73 @@ def find_saved_note_audiobook(
         except Exception:
             continue
     return None
+
+
+def compute_subtitle_script_hashes(subtitles: List[Dict[str, Any]]) -> set:
+    """현재 자막 배열로부터 생성될 수 있는 원문(orig) 및 번역(dub) 스크립트 해시 집합을 반환합니다."""
+    hashes = set()
+    if not subtitles:
+        return hashes
+    for mode in ("original", "ko"):
+        lines = []
+        for s in subtitles:
+            if not isinstance(s, dict):
+                continue
+            if mode == "ko":
+                raw = (s.get("ko_text") or s.get("text") or "").strip()
+            else:
+                raw = (s.get("text") or "").strip()
+            cleaned = clean_subtitle_line_for_tts(raw)
+            if cleaned:
+                lines.append(cleaned)
+        if lines:
+            full_script = "\n".join(lines)
+            hashes.add(hashlib.sha1(full_script.encode("utf-8")).hexdigest()[:8])
+    return hashes
+
+
+def cleanup_stale_subtitle_audiobooks(
+    note_id: str = "",
+    video_id: str = "",
+    subtitles: Optional[List[Dict[str, Any]]] = None,
+    extra_subtitles_sets: Optional[List[List[Dict[str, Any]]]] = None
+) -> None:
+    """자막 수정/재번역 저장 시 유효한 자막 해시와 일치하지 않는 구버전 자막 더빙 오디오 파일을 정리합니다."""
+    if not os.path.isdir(AUDIO_DIR) or not subtitles:
+        return
+    valid_hashes = compute_subtitle_script_hashes(subtitles)
+    for extra_subs in (extra_subtitles_sets or []):
+        if extra_subs:
+            valid_hashes.update(compute_subtitle_script_hashes(extra_subs))
+    if not valid_hashes:
+        return
+
+    prefixes = []
+    if note_id:
+        safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', str(note_id))[:80]
+        if safe_note:
+            prefixes.append(f"sub_{safe_note}_")
+    if video_id:
+        safe_vid = re.sub(r'[^A-Za-z0-9_-]', '_', str(video_id))[:80]
+        if safe_vid and f"sub_{safe_vid}_" not in prefixes:
+            prefixes.append(f"sub_{safe_vid}_")
+    if not prefixes:
+        return
+
+    try:
+        for fname in os.listdir(AUDIO_DIR):
+            if not (fname.endswith(".mp3") or fname.endswith(".json")):
+                continue
+            if not any(fname.startswith(p) for p in prefixes):
+                continue
+            stem = fname[:-4] if fname.endswith(".mp3") else fname[:-5]
+            if not any(stem.endswith(f"_{h}") for h in valid_hashes):
+                try:
+                    os.remove(os.path.join(AUDIO_DIR, fname))
+                except Exception:
+                    pass
+    except Exception:
+        pass
 
 
 def find_saved_subtitle_audiobook(

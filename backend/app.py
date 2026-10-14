@@ -39,6 +39,7 @@ from extractor import (
     get_channel_videos, 
     is_valid_youtube_channel_url,
     parse_srt_vtt_text,
+    detect_text_language,
     convert_to_srt,
     convert_to_txt
 )
@@ -62,7 +63,7 @@ from storage import (
     clean_ai_citation_artifacts
 )
 from prompt_loader import list_available_templates, get_user_prompts_dir
-from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
+from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang, is_same_language
 from stt import transcribe_audio_groq
 from tts import (
     generate_note_audio, generate_subtitles_audio, list_available_voices,
@@ -107,6 +108,8 @@ async def csrf_guard(request: Request, call_next):
         if request.headers.get("x-tubescholar") != "1":
             return JSONResponse(status_code=403, content={"detail": "허용되지 않은 요청입니다. (CSRF 보호)"})
     response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache"
     if not request.url.path.startswith("/api/system/browser-close"):
         _last_heartbeat = time.time()
     return response
@@ -154,12 +157,15 @@ class RegenerateNoteRequest(BaseModel):
     url: Optional[str] = ""
     note_id: Optional[str] = None
     subtitles: List[Dict[str, Any]]
+    source_lang: Optional[str] = None
     note_target_lang: Optional[str] = DEFAULT_TARGET_LANG
     gemini_model: Optional[str] = DEFAULT_NOTE_MODEL
 
 class ManualSaveRequest(BaseModel):
     url: Optional[str] = ""
+    video_id: Optional[str] = None
     title: Optional[str] = ""
+    channel: Optional[str] = ""
     markdown: str
     video_type: Optional[str] = "youtube"
     note_id: Optional[str] = None
@@ -372,7 +378,10 @@ def get_prompt_for_ai(req: PromptRequest):
 def get_local_prompt_for_ai(req: LocalPromptRequest):
     """로컬 자막 파일로부터 ChatGPT/Claude 복사용 프롬프트 생성"""
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    target = normalize_target_lang(req.target_lang)
     note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
+    src_lang = transcript_result.get("language") or "en"
+    same_lang = is_same_language(src_lang, target)
     video_info = {
         "video_id": f"local_{int(time.time())}",
         "title": req.title or "로컬 비디오",
@@ -385,6 +394,14 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
         "success": True,
         "video_info": video_info,
         "prompt": prompt_text,
+        "subtitles": transcript_result.get("subtitles", []),
+        "source_lang": src_lang,
+        "original_lang": src_lang,
+        "transcript_language": src_lang,
+        "is_korean": src_lang == "ko",
+        "is_same_language": same_lang,
+        "translation_source": "same" if same_lang else None,
+        "target_lang": target,
         "note_target_lang": note_target
     }
 
@@ -401,6 +418,9 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
     target = normalize_target_lang(req.target_lang)
     note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
+    src_lang = transcript_result.get("language") or "en"
+    same_lang = is_same_language(src_lang, target)
+    trans_source = "same" if same_lang else None
     video_info = {
         "video_id": f"local_{int(time.time())}",
         "title": req.title or "로컬 비디오",
@@ -423,17 +443,31 @@ def analyze_local_video(req: LocalAnalyzeRequest):
         video_info, 
         llm_result["markdown"], 
         subtitles=transcript_result.get("subtitles", []),
-        lang_meta={"target_lang": target, "note_target_lang": note_target}
+        lang_meta={
+            "source_lang": src_lang,
+            "target_lang": target,
+            "note_target_lang": note_target,
+            "translation_source": trans_source
+        }
     )
     return {
         "success": True,
         "note_id": save_res["note_id"],
         "video_info": video_info,
-        "subtitles": transcript_result.get("subtitles", []),
+        "subtitles": save_res["metadata"].get("subtitles", transcript_result.get("subtitles", [])),
+        "source_lang": src_lang,
+        "original_lang": src_lang,
+        "transcript_language": src_lang,
+        "is_korean": src_lang == "ko",
+        "is_same_language": same_lang,
+        "translation_source": trans_source,
+        "target_lang": target,
         "model_used": llm_result.get("model_used"),
         "markdown": save_res["markdown"],
         "file_path": save_res["file_path"],
-        "note_target_lang": note_target
+        "note_target_lang": note_target,
+        "audiobook": save_res.get("audiobook"),
+        "subtitle_audiobook": save_res.get("subtitle_audiobook"),
     }
 
 @app.post("/api/local/video-analyze")
@@ -502,6 +536,7 @@ def analyze_local_video_audio(
         if stt_result and stt_result.get("success") and stt_result.get("subtitles"):
             # Groq Whisper 자막 완성 -> Gemini에게 전달하여 지식 확장 노트 생성
             subtitles = stt_result["subtitles"]
+            src_lang = detect_text_language(subtitles)
             duration_str = subtitles[-1]["timestamp"] if subtitles else "00:00"
             video_info = {
                 "video_id": f"local_{int(time.time())}",
@@ -511,6 +546,7 @@ def analyze_local_video_audio(
                 "duration_str": duration_str
             }
             transcript_data = {
+                "language": src_lang,
                 "full_text": "\n".join(f"[{s['timestamp']}] {s['text']}" for s in subtitles),
                 "subtitles": subtitles
             }
@@ -539,20 +575,42 @@ def analyze_local_video_audio(
                 "duration_str": "로컬 음성 분석"
             }
             subtitles = llm_result.get("subtitles", [])
+            src_lang = detect_text_language(subtitles)
             model_used = llm_result.get("model_used")
 
         _raise_if_cancelled(llm_result)
-        save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles, lang_meta={"target_lang": target, "note_target_lang": note_target})
+        same_lang = is_same_language(src_lang, target)
+        trans_source = "same" if same_lang else None
+        save_res = save_note(
+            video_info,
+            llm_result["markdown"],
+            subtitles=subtitles,
+            lang_meta={
+                "source_lang": src_lang,
+                "target_lang": target,
+                "note_target_lang": note_target,
+                "translation_source": trans_source
+            }
+        )
         subtitles = save_res["metadata"].get("subtitles", subtitles)
         return {
             "success": True,
             "note_id": save_res["note_id"],
             "video_info": video_info,
             "subtitles": subtitles,
+            "source_lang": src_lang,
+            "original_lang": src_lang,
+            "transcript_language": src_lang,
+            "is_korean": src_lang == "ko",
+            "is_same_language": same_lang,
+            "translation_source": trans_source,
+            "target_lang": target,
             "model_used": model_used,
             "markdown": save_res["markdown"],
             "file_path": save_res["file_path"],
-            "note_target_lang": note_target
+            "note_target_lang": note_target,
+            "audiobook": save_res.get("audiobook"),
+            "subtitle_audiobook": save_res.get("subtitle_audiobook"),
         }
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -564,12 +622,14 @@ def manual_save_note(req: ManualSaveRequest):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     video_id = extract_video_id(req.url) if req.url else None
     if not video_id:
-        video_id = f"custom_{int(time.time())}"
+        safe_req_vid = req.video_id if (req.video_id and is_safe_note_id(req.video_id)) else None
+        video_id = safe_req_vid or f"custom_{int(time.time())}"
+        v_type = req.video_type or ("local" if str(video_id).startswith("local_") else "youtube")
         video_info = {
             "video_id": video_id,
             "title": req.title or "구독 AI 학습 노트",
-            "channel": "구독 AI 연동",
-            "video_type": req.video_type or "youtube",
+            "channel": req.channel or "구독 AI 연동",
+            "video_type": v_type,
             "url": req.url or ""
         }
     else:
@@ -664,6 +724,8 @@ def analyze_video(req: AnalyzeRequest):
         "markdown": save_res["markdown"],
         "file_path": save_res["file_path"],
         "note_target_lang": note_target,
+        "audiobook": save_res.get("audiobook"),
+        "subtitle_audiobook": save_res.get("subtitle_audiobook"),
         **_lang_payload(transcript_result)
     }
 
@@ -688,7 +750,9 @@ def regenerate_study_note(req: RegenerateNoteRequest):
         "url": req.url or (f"https://www.youtube.com/watch?v={req.video_id}" if req.video_id and not req.video_id.startswith("local_") else "")
     }
 
+    src_lang = req.source_lang or detect_text_language(req.subtitles)
     transcript_data = {
+        "language": src_lang,
         "full_text": "\n".join(f"[{s.get('timestamp', '00:00')}] {s.get('text', '')}" for s in req.subtitles),
         "subtitles": req.subtitles
     }
@@ -724,7 +788,9 @@ def regenerate_study_note(req: RegenerateNoteRequest):
         "model_used": llm_result.get("model_used"),
         "markdown": save_res["markdown"],
         "file_path": save_res["file_path"],
-        "note_target_lang": note_target
+        "note_target_lang": note_target,
+        "audiobook": save_res.get("audiobook"),
+        "subtitle_audiobook": save_res.get("subtitle_audiobook"),
     }
 
 @app.post("/api/subtitles")
@@ -739,16 +805,41 @@ def get_or_translate_subtitles(req: SubtitlesRequest):
     
     if not subtitles:
         v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
-        if not v_id:
-            raise HTTPException(status_code=400, detail="올바른 유튜브 URL 또는 Video ID가 필요합니다.")
-        res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=target)
-        if not res.get("success"):
-            raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
-        subtitles = res.get("subtitles", [])
-        lang = res.get("language", "en")
-        res_meta = _lang_payload(res)
-        if req.note_id and subtitles:
-            update_note_subtitles(req.note_id, subtitles, _lang_meta(res))
+        # 1. 디스크 번역 캐시 우선 확인
+        cached = get_cached_subtitles(req.note_id, v_id, target)
+        if cached and cached.get("subtitles"):
+            subtitles = cached["subtitles"]
+            lang = cached.get("source_lang") or detect_text_language(subtitles)
+            res_meta = {
+                "source_lang": lang,
+                "original_lang": lang,
+                "target_lang": target,
+                "translation_source": cached.get("translation_source", "gemini"),
+            }
+        # 2. 저장된 노트의 원문 자막 번들 확인 (로컬 영상/수동 노트 지원)
+        if not subtitles and req.note_id:
+            n = get_note(req.note_id)
+            if n and n.get("metadata", {}).get("subtitles"):
+                subtitles = n["metadata"]["subtitles"]
+                lang = n["metadata"].get("source_lang") or detect_text_language(subtitles)
+                res_meta = {
+                    "source_lang": lang,
+                    "original_lang": lang,
+                    "target_lang": target,
+                    "translation_source": n["metadata"].get("translation_source"),
+                }
+        # 3. 유튜브 영상인 경우 자막 추출
+        if not subtitles:
+            if not v_id or str(v_id).startswith("local_") or str(v_id).startswith("custom_"):
+                raise HTTPException(status_code=400, detail="올바른 유튜브 URL 또는 Video ID가 필요합니다.")
+            res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=target)
+            if not res.get("success"):
+                raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
+            subtitles = res.get("subtitles", [])
+            lang = res.get("language", "en")
+            res_meta = _lang_payload(res)
+            if req.note_id and subtitles:
+                update_note_subtitles(req.note_id, subtitles, _lang_meta(res))
 
     if req.translate_ko and subtitles:
         has_ko = any(s.get("ko_text") for s in subtitles)
@@ -775,8 +866,8 @@ def reload_subtitles(req: SubtitlesRequest):
     이미 생성/보관된 번역 캐시가 있으면 최우선으로 즉시 복원하여 이전 번역 손실을 방지합니다.
     """
     v_id = req.video_id or (extract_video_id(req.url) if req.url else None)
-    if not v_id:
-        raise HTTPException(status_code=400, detail="유튜브 영상에서만 자막 언어를 바꿀 수 있습니다.")
+    if not v_id and not req.note_id:
+        raise HTTPException(status_code=400, detail="자막 언어를 바꿀 영상 또는 노트 정보가 없습니다.")
     if req.note_id and not is_safe_note_id(req.note_id):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
 
@@ -802,7 +893,28 @@ def reload_subtitles(req: SubtitlesRequest):
                 "is_same_language": False
             }
 
-    # 2. 캐시가 없으면 유튜브에서 자막을 가져옴
+    # 2. 로컬 영상이거나 custom 노트인 경우 유튜브 API 호출 없이 원문 자막(번역 대기 상태) 반환
+    if not v_id or str(v_id).startswith("local_") or str(v_id).startswith("custom_"):
+        base_subs = req.subtitles or []
+        if not base_subs and req.note_id:
+            n = get_note(req.note_id)
+            if n:
+                base_subs = n.get("metadata", {}).get("subtitles") or []
+        stripped_subs = [
+            {k: v for k, v in s.items() if k != "ko_text"}
+            for s in base_subs if isinstance(s, dict)
+        ]
+        return {
+            "success": True,
+            "subtitles": stripped_subs,
+            "is_generated": False,
+            "target_lang": target,
+            "source_lang": req.source_lang,
+            "translation_source": None,
+            "is_same_language": False
+        }
+
+    # 3. 캐시가 없으면 유튜브에서 자막을 가져옴
     res = get_video_transcript(v_id, source_lang=req.source_lang, target_lang=target)
     if not res.get("success"):
         raise HTTPException(status_code=400, detail=f"자막 추출 실패: {res.get('error')}")
@@ -862,8 +974,15 @@ def save_subtitles_endpoint(req: SubtitleSaveRequest):
         if n:
             vid = n.get("metadata", {}).get("video_id") or n.get("video_id")
 
-    if vid:
-        save_translation_cache(vid, target, clean_subs, req.translation_source or "manual")
+    if vid and not saved_note:
+        has_trans = any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in clean_subs)
+        if has_trans:
+            save_translation_cache(vid, target, clean_subs, req.translation_source or "manual")
+        try:
+            from tts import cleanup_stale_subtitle_audiobooks
+            cleanup_stale_subtitle_audiobooks("", vid, clean_subs)
+        except Exception:
+            pass
 
     return {
         "success": True,
@@ -1076,12 +1195,14 @@ async def generate_subtitles_tts_endpoint(req: SubtitleTTSRequest):
     """자막 대사를 자연스러운 더빙 오디오북 MP3로 생성/캐싱"""
     subs = req.subtitles or []
     title = (req.title or "").strip()
-    if not subs and req.note_id:
-        note = await run_in_threadpool(get_note, req.note_id)
+    lookup_id = req.note_id or req.video_id
+    if lookup_id and (not subs or not title or title in ("자막", "학습노트", "subtitles", "study_note")):
+        note = await run_in_threadpool(get_note, lookup_id)
         if note:
-            subs = note.get("metadata", {}).get("subtitles", [])
-            if not title:
-                title = note.get("metadata", {}).get("title", "")
+            if not subs:
+                subs = note.get("metadata", {}).get("subtitles", [])
+            if not title or title in ("자막", "학습노트", "subtitles", "study_note"):
+                title = note.get("metadata", {}).get("title", "") or title
     
     if not subs:
         raise HTTPException(status_code=400, detail="음성 변환할 자막 데이터가 없습니다.")
@@ -1122,7 +1243,7 @@ def get_tts_audio_file(
     download: Optional[bool] = False,
     title: Optional[str] = None
 ):
-    """생성된 MP3 파일 서빙 (재생 시 inline 스트리밍, 다운로드 시 축약된 노트 제목 파일명 적용)"""
+    """생성된 MP3 파일 서빙 (재생 시 inline 스트리밍 및 기본 파일명 헤더 제공, 다운로드 시 attachment 적용)"""
     safe_filename = os.path.basename(filename)
     if not safe_filename or not safe_filename.endswith(".mp3"):
         raise HTTPException(status_code=400, detail="오디오 파일(.mp3)만 접근할 수 있습니다.")
@@ -1130,27 +1251,32 @@ def get_tts_audio_file(
     if not os.path.isfile(filepath):
         raise HTTPException(status_code=404, detail="오디오 파일을 찾을 수 없습니다.")
 
-    # 다운로드 요청이거나 명시적 제목 파라미터가 있는 경우
-    if download or title:
-        resolved_title = (title or "").strip()
-        is_sub = safe_filename.startswith("sub_")
-        if not resolved_title:
-            # 파일명 앞부분에서 note_id 추출하여 보관함 제목 탐색
-            for v in list_available_voices():
-                v_token = f"_{v['key']}_"
-                if v_token in safe_filename:
-                    possible_nid = safe_filename.split(v_token)[0]
-                    if possible_nid.startswith("sub_"):
-                        possible_nid = possible_nid[4:]
-                    note = get_note(possible_nid)
-                    if note:
-                        resolved_title = note.get("metadata", {}).get("title", "")
-                    break
-        dl_filename = get_audiobook_download_filename(resolved_title or ("자막" if is_sub else "학습노트"), is_subtitles=is_sub)
-        return FileResponse(filepath, media_type="audio/mpeg", filename=dl_filename)
+    resolved_title = (title or "").strip()
+    is_sub = safe_filename.startswith("sub_")
+    if not resolved_title or resolved_title in ("자막", "학습노트", "subtitles", "study_note", "temp_note"):
+        # 파일명 앞부분에서 note_id 또는 video_id 추출하여 보관함 제목 탐색
+        for v in list_available_voices():
+            v_token = f"_{v['key']}_"
+            if v_token in safe_filename:
+                possible_nid = safe_filename.split(v_token)[0]
+                if possible_nid.startswith("sub_"):
+                    possible_nid = re.sub(r'_(?:dub|orig|ko|bilingual|original)$', '', possible_nid[4:])
+                note = get_note(possible_nid)
+                if note:
+                    resolved_title = note.get("metadata", {}).get("title", "") or resolved_title
+                break
 
-    # 기본 <audio> 태그 스트리밍 재생용 (Content-Disposition: inline)
-    return FileResponse(filepath, media_type="audio/mpeg")
+    dl_filename = get_audiobook_download_filename(
+        resolved_title or ("자막" if is_sub else "학습노트"),
+        is_subtitles=is_sub,
+    )
+    disposition = "attachment" if download else "inline"
+    return FileResponse(
+        filepath,
+        media_type="audio/mpeg",
+        filename=dl_filename,
+        content_disposition_type=disposition,
+    )
 
 @app.post("/api/system/browser-close")
 def browser_close_signal():

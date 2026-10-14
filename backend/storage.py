@@ -649,9 +649,11 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
         f.write(frontmatter + clean_md)
 
     # 🎧 노트 본문 수정 시 새 본문 해시와 일치하지 않는 구버전 노트 오디오북 정리 및 재동기화
+    note_ab = None
+    sub_ab = None
     try:
         import hashlib
-        from tts import bind_temp_note_audio, find_saved_note_audiobook
+        from tts import bind_temp_note_audio, find_saved_note_audiobook, find_saved_subtitle_audiobook
         bind_temp_note_audio(note_id, clean_md)
         content_hash = hashlib.sha1((clean_md or "").encode("utf-8")).hexdigest()[:8]
         safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
@@ -672,6 +674,7 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
             }
         else:
             meta.pop("audiobook", None)
+        sub_ab = find_saved_subtitle_audiobook(note_id, meta.get("video_id", ""), meta.get("title", ""), meta.get("subtitle_audiobook"))
     except Exception:
         pass
 
@@ -683,6 +686,8 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
         "note_id": note_id,
         "metadata": meta,
         "markdown": clean_md,
+        "audiobook": note_ab,
+        "subtitle_audiobook": sub_ab,
     }
 
 
@@ -752,6 +757,7 @@ def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]], lang_me
         trans_map = dict(bundle.get("translations") or {})
 
         has_trans = any(bool(s.get("ko_text") and str(s.get("ko_text")).strip()) for s in normalized)
+        vid = notes[note_id].get("video_id")
         if has_trans:
             source = clean_meta.get("translation_source") or notes[note_id].get("translation_source") or "gemini"
             trans_map[target] = {
@@ -759,11 +765,75 @@ def update_note_subtitles(note_id: str, subtitles: List[Dict[str, Any]], lang_me
                 "translation_source": source,
                 "target_lang": target,
             }
-            vid = notes[note_id].get("video_id")
             if vid:
                 save_translation_cache(vid, target, normalized, source)
+        elif clean_meta.get("translation_source") == "manual":
+            trans_map.pop(target, None)
+            if vid:
+                try:
+                    cache_file = os.path.join(TRANSLATIONS_DIR, f"{_safe_file_key(vid)}_{_safe_file_key(target).lower()}.json")
+                    if os.path.exists(cache_file):
+                        os.remove(cache_file)
+                except Exception:
+                    pass
+
+        if clean_meta.get("translation_source") == "manual":
+            for lang_k, entry in list(trans_map.items()):
+                if lang_k == target or not isinstance(entry, dict):
+                    continue
+                other_subs = entry.get("subtitles") or []
+                if len(other_subs) == len(normalized):
+                    synced_other = []
+                    for orig_row, other_row in zip(normalized, other_subs):
+                        merged_row = dict(orig_row)
+                        if isinstance(other_row, dict) and "ko_text" in other_row:
+                            merged_row["ko_text"] = other_row["ko_text"]
+                        else:
+                            merged_row.pop("ko_text", None)
+                        synced_other.append(merged_row)
+                    entry["subtitles"] = synced_other
 
         _save_note_subtitles_bundle(note_id, normalized, trans_map)
+
+        # 자막 직접 수정(manual) 또는 재번역 시 구버전 자막 더빙 오디오 파일 정리 및 메타데이터 재동기화
+        if clean_meta.get("translation_source") in ("manual", "gemini"):
+            try:
+                from tts import cleanup_stale_subtitle_audiobooks, find_saved_subtitle_audiobook
+                vid_for_sub = notes[note_id].get("video_id", "")
+                extra_sets = [
+                    e.get("subtitles", [])
+                    for e in trans_map.values()
+                    if isinstance(e, dict) and e.get("subtitles")
+                ]
+                cleanup_stale_subtitle_audiobooks(note_id, vid_for_sub, normalized, extra_subtitles_sets=extra_sets)
+                sub_ab = find_saved_subtitle_audiobook(
+                    note_id, vid_for_sub, notes[note_id].get("title", ""), notes[note_id].get("subtitle_audiobook")
+                )
+                now_ts = time.strftime('%Y-%m-%d %H:%M:%S')
+                if sub_ab:
+                    notes[note_id]["subtitle_audiobook"] = {
+                        "filename": sub_ab["filename"],
+                        "voice_key": sub_ab.get("voice_key", "injoon"),
+                        "mode": sub_ab.get("mode", "dub"),
+                        "updated_at": now_ts,
+                    }
+                else:
+                    notes[note_id].pop("subtitle_audiobook", None)
+                # 동일 video_id 공유 노트의 subtitle_audiobook 파일이 삭제된 경우 함께 동기화
+                if vid_for_sub:
+                    for nid, nmeta in notes.items():
+                        if nid == note_id or nmeta.get("video_id") != vid_for_sub:
+                            continue
+                        cur_sub_ab = nmeta.get("subtitle_audiobook")
+                        if isinstance(cur_sub_ab, dict) and cur_sub_ab.get("filename"):
+                            ab_path = os.path.join(AUDIO_DIR, os.path.basename(str(cur_sub_ab["filename"])))
+                            if not os.path.isfile(ab_path):
+                                if sub_ab:
+                                    nmeta["subtitle_audiobook"] = dict(notes[note_id]["subtitle_audiobook"])
+                                else:
+                                    nmeta.pop("subtitle_audiobook", None)
+            except Exception:
+                pass
 
         notes[note_id].update(clean_meta)
         notes[note_id]["updated_at"] = time.strftime('%Y-%m-%d %H:%M:%S')
@@ -966,8 +1036,9 @@ def delete_note(note_id: str) -> bool:
     if not is_safe_note_id(note_id):
         return False
     lib = load_library()
+    deleted_meta = None
     if note_id in lib.get("notes", {}):
-        del lib["notes"][note_id]
+        deleted_meta = lib["notes"].pop(note_id, None)
         save_library(lib)
 
     # 1. 마크다운 노트 파일 삭제
@@ -988,12 +1059,27 @@ def delete_note(note_id: str) -> bool:
 
     # 3. 해당 노트에 종속된 TTS 오디오 및 타임라인 캐시 파일 정리
     if os.path.isdir(AUDIO_DIR):
+        safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
         patterns = [
-            os.path.join(AUDIO_DIR, f"{note_id}_*.mp3"),
-            os.path.join(AUDIO_DIR, f"{note_id}_*.json"),
-            os.path.join(AUDIO_DIR, f"sub_{note_id}_*.mp3"),
-            os.path.join(AUDIO_DIR, f"sub_{note_id}_*.json"),
+            os.path.join(AUDIO_DIR, f"{safe_note}_*.mp3"),
+            os.path.join(AUDIO_DIR, f"{safe_note}_*.json"),
+            os.path.join(AUDIO_DIR, f"sub_{safe_note}_*.mp3"),
+            os.path.join(AUDIO_DIR, f"sub_{safe_note}_*.json"),
         ]
+        # 만약 삭제된 노트의 video_id를 공유하는 다른 노트가 보관함에 없다면 해당 video_id 자막 더빙 파일도 함께 정리
+        vid = (deleted_meta or {}).get("video_id")
+        if vid:
+            remaining_same_vid = any(
+                isinstance(m, dict) and m.get("video_id") == vid
+                for m in lib.get("notes", {}).values()
+            )
+            if not remaining_same_vid:
+                for max_len in (80, 120):
+                    safe_vid = re.sub(r'[^A-Za-z0-9_-]', '_', str(vid))[:max_len]
+                    if safe_vid:
+                        patterns.append(os.path.join(AUDIO_DIR, f"sub_{safe_vid}_*.mp3"))
+                        patterns.append(os.path.join(AUDIO_DIR, f"sub_{safe_vid}_*.json"))
+
         for pattern in patterns:
             for cached_file in glob.glob(pattern):
                 try:

@@ -515,6 +515,27 @@ def get_channel_videos(channel_url: str, max_results: int = 15) -> List[Dict[str
         print(f"채널 영상 파싱 실패: {e}")
     return videos
 
+def detect_text_language(subtitles: List[Dict[str, Any]]) -> str:
+    """자막 대사 텍스트의 문자 비율을 분석하여 원문 언어 코드('ko', 'ja', 'zh-Hans', 'en')를 추정합니다."""
+    if not subtitles:
+        return "en"
+    sample_text = " ".join(str(s.get("text") or "") for s in subtitles[:60] if isinstance(s, dict))
+    cleaned = re.sub(r"[\s\d\W_]+", "", sample_text)
+    if not cleaned:
+        return "en"
+    total = len(cleaned)
+    hangul = len(re.findall(r"[가-힣]", cleaned))
+    kana = len(re.findall(r"[\u3040-\u30ff]", cleaned))
+    cjk = len(re.findall(r"[\u4e00-\u9fff]", cleaned))
+    if hangul / total >= 0.15:
+        return "ko"
+    if kana / total >= 0.05:
+        return "ja"
+    if cjk / total >= 0.15:
+        return "zh-Hans"
+    return "en"
+
+
 def parse_srt_vtt_text(sub_text: str) -> Dict[str, Any]:
     """로컬 SRT 또는 VTT 자막 텍스트를 분석하여 타임스탬프 청크로 변환합니다."""
     lines = sub_text.replace('\r\n', '\n').split('\n')
@@ -562,12 +583,16 @@ def parse_srt_vtt_text(sub_text: str) -> Dict[str, Any]:
 
     _flush()
 
+    detected_lang = detect_text_language(chunks)
     # 35초 단위로 병합
     merged_chunks = _group_subtitles_into_chunks(chunks, window_sec=35.0)
     full_text = "\n".join([f"[{c['timestamp']}] {c['text']}" for c in merged_chunks])
     return {
         "success": True,
-        "language": "local",
+        "language": detected_lang,
+        "source_lang": detected_lang,
+        "original_lang": detected_lang,
+        "is_korean": detected_lang == "ko",
         "is_generated": False,
         "subtitles": chunks,
         "chunks": merged_chunks,

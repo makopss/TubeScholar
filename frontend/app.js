@@ -86,14 +86,15 @@ const FALLBACK_TARGET_LANGUAGES = [
 ];
 
 function getTargetLangName(code) {
-  const c = code || currentTargetLang || "ko";
-  const normKey = "lang_name_" + c.replace(/-/g, "_");
+  const c = String(code || currentTargetLang || "ko");
+  const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
+  const found = list.find(l => l.code === c) || list.find(l => l.code.toLowerCase() === c.toLowerCase());
+  const canon = found ? found.code : c;
+  const normKey = "lang_name_" + canon.replace(/-/g, "_");
   if (typeof t === "function") {
     const localized = t(normKey);
     if (localized && localized !== normKey) return localized;
   }
-  const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
-  const found = list.find(l => l.code === c);
   return found ? found.name : c;
 }
 
@@ -518,9 +519,10 @@ function renderTargetLangSelect() {
   if (!sel) return;
   const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
   const prefix = typeof t === "function" ? t("label_trans_prefix") : "번역: ";
+  const normCur = (currentTargetLang || "ko").toLowerCase();
   
   sel.innerHTML = list.map(item => {
-    const isSel = item.code === currentTargetLang ? "selected" : "";
+    const isSel = item.code.toLowerCase() === normCur ? "selected" : "";
     const name = getTargetLangName(item.code);
     return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${prefix}${escapeHtmlStr(name)}</option>`;
   }).join("");
@@ -530,9 +532,10 @@ function renderNoteTargetLangSelect() {
   const sel = document.getElementById("note-target-lang");
   if (!sel) return;
   const list = (supportedTargetLanguages && supportedTargetLanguages.length > 0) ? supportedTargetLanguages : FALLBACK_TARGET_LANGUAGES;
+  const normCur = (currentNoteTargetLang || "ko").toLowerCase();
   
   sel.innerHTML = list.map(item => {
-    const isSel = item.code === currentNoteTargetLang ? "selected" : "";
+    const isSel = item.code.toLowerCase() === normCur ? "selected" : "";
     const name = getTargetLangName(item.code);
     return `<option value="${escapeHtmlStr(item.code)}" ${isSel}>${escapeHtmlStr(name)}</option>`;
   }).join("");
@@ -617,7 +620,8 @@ async function regenerateStudyNote() {
         url: currentVideoInfo?.url || "",
         note_id: currentNoteId,
         subtitles: currentSubtitles,
-        note_target_lang: currentNoteTargetLang
+        note_target_lang: currentNoteTargetLang,
+        source_lang: currentSourceLang || currentOriginalLang || null
       })
     });
 
@@ -625,12 +629,16 @@ async function regenerateStudyNote() {
     if (!res.ok) throw new Error(data.detail || "학습 노트 재작성 실패");
 
     setAnalysisStep(3);
+    currentNoteId = data.note_id;
     if (typeof resetTtsPlayerState === "function") {
       resetTtsPlayerState("note");
     } else {
       ttsSessionCache.note = null;
     }
     renderMarkdownNote(data.markdown, `Gemini: ${data.model_used}`, data.note_id);
+    if (typeof restoreSavedAudiobookForNote === "function") {
+      restoreSavedAudiobookForNote(data);
+    }
     if (isEditing) toggleEditor(false);
     loadLibrary();
   } catch (err) {
@@ -770,7 +778,7 @@ function applyLanguageState(payload) {
 }
 
 async function reloadSubtitles(opts = {}) {
-  if (!currentVideoId || isLocalVideo) return;
+  if (!currentVideoId && !currentNoteId) return;
   if (isTranslatingSubtitles) {
     alert(typeof t === "function" ? t("alert_translating_wait") : "현재 번역 작업이 진행 중입니다. 완료되거나 취소된 후 언어를 변경해주세요.");
     return;
@@ -792,7 +800,8 @@ async function reloadSubtitles(opts = {}) {
         video_id: currentVideoId,
         note_id: currentNoteId,
         source_lang: newSource,
-        target_lang: newTarget
+        target_lang: newTarget,
+        subtitles: currentSubtitles
       })
     });
     const d = await res.json();
@@ -1154,6 +1163,11 @@ async function requestTranslation(force = false) {
                 const entry = { subtitles: data.subtitles, source: "gemini" };
                 if (currentNoteId) clientTranslationCache.set(`${currentNoteId}_${tgtNorm}`, entry);
                 if (currentVideoId) clientTranslationCache.set(`${currentVideoId}_${tgtNorm}`, entry);
+                if (typeof resetTtsPlayerState === "function") {
+                  resetTtsPlayerState("subtitles");
+                } else {
+                  ttsSessionCache.subtitles = null;
+                }
 
                 applyLanguageState({
                   target_lang: currentTargetLang,
@@ -1812,22 +1826,25 @@ async function saveEditedSubtitles() {
       throw new Error(data.detail || "자막 저장 실패");
     }
 
+    const normTarget = (currentTargetLang || "ko").toLowerCase();
+    const manualEntry = {
+      subtitles: JSON.parse(JSON.stringify(currentSubtitles)),
+      source: "manual",
+      translation_source: "manual",
+      target_lang: normTarget
+    };
     if (currentNoteId) {
-      clientTranslationCache.set(`${currentNoteId}_${currentTargetLang}`, {
-        subtitles: currentSubtitles,
-        translation_source: "manual",
-        target_lang: currentTargetLang
-      });
+      clientTranslationCache.set(`${currentNoteId}_${normTarget}`, manualEntry);
     }
     if (vid) {
-      clientTranslationCache.set(`${vid}_${currentTargetLang}`, {
-        subtitles: currentSubtitles,
-        translation_source: "manual",
-        target_lang: currentTargetLang
-      });
+      clientTranslationCache.set(`${vid}_${normTarget}`, manualEntry);
     }
 
-    ttsSessionCache.subtitles = null;
+    if (typeof resetTtsPlayerState === "function") {
+      resetTtsPlayerState("subtitles");
+    } else {
+      ttsSessionCache.subtitles = null;
+    }
     backupSubtitles = null;
     isSubtitleEditMode = false;
 
@@ -2252,7 +2269,7 @@ function buildClientSubtitleDownload(subtitles, format, langMode, title, targetN
   if (fmt === "txt") {
     ext = "txt";
     const lines = items.map(sub => {
-      const ts = sub.timestamp || formatTime(sub.start || 0);
+      const ts = sub.timestamp || formatTimestampFromSeconds(sub.start || 0);
       const origText = (sub.text || "").trim();
       const koText = (sub.ko_text || "").trim();
       if (mode === "ko" && koText) return `[${ts}] ${koText}`;
@@ -2288,6 +2305,7 @@ function buildClientSubtitleDownload(subtitles, format, langMode, title, targetN
 }
 
 async function triggerSubtitleDownload(format) {
+  if (isSubtitleEditMode) flushSubtitleEditInputs();
   if (!currentSubtitles || currentSubtitles.length === 0) {
     alert(typeof t === "function" ? t("alert_no_subs_to_dl") : "다운로드할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 불러와주세요.");
     return;
@@ -2579,6 +2597,9 @@ async function runGeminiAnalysis(url) {
     updateSubLangButtons(currentSubLang);
     setSubtitles(analyzeSubs);
     applyLanguageState(data);
+    if (typeof restoreSavedAudiobookForNote === "function") {
+      restoreSavedAudiobookForNote(data);
+    }
     loadLibrary();
   } catch (err) {
     if (err.name === 'AbortError') return;
@@ -2918,13 +2939,13 @@ function switchMode(mode) {
   const inlinePasteCard = document.getElementById("inline-paste-card");
 
   if (mode === "gemini") {
-    tabGemini.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow";
-    tabSub.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white";
+    tabGemini.className = "h-7 px-3 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-sky-600 text-white shadow whitespace-nowrap";
+    tabSub.className = "h-7 px-3 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white whitespace-nowrap";
     submitText.textContent = typeof t === "function" ? t("btn_analyze") : "⚡ 분석 및 생성";
     inlinePasteCard.classList.add("hidden");
   } else {
-    tabSub.className = "px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-indigo-600 text-white shadow";
-    tabGemini.className = "px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white";
+    tabSub.className = "h-7 px-3 rounded-lg text-xs font-bold transition flex items-center space-x-1.5 bg-indigo-600 text-white shadow whitespace-nowrap";
+    tabGemini.className = "h-7 px-3 rounded-lg text-xs font-semibold transition flex items-center space-x-1.5 text-slate-400 hover:text-white whitespace-nowrap";
     submitText.textContent = typeof t === "function" ? t("btn_copy_prompt") : "📋 프롬프트 복사";
     inlinePasteCard.classList.remove("hidden");
   }
@@ -3074,12 +3095,12 @@ document.addEventListener("DOMContentLoaded", () => {
   // 편집 내용 저장 버튼
   document.getElementById("save-edited-note-btn").addEventListener("click", async () => {
     const editedMd = cleanAiCitationArtifacts(document.getElementById("note-editor-textarea").value);
-    if (!currentNoteId) {
-      // 새 임의 저장
-      currentNoteId = `note_${Date.now()}`;
-    }
+    const hadNoteId = Boolean(currentNoteId);
 
     try {
+      if (!hadNoteId) {
+        throw new Error("no_existing_note");
+      }
       const res = await fetch(`/api/notes/${currentNoteId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -3101,15 +3122,20 @@ document.addEventListener("DOMContentLoaded", () => {
       loadLibrary();
       alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
     } catch (e) {
-      // 만약 note_id가 없어서 PUT 실패 시 manual-save로 fallback
+      // 만약 note_id가 없거나 PUT 실패 시 manual-save로 신규/대체 저장
       try {
+        const fallbackNoteId = currentNoteId || `note_${Date.now()}`;
         const res2 = await fetch("/api/manual-save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
+            url: currentVideoInfo?.url || document.getElementById("url-input")?.value?.trim() || "",
+            video_id: currentVideoId || currentVideoInfo?.video_id || null,
+            channel: currentVideoInfo?.channel || "",
+            video_type: currentVideoInfo?.video_type || (isLocalVideo ? "local" : "youtube"),
             title: currentVideoInfo ? currentVideoInfo.title : (typeof t === "function" ? t("default_modified_title") : "수정된 학습 노트"), 
             markdown: editedMd,
-            note_id: currentNoteId,
+            note_id: fallbackNoteId,
             subtitles: currentSubtitles,
             source_lang: currentSourceLang,
             target_lang: currentTargetLang,
@@ -3118,6 +3144,7 @@ document.addEventListener("DOMContentLoaded", () => {
           })
         });
         const d2 = await res2.json();
+        if (!res2.ok) throw new Error(d2.detail || "저장 실패");
         currentNoteId = d2.note_id;
         if (typeof resetTtsPlayerState === "function") {
           resetTtsPlayerState("note");
@@ -3152,7 +3179,10 @@ document.addEventListener("DOMContentLoaded", () => {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          url: url, 
+          url: url,
+          video_id: currentVideoId || currentVideoInfo?.video_id || null,
+          channel: currentVideoInfo?.channel || "",
+          video_type: currentVideoInfo?.video_type || (isLocalVideo ? "local" : "youtube"),
           markdown: rawMd,
           title: currentVideoInfo ? currentVideoInfo.title : "",
           subtitles: currentSubtitles,
@@ -3170,12 +3200,15 @@ document.addEventListener("DOMContentLoaded", () => {
         ttsSessionCache.note = null;
       }
 
-      const newVid = (data.video_info.video_id && !data.video_info.video_id.startsWith('custom_')) ? data.video_info.video_id : null;
+      const newVid = (data.video_info.video_id && !data.video_info.video_id.startsWith('custom_') && !data.video_info.video_id.startsWith('local_') && data.video_info.video_type !== 'local') ? data.video_info.video_id : null;
       if (newVid && newVid !== currentVideoId) {
         switchMediaContext(newVid, data.note_id);
         initYouTubePlayer(currentVideoId);
       } else {
         currentNoteId = data.note_id;
+        if (data.video_info && data.video_info.video_id) {
+          currentVideoId = data.video_info.video_id;
+        }
       }
       displayVideoMetadata(data.video_info);
       renderMarkdownNote(data.markdown, { key: "note_status_sub_ai" }, data.note_id);
@@ -3298,6 +3331,16 @@ document.addEventListener("DOMContentLoaded", () => {
           })
         });
         const d = await res.json();
+        if (isCurrentMedia(gen)) {
+          if (d.video_info && d.video_info.video_id) {
+            currentVideoId = d.video_info.video_id;
+            if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
+          }
+          if (d.subtitles) {
+            setSubtitles(d.subtitles);
+            applyLanguageState(d);
+          }
+        }
         await navigator.clipboard.writeText(d.prompt);
         switchMode("subscription");
         alert(typeof t === "function" ? t("alert_local_prompt_copied") : "✨ 로컬 자막으로 완성된 심화 프롬프트가 복사되었습니다!\nChatGPT/Claude에 붙여넣은 뒤 우측 '답변 붙여넣기'에 넣어주세요.");
@@ -3326,8 +3369,16 @@ document.addEventListener("DOMContentLoaded", () => {
         } catch (e) {}
         if (!res.ok) throw new Error((d && d.detail) || "분석 실패");
         if (!isCurrentMedia(gen)) return;
+        if (d.video_info && d.video_info.video_id) {
+          currentVideoId = d.video_info.video_id;
+          if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
+        }
         renderMarkdownNote(d.markdown, `Gemini: ${d.model_used}`, d.note_id);
         if (d.subtitles) setSubtitles(d.subtitles);
+        applyLanguageState(d);
+        if (typeof restoreSavedAudiobookForNote === "function") {
+          restoreSavedAudiobookForNote(d);
+        }
         loadLibrary();
       } catch (e) {
         alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
@@ -3411,9 +3462,17 @@ document.addEventListener("DOMContentLoaded", () => {
       setAnalysisStep(3);
       loadingTitle.textContent = typeof t === "function" ? t("loading_local_step3_title") : "3단계: 노트 렌더링 및 보관함 저장 완료!";
 
+      if (data.video_info && data.video_info.video_id) {
+        currentVideoId = data.video_info.video_id;
+        if (currentVideoInfo) currentVideoInfo.video_id = data.video_info.video_id;
+      }
       renderMarkdownNote(data.markdown, { key: "note_status_model_prefix", params: { model: data.model_used } }, data.note_id);
       if (data.subtitles) {
         setSubtitles(data.subtitles);
+      }
+      applyLanguageState(data);
+      if (typeof restoreSavedAudiobookForNote === "function") {
+        restoreSavedAudiobookForNote(data);
       }
       loadLibrary();
     } catch (e) {
@@ -3475,7 +3534,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 복사 및 다운로드
   document.getElementById("copy-markdown-btn").addEventListener("click", () => {
-    const mdText = currentMarkdown || document.getElementById("note-editor-textarea")?.value || "";
+    const mdText = (isEditing ? document.getElementById("note-editor-textarea")?.value : currentMarkdown) || currentMarkdown || "";
     if (!mdText.trim()) return;
     navigator.clipboard.writeText(mdText).then(() => {
       alert(typeof t === "function" ? t("alert_note_copied") : "학습 노트 내용이 클립보드에 복사되었습니다!");
@@ -3483,7 +3542,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   document.getElementById("download-markdown-btn").addEventListener("click", () => {
-    const mdText = currentMarkdown || document.getElementById("note-editor-textarea")?.value || "";
+    const mdText = (isEditing ? document.getElementById("note-editor-textarea")?.value : currentMarkdown) || currentMarkdown || "";
     if (!mdText.trim()) return;
     const blob = new Blob([mdText], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -3567,8 +3626,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("settings-btn").addEventListener("click", () => document.getElementById("settings-modal").classList.remove("hidden"));
   document.getElementById("close-settings-modal-btn").addEventListener("click", () => document.getElementById("settings-modal").classList.add("hidden"));
   document.getElementById("save-settings-btn").addEventListener("click", async () => {
-    const key = document.getElementById("api-key-input").value.trim();
+    const apiKeyInput = document.getElementById("api-key-input");
     const groqKeyInput = document.getElementById("groq-api-key-input");
+    const key = apiKeyInput ? apiKeyInput.value.trim() : "";
     const groqKey = groqKeyInput ? groqKeyInput.value.trim() : "";
 
     const payload = {};
@@ -3581,7 +3641,15 @@ document.addEventListener("DOMContentLoaded", () => {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload)
       });
-      if (res.ok) alert(typeof t === "function" ? t("alert_apikey_saved") : "API 키가 성공적으로 저장되었습니다.");
+      if (res.ok) {
+        if (apiKeyInput) apiKeyInput.value = "";
+        if (groqKeyInput) groqKeyInput.value = "";
+        alert(typeof t === "function" ? t("alert_apikey_saved") : "API 키가 성공적으로 저장되었습니다.");
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(errData.detail || "API 키 저장에 실패했습니다.");
+        return;
+      }
     }
     document.getElementById("settings-modal").classList.add("hidden");
     checkConfig();
@@ -3641,10 +3709,19 @@ document.addEventListener("DOMContentLoaded", () => {
           target_lang: newTarget,
           translation_source: currentTranslationSource
         });
+      } else if (currentSubtitles && currentSubtitles.length > 0) {
+        // 캐시가 없는 새 언어로 전환 시 이전 언어의 ko_text 잔상을 즉시 비워 오표시 방지
+        const stripped = currentSubtitles.map(({ ko_text, ...rest }) => rest);
+        currentTranslationSource = null;
+        setSubtitles(stripped);
+        applyLanguageState({
+          target_lang: newTarget,
+          translation_source: null
+        });
       }
 
-      // 3. 자막이 있고 YouTube 영상이 로드되어 있는 경우 서버와 상태 동기화
-      if (currentVideoId && !isLocalVideo) {
+      // 3. 서버(번역 번들 캐시 또는 YouTube 공식 자막)와 상태 동기화
+      if (currentVideoId || currentNoteId) {
         await reloadSubtitles({ target_lang: newTarget });
       } else {
         updateTranslationButtonState();
@@ -3918,11 +3995,17 @@ function applyCachedTtsToPlayerCard(type, autoPlay = false) {
     if (hasOpt) voiceSelect.value = cacheItem.voice;
   }
 
+  const fallbackTitle = getNoteTitleForAudiobook() || (type === "subtitles" ? "자막" : "학습노트");
+  const shortTitle = cacheItem.shortTitle || fallbackTitle;
+  const targetAudioUrl = cacheItem.filename
+    ? `/api/tts/audio/${cacheItem.filename}?title=${encodeURIComponent(shortTitle)}`
+    : cacheItem.audioUrl;
+
   if (card) card.classList.remove("hidden");
   if (audio) {
     const currentAttrSrc = audio.getAttribute("src") || "";
-    if (currentAttrSrc !== cacheItem.audioUrl) {
-      audio.src = cacheItem.audioUrl;
+    if (currentAttrSrc !== targetAudioUrl) {
+      audio.src = targetAudioUrl;
     }
     const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
     audio.playbackRate = curSpeed || 1.0;
@@ -3937,10 +4020,8 @@ function applyCachedTtsToPlayerCard(type, autoPlay = false) {
   }
 
   if (dlBtn && cacheItem.filename) {
-    const fallbackTitle = getNoteTitleForAudiobook() || (type === "subtitles" ? "자막" : "학습노트");
-    const shortTitle = cacheItem.shortTitle || fallbackTitle;
     dlBtn.href = `/api/tts/audio/${cacheItem.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
-    dlBtn.download = cacheItem.downloadFilename || `${shortTitle}_${type === "subtitles" ? "자막_더빙" : "오디오북"}.mp3`;
+    dlBtn.download = cacheItem.downloadFilename || (type === "subtitles" ? `sub_${shortTitle}_오디오북.mp3` : `${shortTitle}_오디오북.mp3`);
     dlBtn.classList.remove("hidden");
   }
 
@@ -3959,26 +4040,28 @@ function restoreSavedAudiobookForNote(data) {
   const subAb = (data.subtitle_audiobook && data.subtitle_audiobook.filename) ? data.subtitle_audiobook : null;
 
   if (ab) {
+    const noteShortTitle = ab.short_title || baseTitle;
     ttsSessionCache.note = {
       noteId: noteId,
-      audioUrl: `/api/tts/audio/${ab.filename}`,
+      audioUrl: `/api/tts/audio/${ab.filename}?title=${encodeURIComponent(noteShortTitle)}`,
       cues: ab.cues || [],
-      shortTitle: ab.short_title || baseTitle,
+      shortTitle: noteShortTitle,
       filename: ab.filename,
-      downloadFilename: ab.download_filename || `${baseTitle}_오디오북.mp3`,
+      downloadFilename: ab.download_filename || `${noteShortTitle}_오디오북.mp3`,
       voice: ab.voice_key || (ab.voice && ab.voice.key) || "injoon"
     };
   }
 
   if (subAb) {
+    const subShortTitle = subAb.short_title || baseTitle;
     ttsSessionCache.subtitles = {
       videoId: vidKey,
-      audioUrl: `/api/tts/audio/${subAb.filename}`,
+      audioUrl: `/api/tts/audio/${subAb.filename}?title=${encodeURIComponent(subShortTitle)}`,
       cues: subAb.cues || [],
       subCueMap: subAb.sub_cue_map || {},
-      shortTitle: subAb.short_title || baseTitle,
+      shortTitle: subShortTitle,
       filename: subAb.filename,
-      downloadFilename: subAb.download_filename || `${baseTitle}_자막_더빙.mp3`,
+      downloadFilename: subAb.download_filename || `sub_${subShortTitle}_오디오북.mp3`,
       voice: subAb.voice_key || (subAb.voice && subAb.voice.key) || "injoon",
       mode: subAb.mode === "orig" ? "original" : (subAb.mode || "dub"),
       targetLang: (meta.target_lang || currentTargetLang || "ko").toLowerCase()
@@ -3998,7 +4081,7 @@ function getNoteTitleForAudiobook() {
   if (currentVideoInfo && currentVideoInfo.title && currentVideoInfo.title.trim()) {
     return currentVideoInfo.title.trim();
   }
-  const vt = document.getElementById("video-title");
+  const vt = document.getElementById("meta-title") || document.getElementById("video-title");
   if (vt && vt.textContent && vt.textContent.trim()) {
     return vt.textContent.trim();
   }
@@ -4052,10 +4135,31 @@ function updateTtsCardUI() {
   }
 }
 
+const TTS_VOICE_GROUPS_BY_PREFIX = [
+  { prefix: "ko", voices: ["injoon", "sunhi", "hyunsu"], defaultVoice: "injoon" },
+  { prefix: "en", voices: ["christopher", "jenny", "guy", "hyunsu"], defaultVoice: "christopher" },
+  { prefix: "ja", voices: ["keita", "nanami", "hyunsu"], defaultVoice: "keita" },
+  { prefix: "zh", voices: ["yunxi", "xiaoxiao", "hyunsu"], defaultVoice: "yunxi" },
+  { prefix: "es", voices: ["alvaro", "elvira", "hyunsu"], defaultVoice: "alvaro" },
+  { prefix: "fr", voices: ["henri", "denise", "hyunsu"], defaultVoice: "henri" },
+  { prefix: "de", voices: ["conrad", "katja", "hyunsu"], defaultVoice: "conrad" }
+];
+
+function detectNoteLanguageForTts(mdText, fallbackLang = "ko") {
+  const clean = stripFrontmatter(mdText || "");
+  const koCount = (clean.match(/[\uac00-\ud7af]/g) || []).length;
+  const jaCount = (clean.match(/[\u3040-\u30ff]/g) || []).length;
+  const zhCount = (clean.match(/[\u4e00-\u9fff]/g) || []).length;
+  if (koCount >= 15 && koCount >= jaCount) return "ko";
+  if (jaCount >= 10) return "ja";
+  if (zhCount >= 15 && koCount < 5 && jaCount < 5) return "zh";
+  return (fallbackLang || "ko").toLowerCase();
+}
+
 async function triggerAudiobookPlay() {
   if (isGeneratingAudio) return;
 
-  const mdText = currentMarkdown || document.getElementById("note-editor-textarea")?.value || "";
+  const mdText = (isEditing ? document.getElementById("note-editor-textarea")?.value : currentMarkdown) || currentMarkdown || "";
   if (!mdText.trim()) {
     alert(typeof t === "function" ? t("alert_no_note_for_tts") : "오디오북으로 변환할 학습 노트가 없습니다. 먼저 영상을 분석해주세요.");
     return;
@@ -4063,9 +4167,22 @@ async function triggerAudiobookPlay() {
 
   const voiceSelect = document.getElementById("tts-voice-select");
   const speedSelect = document.getElementById("tts-speed-select");
-  const selectedVoice = voiceSelect ? voiceSelect.value : "injoon";
+  let selectedVoice = voiceSelect ? voiceSelect.value : "injoon";
   const noteTitle = getNoteTitleForAudiobook();
   const noteKey = currentNoteId || "current_note";
+
+  // 학습 노트 언어와 호환되는 음성인지 검증 (예: 영어 원문 자막 TTS 재생 후 한국어 노트 TTS 클릭 시 영어 성우로 한국어 노트를 읽는 현상 방지)
+  const noteLang = detectNoteLanguageForTts(mdText, currentNoteTargetLang || "ko");
+  for (const grp of TTS_VOICE_GROUPS_BY_PREFIX) {
+    if (noteLang.startsWith(grp.prefix)) {
+      if (!grp.voices.includes(selectedVoice)) {
+        const cachedNoteVoice = (ttsSessionCache.note && ttsSessionCache.note.noteId === noteKey) ? ttsSessionCache.note.voice : null;
+        selectedVoice = (cachedNoteVoice && grp.voices.includes(cachedNoteVoice)) ? cachedNoteVoice : grp.defaultVoice;
+        if (voiceSelect) voiceSelect.value = selectedVoice;
+      }
+      break;
+    }
+  }
 
   const card = document.getElementById("tts-player-card");
   const badge = document.getElementById("tts-status-badge");
@@ -4073,7 +4190,7 @@ async function triggerAudiobookPlay() {
   const dlBtn = document.getElementById("tts-download-btn");
 
   // 1. 이미 이번 세션에 로드된 노트 오디오북이 있고 음성 변경이 없다면 0ms 즉시 재생
-  if (ttsSessionCache.note && ttsSessionCache.note.noteId === noteKey && ttsSessionCache.note.voice === selectedVoice) {
+  if (!isEditing && ttsSessionCache.note && ttsSessionCache.note.noteId === noteKey && ttsSessionCache.note.voice === selectedVoice) {
     applyCachedTtsToPlayerCard("note", true);
     return;
   }
@@ -4121,7 +4238,8 @@ async function triggerAudiobookPlay() {
     }
 
     const data = await res.json();
-    const audioUrl = `/api/tts/audio/${data.filename}`;
+    const shortTitle = data.short_title || noteTitle || "학습노트";
+    const audioUrl = `/api/tts/audio/${data.filename}?title=${encodeURIComponent(shortTitle)}`;
 
     currentTtsCues = data.cues || [];
     ttsNoteCueMap = null;
@@ -4132,7 +4250,7 @@ async function triggerAudiobookPlay() {
       noteId: noteKey,
       audioUrl: audioUrl,
       cues: data.cues || [],
-      shortTitle: data.short_title || noteTitle || "학습노트",
+      shortTitle: shortTitle,
       filename: data.filename,
       downloadFilename: data.download_filename,
       voice: selectedVoice
@@ -4146,7 +4264,6 @@ async function triggerAudiobookPlay() {
     }
 
     if (dlBtn) {
-      const shortTitle = data.short_title || noteTitle || "학습노트";
       const downloadFilename = data.download_filename || `${shortTitle}_오디오북.mp3`;
       dlBtn.href = `/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
       dlBtn.download = downloadFilename;
@@ -4179,6 +4296,7 @@ async function triggerAudiobookPlay() {
 
 async function triggerSubtitleAudiobookPlay() {
   if (isGeneratingAudio) return;
+  if (isSubtitleEditMode) flushSubtitleEditInputs();
 
   if (!currentSubtitles || currentSubtitles.length === 0) {
     alert(typeof t === "function" ? t("alert_no_subtitles_for_tts") : "오디오북으로 변환할 자막이 없습니다. 먼저 자막을 불러오거나 영상을 분석해주세요.");
@@ -4188,24 +4306,26 @@ async function triggerSubtitleAudiobookPlay() {
   const voiceSelect = document.getElementById("tts-voice-select");
   const speedSelect = document.getElementById("tts-speed-select");
 
-  // 자막 모드와 언어에 따른 기본 음성 자동 제안
+  // 자막 모드와 실제 발화할 언어에 따른 기본 음성 자동 제안 (번역문이 아직 없는 경우 원문 언어 기준)
   let selectedVoice = voiceSelect ? voiceSelect.value : "injoon";
-  if (currentSubLang === "original" && currentSourceLang && !currentSourceLang.startsWith("ko")) {
-    if (currentSourceLang.startsWith("en") && !["christopher", "jenny", "guy"].includes(selectedVoice)) {
-      selectedVoice = "christopher";
-      if (voiceSelect) voiceSelect.value = "christopher";
-    } else if (currentSourceLang.startsWith("ja") && !["keita", "nanami"].includes(selectedVoice)) {
-      selectedVoice = "keita";
-      if (voiceSelect) voiceSelect.value = "keita";
+  const hasTransText = currentSubtitles.some(s => s.ko_text && s.ko_text.trim() !== "");
+  const curMode = (currentSubLang === "original" || !hasTransText) ? "original" : "dub";
+  const langToSpeak = ((curMode === "original" ? (currentSourceLang || currentOriginalLang || "") : (currentTargetLang || "ko")) || "ko").toLowerCase();
+  const vidKey = currentVideoId || currentNoteId || "temp_video";
+  for (const grp of TTS_VOICE_GROUPS_BY_PREFIX) {
+    if (langToSpeak.startsWith(grp.prefix)) {
+      if (!grp.voices.includes(selectedVoice)) {
+        const cachedSubVoice = (ttsSessionCache.subtitles && ttsSessionCache.subtitles.videoId === vidKey && ttsSessionCache.subtitles.mode === curMode)
+          ? ttsSessionCache.subtitles.voice
+          : null;
+        selectedVoice = (cachedSubVoice && grp.voices.includes(cachedSubVoice)) ? cachedSubVoice : grp.defaultVoice;
+        if (voiceSelect) voiceSelect.value = selectedVoice;
+      }
+      break;
     }
-  } else if ((currentSubLang === "ko" || currentSubLang === "bilingual") && !["injoon", "sunhi", "hyunsu"].includes(selectedVoice)) {
-    selectedVoice = "injoon";
-    if (voiceSelect) voiceSelect.value = "injoon";
   }
 
-  const vidKey = currentVideoId || currentNoteId || "temp_video";
   const subTitle = getNoteTitleForAudiobook() || (currentVideoInfo ? currentVideoInfo.title : "자막");
-  const curMode = (currentSubLang === "original") ? "original" : "dub";
   const curTarget = (currentTargetLang || "ko").toLowerCase();
 
   const card = document.getElementById("tts-player-card");
@@ -4215,6 +4335,7 @@ async function triggerSubtitleAudiobookPlay() {
 
   // 1. 이미 이번 세션에 로드된 자막 더빙 오디오북이 있고 음성/모드/번역언어 변경이 없다면 0ms 즉시 재생
   if (
+    !isSubtitleEditMode &&
     ttsSessionCache.subtitles &&
     ttsSessionCache.subtitles.videoId === vidKey &&
     ttsSessionCache.subtitles.voice === selectedVoice &&
@@ -4255,7 +4376,7 @@ async function triggerSubtitleAudiobookPlay() {
         video_id: vidKey,
         note_id: currentNoteId,
         title: subTitle,
-        mode: currentSubLang || "ko",
+        mode: curMode === "original" ? "original" : (currentSubLang || "ko"),
         voice: selectedVoice,
         speed: "+0%",
         subtitles: currentSubtitles
@@ -4268,7 +4389,8 @@ async function triggerSubtitleAudiobookPlay() {
     }
 
     const data = await res.json();
-    const audioUrl = `/api/tts/audio/${data.filename}`;
+    const shortTitle = data.short_title || subTitle || "자막";
+    const audioUrl = `/api/tts/audio/${data.filename}?title=${encodeURIComponent(shortTitle)}`;
 
     currentTtsCues = data.cues || [];
     subTtsCueMap = data.sub_cue_map || {};
@@ -4279,7 +4401,7 @@ async function triggerSubtitleAudiobookPlay() {
       audioUrl: audioUrl,
       cues: data.cues || [],
       subCueMap: data.sub_cue_map || {},
-      shortTitle: data.short_title || subTitle || "자막",
+      shortTitle: shortTitle,
       filename: data.filename,
       downloadFilename: data.download_filename,
       voice: selectedVoice,
@@ -4295,8 +4417,7 @@ async function triggerSubtitleAudiobookPlay() {
     }
 
     if (dlBtn) {
-      const shortTitle = data.short_title || subTitle || "자막";
-      const downloadFilename = data.download_filename || `${shortTitle}_자막_더빙.mp3`;
+      const downloadFilename = data.download_filename || `sub_${shortTitle}_오디오북.mp3`;
       dlBtn.href = `/api/tts/audio/${data.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
       dlBtn.download = downloadFilename;
       dlBtn.classList.remove("hidden");
@@ -4956,7 +5077,7 @@ function toggleSidebarPin(forceState) {
 function openReaderPopup() {
   const noteContent = document.getElementById("note-content");
   const editorText = document.getElementById("note-editor-textarea")?.value?.trim() || "";
-  const mdSource = (currentMarkdown && currentMarkdown.trim()) || editorText;
+  const mdSource = (isEditing && editorText) ? editorText : ((currentMarkdown && currentMarkdown.trim()) || editorText);
   const hasContent = (noteContent && noteContent.innerHTML.trim() && !noteContent.classList.contains("hidden")) || !!mdSource;
 
   if (!hasContent) {
@@ -4969,11 +5090,11 @@ function openReaderPopup() {
   const popupArticle = document.getElementById("reader-popup-article");
 
   if (popupTitle) {
-    popupTitle.textContent = currentVideoInfo?.title || document.getElementById("video-title")?.textContent || (typeof t === "function" ? t("reader_title_default") : "학습 노트 읽기 모드");
+    popupTitle.textContent = currentVideoInfo?.title || document.getElementById("meta-title")?.textContent || document.getElementById("video-title")?.textContent || (typeof t === "function" ? t("reader_title_default") : "학습 노트 읽기 모드");
   }
 
   if (popupArticle) {
-    if (noteContent && noteContent.innerHTML.trim() && !noteContent.classList.contains("hidden")) {
+    if (!isEditing && noteContent && noteContent.innerHTML.trim() && !noteContent.classList.contains("hidden")) {
       popupArticle.innerHTML = noteContent.innerHTML;
     } else if (mdSource) {
       const cleanMd = stripFrontmatter(mdSource);

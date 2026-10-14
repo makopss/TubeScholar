@@ -88,5 +88,15 @@ def language_name(code: Optional[str]) -> str:
 
 
 def normalize_target_lang(code: Optional[str]) -> str:
-    """허용 목록에 있는 번역 언어만 사용 (그 외는 기본값)."""
-    return code if code in TARGET_LANGUAGES else DEFAULT_TARGET_LANG
+    """허용 목록에 있는 번역 언어만 사용 (대소문자/별칭 보정, 그 외는 기본값)."""
+    if not code:
+        return DEFAULT_TARGET_LANG
+    if code in TARGET_LANGUAGES:
+        return code
+    for k in TARGET_LANGUAGES:
+        if lang_match_level(code, k) == 2:
+            return k
+    for k in TARGET_LANGUAGES:
+        if lang_match_level(code, k) > 0:
+            return k
+    return DEFAULT_TARGET_LANG
