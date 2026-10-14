@@ -18,8 +18,8 @@
   <!-- Tailwind CSS (로컬 정적 빌드: npm run build:css / 설정은 tailwind.config.js)
        기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
-  <!-- i18n 다국어 지원 시스템 (ko, en, ja) -->
-  <script src="/static/i18n.js?v=1.0.8"></script>
+  <!-- i18n 다국어 지원 시스템 (ko, en) -->
+  <script src="/static/i18n.js?v=1.0.9"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -129,7 +129,7 @@
         <span id="library-count-badge" class="ml-1 px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded-full text-[10px] font-bold">0</span>
       </button>
 
-      <!-- UI 언어 선택 드롭다운 (단순화: 한국어 / English 2개 지원) -->
+      <!-- UI 언어 선택 드롭다운 (한국어 / English 2개 지원) -->
       <div class="relative flex items-center flex-shrink-0">
         <span class="absolute left-2.5 text-xs pointer-events-none text-slate-400 select-none">🌐</span>
         <select 
@@ -425,66 +425,6 @@
               <span>📄 .TXT</span>
             </button>
           </div>
-        </div>
-      </div>
-
-      <!-- 📖 집중 읽기 모드 (Zen Focus View) 전용 상단 컨트롤 바 -->
-      <div id="zen-topbar" class="h-12 border-b border-slate-800 px-6 items-center justify-between bg-slate-900/80 backdrop-blur z-20 flex-shrink-0">
-        <div class="flex items-center space-x-3">
-          <button id="exit-zen-btn" class="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs rounded-lg transition flex items-center space-x-1.5 font-semibold border border-slate-700">
-            <span>✕</span>
-            <span data-i18n="zen_exit">일반 뷰로 복귀</span>
-          </button>
-          <span id="zen-doc-title" class="text-xs font-bold text-slate-300 truncate max-w-xs md:max-w-md"></span>
-        </div>
-
-        <div class="flex items-center space-x-3 text-xs">
-          <!-- 테마 스위처 (다크 / 세피아 / 라이트) -->
-          <div class="flex items-center bg-slate-800/80 border border-slate-700 rounded-lg p-0.5">
-            <button type="button" id="zen-theme-dark" class="px-2 py-0.5 rounded text-[11px] font-medium text-white bg-slate-700 transition" title="다크 테마" data-i18n="theme_dark">
-              🌙 다크
-            </button>
-            <button type="button" id="zen-theme-sepia" class="px-2 py-0.5 rounded text-[11px] font-medium text-amber-200/70 hover:text-amber-200 transition" title="세피아 (눈 편한 종이책 톤)" data-i18n="theme_sepia">
-              📜 세피아
-            </button>
-            <button type="button" id="zen-theme-light" class="px-2 py-0.5 rounded text-[11px] font-medium text-slate-400 hover:text-slate-200 transition" title="라이트 테마" data-i18n="theme_light">
-              ☀️ 라이트
-            </button>
-          </div>
-
-          <!-- 폰트 크기 조절 (A- / A+) -->
-          <div class="flex items-center bg-slate-800/80 border border-slate-700 rounded-lg p-0.5">
-            <button type="button" id="zen-font-dec" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="글자 축소" data-i18n-title="font_dec_title">
-              A-
-            </button>
-            <span id="zen-font-badge" class="px-1.5 text-[11px] font-mono text-sky-400 select-none">100%</span>
-            <button type="button" id="zen-font-inc" class="px-2 py-0.5 hover:bg-slate-700 text-slate-300 hover:text-white rounded text-[11px] font-bold transition" title="글자 확대" data-i18n-title="font_inc_title">
-              A+
-            </button>
-          </div>
-
-          <!-- 목차 토글 버튼 -->
-          <button type="button" id="zen-toc-toggle-btn" class="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 rounded-lg transition flex items-center space-x-1" title="목차 패널 열기/닫기" data-i18n-title="toc_toggle_title">
-            <span data-i18n="toc_btn">📑 목차</span>
-          </button>
-
-          <!-- 오디오북 빠른 재생 -->
-          <button type="button" id="zen-tts-btn" class="px-2.5 py-1 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 border border-purple-500/40 rounded-lg transition flex items-center space-x-1 font-semibold" title="오디오북 재생" data-i18n-title="tts_play_title">
-            <span data-i18n="audio_btn">🎧 오디오</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- 플로팅 목차 (TOC) 사이드 패널 -->
-      <div id="zen-toc-panel" class="hidden fixed left-6 top-16 w-64 max-h-[80vh] bg-slate-900/95 border border-slate-800 backdrop-blur-md rounded-2xl p-4 shadow-2xl z-30 flex flex-col space-y-2">
-        <div class="flex items-center justify-between border-b border-slate-800 pb-2">
-          <span class="text-xs font-bold text-sky-300 flex items-center space-x-1.5">
-            <span data-i18n="zen_toc_heading">📑 목차 (TOC)</span>
-          </span>
-          <button type="button" id="close-zen-toc-btn" class="text-slate-400 hover:text-white text-xs p-1">✕</button>
-        </div>
-        <div id="zen-toc-list" class="flex-1 overflow-y-auto space-y-1 pr-1">
-          <p class="text-[11px] text-slate-500" data-i18n="zen_toc_loading">목차를 생성하고 있습니다...</p>
         </div>
       </div>
 
@@ -1074,7 +1014,7 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.7.6"></script>
+  <script src="/static/app.js?v=3.7.8"></script>
 </body>
 
 </html>

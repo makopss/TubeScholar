@@ -276,6 +276,24 @@ function processMarkdownHtml(html) {
     }
   });
 
+  // 마크다운 내 외부 링크 보안 강화 (Reverse Tabnabbing 방지 및 현재 탭 이탈로 인한 서버 종료 방지)
+  tempDiv.querySelectorAll("a").forEach(a => {
+    const rawHref = (a.getAttribute("href") || "").trim();
+    if (!rawHref) return;
+    if (rawHref.startsWith("#")) return;
+    try {
+      const parsed = new URL(rawHref, window.location.origin);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:" || parsed.protocol === "mailto:") {
+        a.setAttribute("target", "_blank");
+        a.setAttribute("rel", "noopener noreferrer");
+      } else {
+        a.removeAttribute("href");
+      }
+    } catch (e) {
+      a.removeAttribute("href");
+    }
+  });
+
   return tempDiv.innerHTML;
 }
 
@@ -414,8 +432,12 @@ function switchMediaContext(videoId, noteId) {
   }
   currentVideoId = videoId || null;
   currentNoteId = noteId || null;
-  ttsSessionCache.note = null;
-  ttsSessionCache.subtitles = null;
+  if (typeof resetTtsPlayerState === "function") {
+    resetTtsPlayerState();
+  } else {
+    ttsSessionCache.note = null;
+    ttsSessionCache.subtitles = null;
+  }
   refreshSyncBadge(true);
   return mediaGeneration;
 }
@@ -470,8 +492,12 @@ async function initLanguages() {
     const res = await fetch("/api/languages");
     if (res.ok) {
       const data = await res.json();
-      if (Array.isArray(data.target_languages) && data.target_languages.length > 0) {
+      if (Array.isArray(data.languages) && data.languages.length > 0) {
+        supportedTargetLanguages = data.languages;
+      } else if (Array.isArray(data.target_languages) && data.target_languages.length > 0) {
         supportedTargetLanguages = data.target_languages;
+      } else if (data.target_languages && typeof data.target_languages === "object") {
+        supportedTargetLanguages = Object.entries(data.target_languages).map(([code, name]) => ({ code, name }));
       }
     }
   } catch (e) {
@@ -599,6 +625,11 @@ async function regenerateStudyNote() {
     if (!res.ok) throw new Error(data.detail || "학습 노트 재작성 실패");
 
     setAnalysisStep(3);
+    if (typeof resetTtsPlayerState === "function") {
+      resetTtsPlayerState("note");
+    } else {
+      ttsSessionCache.note = null;
+    }
     renderMarkdownNote(data.markdown, `Gemini: ${data.model_used}`, data.note_id);
     if (isEditing) toggleEditor(false);
     loadLibrary();
@@ -1669,8 +1700,7 @@ function formatTimestampFromSeconds(sec) {
 }
 
 function escapeHtml(str) {
-  if (!str) return "";
-  return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  return escapeHtmlStr(str);
 }
 
 function flushSubtitleEditInputs() {
@@ -2015,11 +2045,13 @@ function renderSubtitlesList(filterKeyword = "") {
   highlightedRowIdx = -1;
   if (activeSubtitleIndex >= 0) applyRowHighlight(activeSubtitleIndex, false);
 
-  // 수정 모드인 경우 텍스트에어리어 높이 자동 조절 및 이벤트 등록
+  // 수정 모드인 경우 텍스트에어리어 높이 일괄 계산(레이아웃 쓰래싱 방지) 및 이벤트 등록
   if (isSubtitleEditMode) {
-    container.querySelectorAll("textarea.sub-edit-input").forEach(ta => {
-      ta.style.height = "auto";
-      ta.style.height = Math.max(34, ta.scrollHeight) + "px";
+    const textareas = Array.from(container.querySelectorAll("textarea.sub-edit-input"));
+    textareas.forEach(ta => { ta.style.height = "auto"; });
+    const heights = textareas.map(ta => Math.max(34, ta.scrollHeight));
+    textareas.forEach((ta, i) => {
+      ta.style.height = heights[i] + "px";
 
       ta.addEventListener("input", () => {
         ta.style.height = "auto";
@@ -2092,6 +2124,10 @@ function switchViewTab(tabName) {
     if (isSubtitleAutoScroll && activeSubtitleIndex >= 0) {
       setTimeout(() => scrollToActiveSubtitle(activeSubtitleIndex), 100);
     }
+    const audio = document.getElementById("tts-audio-element");
+    if ((!audio || audio.paused) && ttsSessionCache.subtitles && currentTtsType !== "subtitles" && typeof applyCachedTtsToPlayerCard === "function") {
+      applyCachedTtsToPlayerCard("subtitles", false);
+    }
   } else {
     tabNoteBtn.className = "ts-toolbar-btn bg-sky-600 text-white font-bold shadow-sm border border-transparent";
     tabSubsBtn.className = "ts-toolbar-btn bg-slate-800 hover:bg-slate-700 text-slate-300 font-semibold border border-slate-700/60";
@@ -2102,6 +2138,10 @@ function switchViewTab(tabName) {
     noteToolbar.classList.remove("hidden");
     if (isTtsAutoScroll && activeTtsCueIndex >= 0) {
       setTimeout(() => scrollToActiveTtsCue(activeTtsCueIndex), 100);
+    }
+    const audio = document.getElementById("tts-audio-element");
+    if ((!audio || audio.paused) && ttsSessionCache.note && currentTtsType !== "note" && typeof applyCachedTtsToPlayerCard === "function") {
+      applyCachedTtsToPlayerCard("note", false);
     }
   }
 }
@@ -2170,6 +2210,83 @@ async function changeSubLanguage(newLang, fromPlayerBar = false) {
   if (curTime >= 0) updateActiveSubtitle(curTime);
 }
 
+function formatSrtTimeClient(seconds) {
+  let sec = Math.max(0.0, Number(seconds) || 0.0);
+  let millis = Math.round((sec - Math.floor(sec)) * 1000);
+  if (millis >= 1000) {
+    sec += 1;
+    millis = 0;
+  }
+  const secInt = Math.floor(sec);
+  const hours = Math.floor(secInt / 3600);
+  const minutes = Math.floor((secInt % 3600) / 60);
+  const secs = secInt % 60;
+  const pad2 = n => String(n).padStart(2, "0");
+  const pad3 = n => String(n).padStart(3, "0");
+  return `${pad2(hours)}:${pad2(minutes)}:${pad2(secs)},${pad3(millis)}`;
+}
+
+function buildClientSubtitleDownload(subtitles, format, langMode, title, targetName, syncOffset) {
+  const fmt = (format || "srt").toLowerCase();
+  const mode = (langMode || "original").toLowerCase();
+  const offset = Number(syncOffset) || 0.0;
+  const items = (subtitles || []).map(s => Object.assign({}, s));
+  items.sort((a, b) => (Number(a.start) || 0) - (Number(b.start) || 0));
+
+  for (let i = 0; i < items.length; i++) {
+    const start = Number(items[i].start) || 0;
+    let end = items[i].end != null ? Number(items[i].end) : (start + (Number(items[i].duration) || 3.0));
+    if (i + 1 < items.length) {
+      const nextStart = Number(items[i + 1].start) || 0;
+      if (end > nextStart) {
+        end = nextStart > start ? nextStart : start + 0.3;
+      }
+    }
+    if (end <= start) end = start + 0.3;
+    items[i].start = start;
+    items[i].end = end;
+  }
+
+  let content = "";
+  let ext = "srt";
+  if (fmt === "txt") {
+    ext = "txt";
+    const lines = items.map(sub => {
+      const ts = sub.timestamp || formatTime(sub.start || 0);
+      const origText = (sub.text || "").trim();
+      const koText = (sub.ko_text || "").trim();
+      if (mode === "ko" && koText) return `[${ts}] ${koText}`;
+      if (mode === "bilingual" && koText && origText) return `[${ts}] ${koText} (${origText})`;
+      return `[${ts}] ${origText || koText}`;
+    });
+    content = lines.join("\n");
+  } else {
+    const lines = items.map((sub, idx) => {
+      let startSec = Number(sub.start) || 0;
+      let endSec = Number(sub.end) || (startSec + 2.5);
+      if (endSec <= startSec) endSec = startSec + 2.5;
+      if (offset) {
+        startSec = Math.max(0.0, startSec - offset);
+        endSec = Math.max(startSec + 0.3, endSec - offset);
+      }
+      const startStr = formatSrtTimeClient(startSec);
+      const endStr = formatSrtTimeClient(endSec);
+      const origText = (sub.text || "").trim();
+      const koText = (sub.ko_text || "").trim();
+      let text = origText || koText;
+      if (mode === "ko" && koText) text = koText;
+      else if (mode === "bilingual" && koText && origText) text = `${koText}\n${origText}`;
+      return `${idx + 1}\n${startStr} --> ${endStr}\n${text}\n`;
+    });
+    content = lines.join("\n");
+  }
+
+  const safeTitle = (title || "subtitles").replace(/[/\\?%*:|"<> ]+/g, "_").replace(/^_+|_+$/g, "") || "subtitles";
+  const modeTag = { original: "원문", ko: `${targetName || "한국어"}번역`, bilingual: `${targetName || "한국어"}병기` }[mode] || mode;
+  const filename = `${safeTitle}_${modeTag}.${ext}`;
+  return { filename, content };
+}
+
 async function triggerSubtitleDownload(format) {
   if (!currentSubtitles || currentSubtitles.length === 0) {
     alert(typeof t === "function" ? t("alert_no_subs_to_dl") : "다운로드할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 불러와주세요.");
@@ -2195,6 +2312,9 @@ async function triggerSubtitleDownload(format) {
   }
 
   const title = (currentVideoInfo ? currentVideoInfo.title : "subtitle");
+  const mime = format === "txt" ? "text/plain;charset=utf-8" : "application/x-subrip;charset=utf-8";
+  let fileData = null;
+
   try {
     const res = await fetch("/api/subtitles/download", {
       method: "POST",
@@ -2211,19 +2331,27 @@ async function triggerSubtitleDownload(format) {
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.detail || "자막 다운로드 생성 실패");
+    fileData = { filename: data.filename, content: data.content };
+  } catch (err) {
+    // 서버 통신이 일시 중단되었더라도 브라우저 메모리의 자막 데이터로 즉시 파일 생성 (오프라인 무결성 보장)
+    try {
+      fileData = buildClientSubtitleDownload(currentSubtitles, format, downloadLangMode, title, targetName, getSyncOffset());
+    } catch (fallbackErr) {
+      alert(typeof t === "function" ? t("alert_sub_dl_error", { err: err.message }) : ("자막 다운로드 오류: " + err.message));
+      return;
+    }
+  }
 
-    const mime = format === "txt" ? "text/plain;charset=utf-8" : "application/x-subrip;charset=utf-8";
-    const blob = new Blob([data.content], { type: mime });
+  if (fileData) {
+    const blob = new Blob([fileData.content], { type: mime });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = data.filename;
+    a.download = fileData.filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-  } catch (err) {
-    alert(typeof t === "function" ? t("alert_sub_dl_error", { err: err.message }) : ("자막 다운로드 오류: " + err.message));
   }
 }
 
@@ -2250,6 +2378,7 @@ function setAnalysisStep(stepNum) {
 }
 
 let analysisStatusTimer = null;
+let isAnalysisPollingInFlight = false;
 
 function getFriendlyModelName(model) {
   if (!model) return "";
@@ -2266,10 +2395,10 @@ function getI18nAnalysisMessage(data) {
   const modelName = getFriendlyModelName(data.model);
   const lang = typeof currentUiLang !== "undefined" ? currentUiLang : "ko";
   const attemptStr = (data.attempt && data.attempt > 1) 
-    ? (lang === "en" ? ` (Retry ${data.attempt}/2)` : (lang === "ja" ? ` (再試行 ${data.attempt}/2)` : ` (재시도 ${data.attempt}/2)`))
+    ? (lang === "en" ? ` (Retry ${data.attempt}/2)` : ` (재시도 ${data.attempt}/2)`)
     : "";
   const cycleStr = (data.cycle && data.cycle > 1)
-    ? (lang === "en" ? " [Cycle 2]" : (lang === "ja" ? " [2次リカバリ]" : " [2차 복구]"))
+    ? (lang === "en" ? " [Cycle 2]" : " [2차 복구]")
     : "";
 
   if (data.event && typeof t === "function") {
@@ -2282,7 +2411,10 @@ function getI18nAnalysisMessage(data) {
 
 function startAnalysisStatusPolling() {
   stopAnalysisStatusPolling();
+  isAnalysisPollingInFlight = false;
   analysisStatusTimer = setInterval(async () => {
+    if (isAnalysisPollingInFlight) return;
+    isAnalysisPollingInFlight = true;
     try {
       const res = await fetch("/api/analysis/status");
       if (!res.ok) return;
@@ -2318,8 +2450,10 @@ function startAnalysisStatusPolling() {
       }
     } catch (e) {
       // Background status polling error ignore
+    } finally {
+      isAnalysisPollingInFlight = false;
     }
-  }, 350);
+  }, 600);
 }
 
 function stopAnalysisStatusPolling() {
@@ -2374,6 +2508,7 @@ function abortCurrentAnalysis() {
     currentAbortController.abort();
     currentAbortController = null;
   }
+  fetch("/api/analysis/cancel", { method: "POST" }).catch(() => {});
   setAnalysisRunning(false);
   alert(typeof t === "function" ? t("alert_analysis_cancelled") : "🛑 분석 작업이 사용자에 의해 즉시 중단되었습니다.");
 }
@@ -2544,6 +2679,10 @@ async function loadLibrary() {
       const localLabel = typeof t === "function" ? t("tag_local") : "📁 로컬";
       const delLabel = typeof t === "function" ? t("library_delete_btn") : "삭제";
       
+      const hasAbBadge = item.has_audiobook
+        ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] font-semibold ml-1.5" title="저장된 오디오북 있음">🎧</span>`
+        : "";
+      
       card.innerHTML = `
         <div class="w-20 h-14 bg-slate-900 rounded-lg border border-slate-700 flex-shrink-0 overflow-hidden flex items-center justify-center">
           ${thumb ? `<img src="${escapeHtmlStr(thumb)}" alt="thumb" class="w-full h-full object-cover">` : `<span class="text-xs text-amber-400 font-bold">${localLabel}</span>`}
@@ -2551,7 +2690,7 @@ async function loadLibrary() {
         <div class="flex-1 min-w-0 pr-6">
           <p class="text-xs font-semibold text-sky-400 truncate">${escapeHtmlStr(item.channel || 'YouTube')}</p>
           <h4 class="text-xs font-bold text-white truncate mt-0.5" title="${escapeHtmlStr(item.title)}">${escapeHtmlStr(item.title)}</h4>
-          <p class="text-[10px] text-slate-400 mt-1">${escapeHtmlStr(item.created_at || '')}</p>
+          <p class="text-[10px] text-slate-400 mt-1 flex items-center"><span>${escapeHtmlStr(item.created_at || '')}</span>${hasAbBadge}</p>
         </div>
         <button class="delete-note-btn absolute top-2 right-2 text-slate-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition" title="${delLabel}">
           <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
@@ -2568,7 +2707,11 @@ async function loadLibrary() {
       delBtn.addEventListener("click", async (e) => {
         e.stopPropagation();
         if (confirm(typeof t === "function" ? t("confirm_delete_named", { title: item.title }) : `'${item.title}' 학습 노트를 삭제하시겠습니까?`)) {
-          await fetch(`/api/notes/${item.note_id || item.video_id}`, { method: "DELETE" });
+          const delId = item.note_id || item.video_id;
+          await fetch(`/api/notes/${delId}`, { method: "DELETE" });
+          if (currentNoteId && currentNoteId === item.note_id && typeof resetTtsPlayerState === "function") {
+            resetTtsPlayerState();
+          }
           loadLibrary();
         }
       });
@@ -2603,8 +2746,9 @@ async function loadSingleSavedNote(noteIdOrVid) {
     document.getElementById("inline-paste-card").classList.add("hidden");
 
     const meta = data.metadata || {};
-    const savedSubs = (meta.subtitles && Array.isArray(meta.subtitles)) ? meta.subtitles : [];
-    const hasTranslation = savedSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
+    let savedSubs = (meta.subtitles && Array.isArray(meta.subtitles)) ? meta.subtitles : [];
+    const noteTargetLang = meta.target_lang || currentTargetLang || "ko";
+    const normTargetLang = noteTargetLang.toLowerCase();
 
     // 캐시 보관: 노트 내 여러 언어 번역본이 있다면 전부 클라이언트 캐시에 등록
     if (meta.translations && typeof meta.translations === "object") {
@@ -2617,11 +2761,35 @@ async function loadSingleSavedNote(noteIdOrVid) {
         }
       }
     }
+
+    let hasTranslation = savedSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
+
+    // 기본 자막 배열에 ko_text가 비어있지만 translations 맵이나 클라이언트 캐시에 번역본이 있는 경우 복원
+    if (!hasTranslation) {
+      const cachedEntry = (meta.translations && (meta.translations[noteTargetLang] || meta.translations[normTargetLang] || meta.translations["ko"]))
+        || (data.note_id && clientTranslationCache.get(`${data.note_id}_${normTargetLang}`))
+        || (meta.video_id && clientTranslationCache.get(`${meta.video_id}_${normTargetLang}`));
+      if (cachedEntry && Array.isArray(cachedEntry.subtitles) && cachedEntry.subtitles.some(s => s.ko_text && s.ko_text.trim() !== "")) {
+        savedSubs = cachedEntry.subtitles;
+        hasTranslation = true;
+      }
+    }
+
+    // 구버전 노트 호환: 타겟 언어가 한국어인데 text 자체가 이미 한글로 저장되어 있고 ko_text가 비어있는 경우 자동 보정
+    if (!hasTranslation && normTargetLang === "ko" && savedSubs.length > 0) {
+      const hangulLines = savedSubs.filter(s => /[가-힣]/.test(s.text || "")).length;
+      if (hangulLines / savedSubs.length >= 0.4) {
+        savedSubs.forEach(s => {
+          if (!s.ko_text && s.text) s.ko_text = s.text;
+        });
+        hasTranslation = savedSubs.some(s => s.ko_text && s.ko_text.trim() !== "");
+      }
+    }
+
     if (hasTranslation) {
-      const curTgt = (meta.target_lang || currentTargetLang || "ko").toLowerCase();
       const entry = { subtitles: savedSubs, source: meta.translation_source || "gemini" };
-      if (data.note_id) clientTranslationCache.set(`${data.note_id}_${curTgt}`, entry);
-      if (meta.video_id) clientTranslationCache.set(`${meta.video_id}_${curTgt}`, entry);
+      if (data.note_id) clientTranslationCache.set(`${data.note_id}_${normTargetLang}`, entry);
+      if (meta.video_id) clientTranslationCache.set(`${meta.video_id}_${normTargetLang}`, entry);
     }
 
     // 1. 번역된 자막이 존재하는 경우 사용자가 즉시 번역문을 볼 수 있도록 'bilingual'(병기) 모드로 전환
@@ -2663,7 +2831,7 @@ async function loadSingleSavedNote(noteIdOrVid) {
 
     // 3. 자막이 메모리에 등록된 상태에서 언어 상태 복원 (hasKo가 정확히 계산되어 '재번역' 버튼 및 뱃지 정상 동기화)
     applyLanguageState({
-      target_lang: meta.target_lang || "ko",
+      target_lang: noteTargetLang,
       source_lang: meta.source_lang || null,
       original_lang: meta.original_lang || null,
       translation_source: meta.translation_source || (hasTranslation ? "gemini" : null),
@@ -2678,6 +2846,11 @@ async function loadSingleSavedNote(noteIdOrVid) {
       renderNoteTargetLangSelect();
     }
     updateRegenerateNoteButtonState();
+
+    // 🎧 저장된 오디오북(노트 오디오북 / 자막 더빙 오디오북)이 존재하면 플레이어 바 및 캐시에 즉시 동기화
+    if (typeof restoreSavedAudiobookForNote === "function") {
+      restoreSavedAudiobookForNote(data);
+    }
 
     // 4. 화면 재생 위치에 따른 자막 동기화
     let curTime = -1;
@@ -2916,7 +3089,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!res.ok) throw new Error("저장 실패");
 
       renderMarkdownNote(editedMd, { key: "note_status_modified" }, currentNoteId);
-      ttsSessionCache.note = null;
+      if (typeof resetTtsPlayerState === "function") {
+        resetTtsPlayerState("note");
+      } else {
+        ttsSessionCache.note = null;
+      }
+      if (data && data.note && typeof restoreSavedAudiobookForNote === "function") {
+        restoreSavedAudiobookForNote(data.note);
+      }
       toggleEditor(false);
       loadLibrary();
       alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
@@ -2933,12 +3113,21 @@ document.addEventListener("DOMContentLoaded", () => {
             subtitles: currentSubtitles,
             source_lang: currentSourceLang,
             target_lang: currentTargetLang,
+            note_target_lang: currentNoteTargetLang,
             translation_source: currentTranslationSource
           })
         });
         const d2 = await res2.json();
         currentNoteId = d2.note_id;
+        if (typeof resetTtsPlayerState === "function") {
+          resetTtsPlayerState("note");
+        } else {
+          ttsSessionCache.note = null;
+        }
         renderMarkdownNote(editedMd, { key: "note_status_modified" }, currentNoteId);
+        if (typeof restoreSavedAudiobookForNote === "function") {
+          restoreSavedAudiobookForNote(d2);
+        }
         toggleEditor(false);
         loadLibrary();
         alert(typeof t === "function" ? t("alert_edited_note_saved") : "💾 수정된 내용이 성공적으로 저장되었습니다!");
@@ -2969,11 +3158,17 @@ document.addEventListener("DOMContentLoaded", () => {
           subtitles: currentSubtitles,
           source_lang: currentSourceLang,
           target_lang: currentTargetLang,
+          note_target_lang: currentNoteTargetLang,
           translation_source: currentTranslationSource
         })
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "저장 실패");
+      if (typeof resetTtsPlayerState === "function") {
+        resetTtsPlayerState("note");
+      } else {
+        ttsSessionCache.note = null;
+      }
 
       const newVid = (data.video_info.video_id && !data.video_info.video_id.startsWith('custom_')) ? data.video_info.video_id : null;
       if (newVid && newVid !== currentVideoId) {
@@ -2984,6 +3179,9 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       displayVideoMetadata(data.video_info);
       renderMarkdownNote(data.markdown, { key: "note_status_sub_ai" }, data.note_id);
+      if (typeof restoreSavedAudiobookForNote === "function") {
+        restoreSavedAudiobookForNote(data);
+      }
       loadLibrary();
       document.getElementById("inline-paste-textarea").value = "";
       alert(typeof t === "function" ? t("alert_paste_applied") : "✅ 구독 AI 학습 노트가 독립된 새 노트로 영구 저장되었습니다!");
@@ -3277,15 +3475,17 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 복사 및 다운로드
   document.getElementById("copy-markdown-btn").addEventListener("click", () => {
-    if (!currentMarkdown) return;
-    navigator.clipboard.writeText(currentMarkdown).then(() => {
+    const mdText = currentMarkdown || document.getElementById("note-editor-textarea")?.value || "";
+    if (!mdText.trim()) return;
+    navigator.clipboard.writeText(mdText).then(() => {
       alert(typeof t === "function" ? t("alert_note_copied") : "학습 노트 내용이 클립보드에 복사되었습니다!");
     });
   });
 
   document.getElementById("download-markdown-btn").addEventListener("click", () => {
-    if (!currentMarkdown) return;
-    const blob = new Blob([currentMarkdown], { type: "text/markdown;charset=utf-8" });
+    const mdText = currentMarkdown || document.getElementById("note-editor-textarea")?.value || "";
+    if (!mdText.trim()) return;
+    const blob = new Blob([mdText], { type: "text/markdown;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     const safeTitle = (currentVideoInfo ? currentVideoInfo.title : "study_note").replace(/[/\\?%*:|"<>]/g, '_');
@@ -3336,12 +3536,15 @@ document.addEventListener("DOMContentLoaded", () => {
           </div>
         `;
         card.addEventListener("click", () => {
+          const vidId = v.video_id || v.id || "";
+          const targetUrl = v.url || (vidId ? `https://www.youtube.com/watch?v=${vidId}` : "");
+          if (!targetUrl) return;
           document.getElementById("channel-modal").classList.add("hidden");
-          document.getElementById("url-input").value = v.url || `https://www.youtube.com/watch?v=${v.id}`;
+          document.getElementById("url-input").value = targetUrl;
           if (currentMode === "gemini") {
-            runGeminiAnalysis(v.url || `https://www.youtube.com/watch?v=${v.id}`);
+            runGeminiAnalysis(targetUrl);
           } else {
-            runSubscriptionPrompt(v.url || `https://www.youtube.com/watch?v=${v.id}`);
+            runSubscriptionPrompt(targetUrl);
           }
         });
         listEl.appendChild(card);
@@ -3616,12 +3819,9 @@ document.addEventListener("DOMContentLoaded", () => {
   initSubtitleDraggable();
   applyCcFontSize();
 
-  // 로컬 비디오 플레이어 실시간 이벤트 바인딩
+  // 로컬 비디오 플레이어 실시간 이벤트 바인딩 (재생 중 동기화는 startTimeSync 120ms 타이머가 전담)
   const localVideoEl = document.getElementById("local-video-player");
   if (localVideoEl) {
-    localVideoEl.addEventListener("timeupdate", () => {
-      updateActiveSubtitle(localVideoEl.currentTime);
-    });
     localVideoEl.addEventListener("seeked", () => {
       updateActiveSubtitle(localVideoEl.currentTime);
     });
@@ -3650,6 +3850,149 @@ document.addEventListener("DOMContentLoaded", () => {
 // 🎧 edge-tts 오디오북 재생 및 관리 엔진
 // ============================================================
 let isGeneratingAudio = false;
+
+function resetTtsPlayerState(onlyType = null) {
+  const audio = document.getElementById("tts-audio-element");
+  const card = document.getElementById("tts-player-card");
+  const dlBtn = document.getElementById("tts-download-btn");
+
+  if (onlyType === "note") {
+    ttsSessionCache.note = null;
+    if (currentTtsType !== "note") return;
+    if (ttsSessionCache.subtitles) {
+      applyCachedTtsToPlayerCard("subtitles", false);
+      return;
+    }
+  } else if (onlyType === "subtitles") {
+    ttsSessionCache.subtitles = null;
+    if (currentTtsType !== "subtitles") return;
+    if (ttsSessionCache.note) {
+      applyCachedTtsToPlayerCard("note", false);
+      return;
+    }
+  } else {
+    ttsSessionCache.note = null;
+    ttsSessionCache.subtitles = null;
+  }
+
+  if (audio) {
+    try { audio.pause(); } catch (e) {}
+    audio.removeAttribute("src");
+    try { audio.load(); } catch (e) {}
+  }
+  if (card) card.classList.add("hidden");
+  if (dlBtn) {
+    dlBtn.classList.add("hidden");
+    dlBtn.removeAttribute("href");
+  }
+  currentTtsCues = [];
+  subTtsCueMap = {};
+  ttsNoteCueMap = null;
+  ttsReaderCueMap = null;
+  clearTtsCueHighlight();
+}
+
+function applyCachedTtsToPlayerCard(type, autoPlay = false) {
+  const cacheItem = type === "subtitles" ? ttsSessionCache.subtitles : ttsSessionCache.note;
+  if (!cacheItem || !cacheItem.audioUrl) return false;
+
+  const card = document.getElementById("tts-player-card");
+  const audio = document.getElementById("tts-audio-element");
+  const dlBtn = document.getElementById("tts-download-btn");
+  const voiceSelect = document.getElementById("tts-voice-select");
+  const speedSelect = document.getElementById("tts-speed-select");
+
+  currentTtsType = type;
+  currentTtsCues = cacheItem.cues || [];
+  ttsNoteCueMap = null;
+  ttsReaderCueMap = null;
+  if (type === "subtitles") {
+    subTtsCueMap = cacheItem.subCueMap || {};
+  } else {
+    clearSubTtsHighlight();
+  }
+  clearTtsCueHighlight();
+
+  if (voiceSelect && cacheItem.voice) {
+    const hasOpt = Array.from(voiceSelect.options || []).some(o => o.value === cacheItem.voice);
+    if (hasOpt) voiceSelect.value = cacheItem.voice;
+  }
+
+  if (card) card.classList.remove("hidden");
+  if (audio) {
+    const currentAttrSrc = audio.getAttribute("src") || "";
+    if (currentAttrSrc !== cacheItem.audioUrl) {
+      audio.src = cacheItem.audioUrl;
+    }
+    const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
+    audio.playbackRate = curSpeed || 1.0;
+    if (autoPlay) {
+      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
+    } else {
+      try {
+        audio.pause();
+        audio.currentTime = 0;
+      } catch (e) {}
+    }
+  }
+
+  if (dlBtn && cacheItem.filename) {
+    const fallbackTitle = getNoteTitleForAudiobook() || (type === "subtitles" ? "자막" : "학습노트");
+    const shortTitle = cacheItem.shortTitle || fallbackTitle;
+    dlBtn.href = `/api/tts/audio/${cacheItem.filename}?download=1&title=${encodeURIComponent(shortTitle)}`;
+    dlBtn.download = cacheItem.downloadFilename || `${shortTitle}_${type === "subtitles" ? "자막_더빙" : "오디오북"}.mp3`;
+    dlBtn.classList.remove("hidden");
+  }
+
+  updateTtsCardUI();
+  return true;
+}
+
+function restoreSavedAudiobookForNote(data) {
+  if (!data) return;
+  const meta = data.metadata || {};
+  const noteId = data.note_id || currentNoteId || "current_note";
+  const vidKey = meta.video_id || (data.video_info && data.video_info.video_id) || currentVideoId || noteId || "temp_video";
+  const baseTitle = meta.title || (data.video_info && data.video_info.title) || getNoteTitleForAudiobook() || "학습노트";
+
+  const ab = (data.audiobook && data.audiobook.filename) ? data.audiobook : null;
+  const subAb = (data.subtitle_audiobook && data.subtitle_audiobook.filename) ? data.subtitle_audiobook : null;
+
+  if (ab) {
+    ttsSessionCache.note = {
+      noteId: noteId,
+      audioUrl: `/api/tts/audio/${ab.filename}`,
+      cues: ab.cues || [],
+      shortTitle: ab.short_title || baseTitle,
+      filename: ab.filename,
+      downloadFilename: ab.download_filename || `${baseTitle}_오디오북.mp3`,
+      voice: ab.voice_key || (ab.voice && ab.voice.key) || "injoon"
+    };
+  }
+
+  if (subAb) {
+    ttsSessionCache.subtitles = {
+      videoId: vidKey,
+      audioUrl: `/api/tts/audio/${subAb.filename}`,
+      cues: subAb.cues || [],
+      subCueMap: subAb.sub_cue_map || {},
+      shortTitle: subAb.short_title || baseTitle,
+      filename: subAb.filename,
+      downloadFilename: subAb.download_filename || `${baseTitle}_자막_더빙.mp3`,
+      voice: subAb.voice_key || (subAb.voice && subAb.voice.key) || "injoon",
+      mode: subAb.mode === "orig" ? "original" : (subAb.mode || "dub"),
+      targetLang: (meta.target_lang || currentTargetLang || "ko").toLowerCase()
+    };
+  }
+
+  if (currentActiveView === "subtitles" && ttsSessionCache.subtitles) {
+    applyCachedTtsToPlayerCard("subtitles", false);
+  } else if (ttsSessionCache.note) {
+    applyCachedTtsToPlayerCard("note", false);
+  } else if (ttsSessionCache.subtitles) {
+    applyCachedTtsToPlayerCard("subtitles", false);
+  }
+}
 
 function getNoteTitleForAudiobook() {
   if (currentVideoInfo && currentVideoInfo.title && currentVideoInfo.title.trim()) {
@@ -3731,27 +4074,7 @@ async function triggerAudiobookPlay() {
 
   // 1. 이미 이번 세션에 로드된 노트 오디오북이 있고 음성 변경이 없다면 0ms 즉시 재생
   if (ttsSessionCache.note && ttsSessionCache.note.noteId === noteKey && ttsSessionCache.note.voice === selectedVoice) {
-    currentTtsType = "note";
-    updateTtsCardUI();
-    currentTtsCues = ttsSessionCache.note.cues || [];
-    ttsNoteCueMap = null;
-    ttsReaderCueMap = null;
-    clearTtsCueHighlight();
-
-    if (card) card.classList.remove("hidden");
-    if (audio) {
-      if (audio.src !== ttsSessionCache.note.audioUrl) {
-        audio.src = ttsSessionCache.note.audioUrl;
-      }
-      const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
-      audio.playbackRate = curSpeed;
-      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
-    }
-    if (dlBtn) {
-      dlBtn.href = `/api/tts/audio/${ttsSessionCache.note.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.note.shortTitle || noteTitle || "학습노트")}`;
-      dlBtn.download = ttsSessionCache.note.downloadFilename || `${noteTitle || "학습노트"}_오디오북.mp3`;
-      dlBtn.classList.remove("hidden");
-    }
+    applyCachedTtsToPlayerCard("note", true);
     return;
   }
 
@@ -3835,6 +4158,7 @@ async function triggerAudiobookPlay() {
       badge.className = "px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-mono";
       badge.setAttribute("data-i18n", "tts_status_playing");
     }
+    loadLibrary().catch(() => {});
   } catch (err) {
     alert(typeof t === "function" ? t("alert_tts_error", { err: err.message }) : ("오디오북 음성 생성 실패: " + err.message));
     if (badge) {
@@ -3881,34 +4205,23 @@ async function triggerSubtitleAudiobookPlay() {
 
   const vidKey = currentVideoId || currentNoteId || "temp_video";
   const subTitle = getNoteTitleForAudiobook() || (currentVideoInfo ? currentVideoInfo.title : "자막");
+  const curMode = (currentSubLang === "original") ? "original" : "dub";
+  const curTarget = (currentTargetLang || "ko").toLowerCase();
 
   const card = document.getElementById("tts-player-card");
   const badge = document.getElementById("tts-status-badge");
   const audio = document.getElementById("tts-audio-element");
   const dlBtn = document.getElementById("tts-download-btn");
 
-  // 1. 이미 이번 세션에 로드된 자막 더빙 오디오북이 있고 음성 변경이 없다면 0ms 즉시 재생
-  if (ttsSessionCache.subtitles && ttsSessionCache.subtitles.videoId === vidKey && ttsSessionCache.subtitles.voice === selectedVoice) {
-    currentTtsType = "subtitles";
-    updateTtsCardUI();
-    currentTtsCues = ttsSessionCache.subtitles.cues || [];
-    subTtsCueMap = ttsSessionCache.subtitles.subCueMap || {};
-    clearSubTtsHighlight();
-
-    if (card) card.classList.remove("hidden");
-    if (audio) {
-      if (audio.src !== ttsSessionCache.subtitles.audioUrl) {
-        audio.src = ttsSessionCache.subtitles.audioUrl;
-      }
-      const curSpeed = speedSelect ? parseFloat(speedSelect.value) : 1.0;
-      audio.playbackRate = curSpeed;
-      audio.play().then(() => updateTtsCardUI()).catch(e => console.log("자동 재생 대기:", e));
-    }
-    if (dlBtn) {
-      dlBtn.href = `/api/tts/audio/${ttsSessionCache.subtitles.filename}?download=1&title=${encodeURIComponent(ttsSessionCache.subtitles.shortTitle || subTitle || "자막")}`;
-      dlBtn.download = ttsSessionCache.subtitles.downloadFilename || `${subTitle || "자막"}_자막_더빙.mp3`;
-      dlBtn.classList.remove("hidden");
-    }
+  // 1. 이미 이번 세션에 로드된 자막 더빙 오디오북이 있고 음성/모드/번역언어 변경이 없다면 0ms 즉시 재생
+  if (
+    ttsSessionCache.subtitles &&
+    ttsSessionCache.subtitles.videoId === vidKey &&
+    ttsSessionCache.subtitles.voice === selectedVoice &&
+    ttsSessionCache.subtitles.mode === curMode &&
+    ttsSessionCache.subtitles.targetLang === curTarget
+  ) {
+    applyCachedTtsToPlayerCard("subtitles", true);
     return;
   }
 
@@ -3969,7 +4282,9 @@ async function triggerSubtitleAudiobookPlay() {
       shortTitle: data.short_title || subTitle || "자막",
       filename: data.filename,
       downloadFilename: data.download_filename,
-      voice: selectedVoice
+      voice: selectedVoice,
+      mode: curMode,
+      targetLang: curTarget
     };
 
     if (audio) {
@@ -3992,6 +4307,7 @@ async function triggerSubtitleAudiobookPlay() {
       badge.className = "px-2 py-0.5 bg-emerald-500/20 text-emerald-300 rounded text-[10px] font-mono";
       badge.setAttribute("data-i18n", "tts_status_playing");
     }
+    loadLibrary().catch(() => {});
   } catch (err) {
     alert(typeof t === "function" ? t("alert_tts_error", { err: err.message }) : ("자막 오디오북 음성 생성 실패: " + err.message));
     if (badge) {
@@ -4265,7 +4581,15 @@ function initTtsEvents() {
     ttsBtn.addEventListener("click", () => {
       const card = document.getElementById("tts-player-card");
       const audio = document.getElementById("tts-audio-element");
-      if (currentTtsType === "note" && card && !card.classList.contains("hidden") && audio && audio.src) {
+      const noteKey = currentNoteId || "current_note";
+      const isSameNoteAudio = (
+        currentTtsType === "note" &&
+        ttsSessionCache.note &&
+        ttsSessionCache.note.noteId === noteKey &&
+        card && !card.classList.contains("hidden") &&
+        audio && audio.src && audio.src.includes(ttsSessionCache.note.filename)
+      );
+      if (isSameNoteAudio) {
         if (audio.paused) audio.play();
         else audio.pause();
       } else {
@@ -4279,7 +4603,15 @@ function initTtsEvents() {
     subTtsBtn.addEventListener("click", () => {
       const card = document.getElementById("tts-player-card");
       const audio = document.getElementById("tts-audio-element");
-      if (currentTtsType === "subtitles" && card && !card.classList.contains("hidden") && audio && audio.src) {
+      const vidKey = currentVideoId || currentNoteId || "temp_video";
+      const isSameSubAudio = (
+        currentTtsType === "subtitles" &&
+        ttsSessionCache.subtitles &&
+        ttsSessionCache.subtitles.videoId === vidKey &&
+        card && !card.classList.contains("hidden") &&
+        audio && audio.src && audio.src.includes(ttsSessionCache.subtitles.filename)
+      );
+      if (isSameSubAudio) {
         if (audio.paused) audio.play();
         else audio.pause();
       } else {
@@ -4824,7 +5156,7 @@ function initZenModeEvents() {
   // pagehide는 브라우저 창 최소화나 백그라운드 전환 시에도 발생할 수 있으므로 제거하고, 실제 탭 닫힘 이벤트인 beforeunload만 사용
   window.addEventListener("beforeunload", sendCloseSignal);
 
-  // 브라우저 탭 활성 생존 신호 (Web Worker를 사용하여 창 최소화/내려놓은 상태에서도 타이머 쓰로틀링 없이 안정적 유지)
+  // 브라우저 탭 활성 생존 신호 (Web Worker 스레드 내부에서 직접 fetch를 전송하여 alert/confirm 모달이나 창 최소화 시에도 하트비트가 절대 끊기지 않도록 보장)
   function initHeartbeat() {
     const ping = () => {
       fetch("/api/system/heartbeat", { 
@@ -4833,20 +5165,29 @@ function initZenModeEvents() {
       }).catch(() => {});
     };
 
-    // 1. Web Worker 백그라운드 타이머 (창을 내렸을 때 메인 스레드 타이머가 브라우저에 의해 1분 이상 지연되는 현상 방지)
+    // 1. Web Worker 백그라운드 타이머 (메인 스레드가 alert/confirm 등으로 블로킹되어도 Worker 스레드에서 독립적으로 직접 서버에 하트비트 전송)
     try {
-      const workerBlob = new Blob([
-        'setInterval(function() { postMessage("ping"); }, 4000);'
-      ], { type: 'application/javascript' });
+      const heartbeatUrl = window.location.origin + "/api/system/heartbeat";
+      const workerCode = `
+        const hbUrl = ${JSON.stringify(heartbeatUrl)};
+        setInterval(function() {
+          fetch(hbUrl, {
+            method: "POST",
+            headers: { "x-tubescholar": "1" }
+          }).catch(function() {
+            postMessage("ping");
+          });
+        }, 4000);
+      `;
+      const workerBlob = new Blob([workerCode], { type: 'application/javascript' });
       const workerUrl = URL.createObjectURL(workerBlob);
       const worker = new Worker(workerUrl);
       worker.onmessage = () => ping();
     } catch (e) {
       console.warn("Heartbeat web worker unavailable, using main timer fallback:", e);
+      // 2. Web Worker 실패 시에만 메인 스레드 인터벌 폴백 작동 (이중 타이머 방지)
+      setInterval(ping, 4000);
     }
-
-    // 2. 메인 스레드 인터벌 병행 (안전장치)
-    setInterval(ping, 4000);
 
     // 3. 브라우저 창 복원 및 포커스 시 즉시 갱신
     document.addEventListener("visibilitychange", () => {

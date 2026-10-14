@@ -2,39 +2,34 @@ import os
 import sys
 import time
 import json
-from typing import Optional
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
-from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
-from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
-from pydantic import BaseModel
-from dotenv import load_dotenv
+import re
 import threading
 import subprocess
 import tempfile
 import shutil
+from typing import Optional, List, Dict, Any
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
+from starlette.middleware.trustedhost import TrustedHostMiddleware
+from pydantic import BaseModel
 import imageio_ffmpeg
 
-# Google GenAI SDK의 무해한 AFC 권고 logger.warning 원천 차단
-try:
-    from google.genai.models import Models
-    Models._logged_afc_warning = True
-except Exception:
-    pass
+# backend 디렉토리를 모듈 경로에 먼저 추가
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-if getattr(sys, 'frozen', False):
-    BUNDLE_DIR = getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-    USER_DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TubeScholar")
-    os.makedirs(USER_DATA_DIR, exist_ok=True)
-    ENV_PATH = os.path.join(USER_DATA_DIR, ".env")
-    BASE_DIR = BUNDLE_DIR
-else:
-    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    BUNDLE_DIR = BASE_DIR
-    ENV_PATH = os.path.join(BASE_DIR, ".env")
+from config import (
+    BUNDLE_DIR,
+    ENV_PATH,
+    FRONTEND_DIR,
+    AUDIO_DIR,
+    MAX_LOCAL_VIDEO_MB,
+    MAX_LOCAL_VIDEO_BYTES,
+    suppress_genai_warnings,
+)
 
-sys.path.append(os.path.join(BUNDLE_DIR, "backend"))
-load_dotenv(ENV_PATH)
+suppress_genai_warnings()
 
 from extractor import (
     extract_video_id, 
@@ -56,23 +51,23 @@ from analyzer import (
     DEFAULT_NOTE_MODEL,
     DEFAULT_TRANSLATE_MODEL,
     get_analysis_state,
-    update_analysis_state
+    update_analysis_state,
+    request_analysis_cancel,
+    reset_analysis_cancel,
+    is_analysis_cancelled,
 )
 from storage import (
     save_note, get_note, list_saved_notes, delete_note, update_note,
-    update_note_subtitles, is_safe_note_id, get_cached_subtitles, save_translation_cache,
+    update_note_subtitles, update_note_audiobook, is_safe_note_id, get_cached_subtitles, save_translation_cache,
     clean_ai_citation_artifacts
 )
 from prompt_loader import list_available_templates, get_user_prompts_dir
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang
 from stt import transcribe_audio_groq
 from tts import (
-    generate_note_audio, generate_subtitles_audio, list_available_voices, AUDIO_DIR,
+    generate_note_audio, generate_subtitles_audio, list_available_voices,
     abbreviate_note_title, get_audiobook_download_filename
 )
-from typing import List, Dict, Any
-import re
 
 app = FastAPI(title="TubeScholar API")
 
@@ -102,12 +97,19 @@ def _perform_exit():
 
 @app.middleware("http")
 async def csrf_guard(request: Request, call_next):
-    if _shutdown_timer is not None and not request.url.path.startswith("/api/system/browser-close"):
-        cancel_shutdown()
+    global _last_heartbeat, _heartbeat_received
+    if not request.url.path.startswith("/api/system/browser-close"):
+        _last_heartbeat = time.time()
+        _heartbeat_received = True
+        if _shutdown_timer is not None:
+            cancel_shutdown()
     if request.method in _CSRF_METHODS and request.url.path.startswith("/api/"):
         if request.headers.get("x-tubescholar") != "1":
             return JSONResponse(status_code=403, content={"detail": "허용되지 않은 요청입니다. (CSRF 보호)"})
-    return await call_next(request)
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/system/browser-close"):
+        _last_heartbeat = time.time()
+    return response
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
@@ -119,7 +121,6 @@ async def global_exception_handler(request: Request, exc: Exception):
 class AnalyzeRequest(BaseModel):
     url: str
     engine: Optional[str] = "gemini"
-    api_key: Optional[str] = None
     gemini_model: Optional[str] = DEFAULT_NOTE_MODEL
     source_lang: Optional[str] = None   # 원문 자막 트랙 ('en', 'en:auto'), 없으면 자동 감지
     target_lang: Optional[str] = DEFAULT_TARGET_LANG  # 번역 언어 (자막)
@@ -165,6 +166,7 @@ class ManualSaveRequest(BaseModel):
     subtitles: Optional[List[Dict[str, Any]]] = None
     source_lang: Optional[str] = None
     target_lang: Optional[str] = None
+    note_target_lang: Optional[str] = None
     translation_source: Optional[str] = None
 
 class UpdateNoteRequest(BaseModel):
@@ -221,6 +223,11 @@ class SubtitleSaveRequest(BaseModel):
     source_lang: Optional[str] = None
     translation_source: Optional[str] = "manual"
 
+@app.get("/api/system/health")
+def system_health():
+    """경량 서버 상태 확인 엔드포인트 (디스크 I/O 없음)"""
+    return {"status": "ok"}
+
 @app.get("/api/config")
 def get_config():
     gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
@@ -240,37 +247,49 @@ def get_config():
 
 @app.post("/api/config")
 def set_config(req: ConfigRequest):
-    env_lines = {}
-    if os.path.exists(ENV_PATH):
-        with open(ENV_PATH, "r", encoding="utf-8") as f:
-            for line in f:
-                if "=" in line:
-                    parts = line.strip().split("=", 1)
-                    env_lines[parts[0].strip()] = parts[1].strip()
-
     def _clean_key(v: str) -> str:
         # 줄바꿈/제어문자/공백 제거 → .env 에 다른 줄이 끼어드는 것(인젝션) 방지
         return re.sub(r"[\s\x00-\x1f\x7f]", "", v or "")
 
+    updates: Dict[str, Optional[str]] = {}
     if req.api_key is not None:
         k = _clean_key(req.api_key)
         os.environ["GEMINI_API_KEY"] = k
-        if k:
-            env_lines["GEMINI_API_KEY"] = k
-        else:
-            env_lines.pop("GEMINI_API_KEY", None)
+        updates["GEMINI_API_KEY"] = k if k else None
 
     if req.groq_api_key is not None:
         k = _clean_key(req.groq_api_key)
         os.environ["GROQ_API_KEY"] = k
-        if k:
-            env_lines["GROQ_API_KEY"] = k
+        updates["GROQ_API_KEY"] = k if k else None
+
+    # 기존 .env의 주석(#)과 빈 줄, 타 설정 키 순서를 그대로 보존하면서 업데이트
+    raw_lines: List[str] = []
+    if os.path.exists(ENV_PATH):
+        with open(ENV_PATH, "r", encoding="utf-8") as f:
+            raw_lines = f.readlines()
+
+    out_lines: List[str] = []
+    seen_keys = set()
+    for line in raw_lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            out_lines.append(line if line.endswith("\n") else line + "\n")
+            continue
+        key_part = line.split("=", 1)[0].strip()
+        if key_part in updates:
+            seen_keys.add(key_part)
+            new_val = updates[key_part]
+            if new_val is not None:
+                out_lines.append(f"{key_part}={new_val}\n")
         else:
-            env_lines.pop("GROQ_API_KEY", None)
+            out_lines.append(line if line.endswith("\n") else line + "\n")
+
+    for k, v in updates.items():
+        if k not in seen_keys and v is not None:
+            out_lines.append(f"{k}={v}\n")
 
     with open(ENV_PATH, "w", encoding="utf-8") as f:
-        for k, v in env_lines.items():
-            f.write(f"{k}={v}\n")
+        f.writelines(out_lines)
         
     return {"success": True, "message": "API 키가 성공적으로 저장되었습니다."}
 
@@ -301,9 +320,10 @@ def _lang_meta(tr: Dict[str, Any], note_target_lang: Optional[str] = None) -> Di
 
 @app.get("/api/languages")
 def get_languages():
-    """번역 언어 선택 목록 (프론트/백엔드 공통)."""
+    """번역 언어 선택 목록 (프론트/백엔드 공통 호환)."""
     return {
         "default": DEFAULT_TARGET_LANG,
+        "target_languages": TARGET_LANGUAGES,
         "languages": [{"code": k, "name": v} for k, v in TARGET_LANGUAGES.items()],
     }
 
@@ -311,6 +331,12 @@ def get_languages():
 def get_analysis_status():
     """실시간 분석 진행 및 모델 폴백 상태 조회 (프론트엔드 폴링용)"""
     return get_analysis_state()
+
+@app.post("/api/analysis/cancel")
+def cancel_analysis():
+    """프론트엔드에서 [중단] 버튼 클릭 시 진행 중인 AI 분석 루프를 즉시 중단합니다."""
+    request_analysis_cancel()
+    return {"success": True, "status": "cancelled"}
 
 
 
@@ -362,9 +388,15 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
         "note_target_lang": note_target
     }
 
+def _raise_if_cancelled(llm_result: Optional[Dict[str, Any]] = None):
+    if (llm_result and llm_result.get("cancelled")) or is_analysis_cancelled():
+        raise HTTPException(status_code=499, detail="사용자에 의해 분석이 중단되었습니다.")
+
+
 @app.post("/api/local/analyze")
 def analyze_local_video(req: LocalAnalyzeRequest):
     """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
+    reset_analysis_cancel()
     update_analysis_state("processing", event="extracting_local", message="로컬 자막 파싱 및 분석 준비 중...", step=1)
     transcript_result = parse_srt_vtt_text(req.subtitle_text)
     target = normalize_target_lang(req.target_lang)
@@ -383,6 +415,7 @@ def analyze_local_video(req: LocalAnalyzeRequest):
         target_lang=note_target
     )
 
+    _raise_if_cancelled(llm_result)
     if not llm_result.get("success"):
         raise HTTPException(status_code=500, detail=f"분석 실패: {llm_result.get('error')}")
 
@@ -412,6 +445,7 @@ def analyze_local_video_audio(
 ):
     """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성
     (일반 def: FastAPI 가 작업 스레드에서 실행하므로 분석 중에도 다른 요청이 멈추지 않음)"""
+    reset_analysis_cancel()
     vid_title = title or os.path.splitext(os.path.basename(video.filename or "") or "로컬 비디오")[0]
     target = normalize_target_lang(target_lang)
     note_target = normalize_target_lang(note_target_lang or target_lang)
@@ -425,9 +459,23 @@ def analyze_local_video_audio(
     temp_audio_path = os.path.join(temp_dir, "extracted_audio.mp3")
 
     try:
+        written_bytes = 0
+        chunk_size = 1024 * 1024  # 1MB 단위 스트리밍 복사 및 용량 제한 검사
         with open(temp_video_path, "wb") as f:
-            shutil.copyfileobj(video.file, f)
+            while True:
+                _raise_if_cancelled()
+                buf = video.file.read(chunk_size)
+                if not buf:
+                    break
+                written_bytes += len(buf)
+                if written_bytes > MAX_LOCAL_VIDEO_BYTES:
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"업로드 영상 크기가 허용 한도({MAX_LOCAL_VIDEO_MB}MB)를 초과했습니다."
+                    )
+                f.write(buf)
 
+        _raise_if_cancelled()
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [
             ffmpeg_exe, "-y",
@@ -443,12 +491,14 @@ def analyze_local_video_audio(
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail="영상에서 오디오를 추출하지 못했습니다.")
 
+        _raise_if_cancelled()
         # 1. Groq Whisper Cloud STT 시도 (Groq API 키가 설정되어 있는 경우)
         groq_key = os.environ.get("GROQ_API_KEY")
         stt_result = None
         if groq_key:
             stt_result = transcribe_audio_groq(temp_audio_path, api_key=groq_key)
 
+        _raise_if_cancelled()
         if stt_result and stt_result.get("success") and stt_result.get("subtitles"):
             # Groq Whisper 자막 완성 -> Gemini에게 전달하여 지식 확장 노트 생성
             subtitles = stt_result["subtitles"]
@@ -465,6 +515,7 @@ def analyze_local_video_audio(
                 "subtitles": subtitles
             }
             llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=note_target)
+            _raise_if_cancelled(llm_result)
             if not llm_result.get("success"):
                 raise HTTPException(status_code=500, detail=f"Gemini 학습 노트 생성 실패: {llm_result.get('error')}")
 
@@ -476,6 +527,7 @@ def analyze_local_video_audio(
                 video_title=vid_title,
                 target_lang=note_target
             )
+            _raise_if_cancelled(llm_result)
             if not llm_result.get("success"):
                 raise HTTPException(status_code=500, detail=f"Gemini 음성 분석 실패: {llm_result.get('error')}")
 
@@ -489,6 +541,7 @@ def analyze_local_video_audio(
             subtitles = llm_result.get("subtitles", [])
             model_used = llm_result.get("model_used")
 
+        _raise_if_cancelled(llm_result)
         save_res = save_note(video_info, llm_result["markdown"], subtitles=subtitles, lang_meta={"target_lang": target, "note_target_lang": note_target})
         subtitles = save_res["metadata"].get("subtitles", subtitles)
         return {
@@ -524,9 +577,11 @@ def manual_save_note(req: ManualSaveRequest):
         video_info["video_type"] = "youtube"
 
     # 항상 새로운 note_id로 독립 저장하여 이전 기록을 덮어쓰지 않음
+    note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
     lang_meta = {
         "source_lang": req.source_lang,
         "target_lang": req.target_lang,
+        "note_target_lang": note_target,
         "translation_source": req.translation_source
     }
     save_res = save_note(
@@ -542,11 +597,15 @@ def manual_save_note(req: ManualSaveRequest):
         "note_id": save_res["note_id"],
         "video_info": video_info,
         "markdown": save_res["markdown"],
-        "file_path": save_res["file_path"]
+        "file_path": save_res["file_path"],
+        "note_target_lang": note_target,
+        "audiobook": save_res.get("audiobook"),
+        "subtitle_audiobook": save_res.get("subtitle_audiobook"),
     }
 
 @app.post("/api/analyze")
 def analyze_video(req: AnalyzeRequest):
+    reset_analysis_cancel()
     update_analysis_state("processing", event="extracting_yt", message="유튜브 영상 정보 및 자막 추출 중...", step=1)
     video_id = extract_video_id(req.url)
     if not video_id:
@@ -555,6 +614,7 @@ def analyze_video(req: AnalyzeRequest):
     # 1. 메타데이터 추출
     video_info = get_video_info(video_id)
     video_info["video_type"] = "youtube"
+    _raise_if_cancelled()
 
     target = normalize_target_lang(req.target_lang)
     note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
@@ -564,6 +624,7 @@ def analyze_video(req: AnalyzeRequest):
         video_id, source_lang=req.source_lang, target_lang=target,
         ytdlp_lang=video_info.get("language")
     )
+    _raise_if_cancelled()
     if not transcript_result.get("success"):
         raise HTTPException(
             status_code=400, 
@@ -574,11 +635,11 @@ def analyze_video(req: AnalyzeRequest):
     llm_result = generate_study_note_gemini(
         video_info=video_info,
         transcript_data=transcript_result,
-        api_key=req.api_key,
         model_name=req.gemini_model or DEFAULT_NOTE_MODEL,
         target_lang=note_target
     )
 
+    _raise_if_cancelled(llm_result)
     if not llm_result.get("success"):
         raise HTTPException(
             status_code=500, 
@@ -609,6 +670,7 @@ def analyze_video(req: AnalyzeRequest):
 @app.post("/api/note/regenerate")
 def regenerate_study_note(req: RegenerateNoteRequest):
     """기존 자막 데이터를 바탕으로 선택된 언어로 Gemini 학습 노트를 즉시 재작성"""
+    reset_analysis_cancel()
     update_analysis_state("processing", event="regen_prep", message="기존 자막 기반으로 학습 노트 재작성 준비 중...", step=2)
     if req.note_id and not is_safe_note_id(req.note_id):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
@@ -638,6 +700,7 @@ def regenerate_study_note(req: RegenerateNoteRequest):
         target_lang=note_target
     )
 
+    _raise_if_cancelled(llm_result)
     if not llm_result.get("success"):
         raise HTTPException(
             status_code=500,
@@ -995,6 +1058,17 @@ async def generate_tts_endpoint(req: TTSRequest):
 
     res["short_title"] = abbreviate_note_title(title)
     res["download_filename"] = get_audiobook_download_filename(title)
+    if req.note_id and req.note_id not in ("temp_note", "current_note"):
+        try:
+            await run_in_threadpool(
+                update_note_audiobook,
+                req.note_id,
+                None,
+                {"filename": res["filename"], "voice_key": res.get("voice_key", req.voice or "injoon")},
+                None,
+            )
+        except Exception:
+            pass
     return res
 
 @app.post("/api/tts/subtitles")
@@ -1025,6 +1099,21 @@ async def generate_subtitles_tts_endpoint(req: SubtitleTTSRequest):
 
     res["short_title"] = abbreviate_note_title(title or "자막")
     res["download_filename"] = get_audiobook_download_filename(title or "자막", is_subtitles=True)
+    if req.note_id or req.video_id:
+        try:
+            await run_in_threadpool(
+                update_note_audiobook,
+                req.note_id,
+                req.video_id,
+                None,
+                {
+                    "filename": res["filename"],
+                    "voice_key": res.get("voice_key", req.voice or "injoon"),
+                    "mode": res.get("mode", "dub"),
+                },
+            )
+        except Exception:
+            pass
     return res
 
 @app.get("/api/tts/audio/{filename}")
@@ -1117,10 +1206,6 @@ def api_open_prompts_folder():
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
 # 프론트엔드 정적 파일 서빙
-FRONTEND_DIR = os.path.join(BUNDLE_DIR, "frontend")
-if not os.path.exists(FRONTEND_DIR) and getattr(sys, 'frozen', False):
-    FRONTEND_DIR = os.path.join(os.path.dirname(sys.executable), "frontend")
-
 if os.path.exists(FRONTEND_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
 

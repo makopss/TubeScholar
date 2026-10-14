@@ -2,22 +2,14 @@ import os
 import re
 import time
 import threading
-import warnings
 from typing import Dict, Any, Optional, List, Tuple
 from google import genai
 from google.genai import types
+from config import suppress_genai_warnings
 from languages import language_name
 from prompt_loader import get_system_prompt_for_lang
 
-# Google GenAI SDK의 무해한 AFC(Automatic Function Calling) 권고 logger.warning 원천 차단
-try:
-    from google.genai.models import Models
-    Models._logged_afc_warning = True
-except Exception:
-    pass
-warnings.filterwarnings("ignore", message=".*Automatic function calling.*")
-warnings.filterwarnings("ignore", message=".*Direct use of automatic function calling.*")
-warnings.filterwarnings("ignore", category=UserWarning, module="google.genai.*")
+suppress_genai_warnings()
 
 # 1) 학습 노트 심층 생성용 모델 (1순위 일반 Flash Latest, 2순위 일반 Flash Lite Latest, 3순위부터 특정 버전 모델)
 DEFAULT_NOTE_MODEL = "gemini-flash-latest"
@@ -47,9 +39,9 @@ FALLBACK_TRANSLATE_MODELS = [
     "gemini-3.5-flash",
 ]
 
-# 3) 실시간 분석 진행 및 모델 폴백 상태 추적기 (단일 데스크톱 클라이언트용)
+# 3) 실시간 분석 진행, 모델 폴백 상태 추적 및 중단(Cancel) 이벤트
 _current_analysis_state = {
-    "status": "idle",       # "idle", "processing", "fallback", "completed", "error"
+    "status": "idle",       # "idle", "processing", "fallback", "completed", "cancelled", "error"
     "model": "",
     "event": "",
     "attempt": 1,
@@ -59,10 +51,39 @@ _current_analysis_state = {
     "timestamp": 0.0
 }
 _analysis_state_lock = threading.Lock()
+_analysis_cancel_event = threading.Event()
+
+
+def request_analysis_cancel() -> None:
+    """진행 중인 학습 노트 생성/음성 분석 작업에 중단 신호를 보냅니다."""
+    _analysis_cancel_event.set()
+    update_analysis_state(
+        "cancelled",
+        event="cancelled",
+        message="사용자에 의해 분석이 중단되었습니다.",
+        step=2,
+    )
+
+
+def reset_analysis_cancel() -> None:
+    """새 분석 시작 전 중단 플래그를 초기화합니다."""
+    _analysis_cancel_event.clear()
+
+
+def is_analysis_cancelled() -> bool:
+    """현재 분석 작업이 중단 요청되었는지 여부를 반환합니다."""
+    return _analysis_cancel_event.is_set()
+
+
+def _interruptible_sleep(seconds: float) -> bool:
+    """대기 중 중단 신호가 들어오면 즉시 깨어납니다. 중단되었으면 True 반환."""
+    return _analysis_cancel_event.wait(timeout=max(0.0, seconds))
+
 
 def get_analysis_state() -> Dict[str, Any]:
     with _analysis_state_lock:
         return dict(_current_analysis_state)
+
 
 def update_analysis_state(
     status: str,
@@ -83,6 +104,7 @@ def update_analysis_state(
         _current_analysis_state["step"] = step
         _current_analysis_state["timestamp"] = time.time()
 
+
 def format_model_label(model: str) -> str:
     labels = {
         "gemini-flash-latest": "Gemini 최신 Flash",
@@ -97,11 +119,12 @@ def format_model_label(model: str) -> str:
     return labels.get(model, model)
 
 
-# 3) 자막 번역 RPM(분당 요청수) 엄격 제어 설정
+# 4) 자막 번역 RPM(분당 요청수) 엄격 제어 설정
 # Gemini Free Tier (15 RPM) 기준, 5.0초 간격 보장 시 분당 최대 12회(20% 안전 버퍼)로 429 에러 원천 차단
 TRANSLATE_MIN_INTERVAL = 5.0
 _last_translate_time: float = 0.0
 _rate_lock = threading.Lock()
+
 
 def _wait_for_rate_limit(min_interval: float = TRANSLATE_MIN_INTERVAL):
     """
@@ -117,11 +140,13 @@ def _wait_for_rate_limit(min_interval: float = TRANSLATE_MIN_INTERVAL):
             time.sleep(min_interval - elapsed)
         _last_translate_time = time.time()
 
+
 def _mark_rate_limit_now():
     """429 등으로 강제 대기한 직후 기준 시각을 갱신합니다."""
     global _last_translate_time
     with _rate_lock:
         _last_translate_time = time.time()
+
 
 # 하위 호환성을 위해 prompt_loader의 get_system_prompt_for_lang을 사용합니다.
 # 실제 마크다운 템플릿은 prompts/ 디렉토리 및 사용자 커스텀 data/prompts/에서 동적으로 로드됩니다.
@@ -129,6 +154,7 @@ SYSTEM_PROMPT = ''
 SYSTEM_PROMPT_KOREAN = ''
 SYSTEM_PROMPT_ENGLISH = ''
 SYSTEM_PROMPT_JAPANESE = ''
+
 
 def build_user_prompt(
     video_info: Dict[str, Any],
@@ -192,6 +218,142 @@ def build_user_prompt(
 {instruction}
 """
 
+
+def _build_models_to_try(preferred_model: Optional[str], fallback_models: List[str]) -> List[str]:
+    models: List[str] = []
+    first = preferred_model or os.environ.get("GEMINI_MODEL") or DEFAULT_NOTE_MODEL
+    models.append(first)
+    for fb in fallback_models:
+        if fb not in models:
+            models.append(fb)
+    return models
+
+
+def _generate_with_model_fallback(
+    client: genai.Client,
+    contents: Any,
+    system_instruction: str,
+    models_to_try: List[str],
+    mode_label: str = "note",
+    log_lang_label: str = "",
+) -> Dict[str, Any]:
+    """
+    2라운드(Safety Cycle) × 모델 폴백 × 2회 재시도 루프를 공통 수행합니다.
+    503 과부하 시 대기 없이 즉시 다음 모델로 전환(Fast-Failover)하고,
+    사용자 중단(Cancel) 신호가 감지되면 즉시 루프를 탈출합니다.
+    """
+    is_audio = mode_label == "audio"
+    last_error = ""
+
+    for cycle in range(1, 3):
+        for target_model in models_to_try:
+            model_lbl = format_model_label(target_model)
+            for attempt in range(1, 3):
+                if is_analysis_cancelled():
+                    return {
+                        "success": False,
+                        "cancelled": True,
+                        "error": "사용자에 의해 분석이 중단되었습니다.",
+                    }
+
+                try:
+                    attempt_str = f" (재시도 {attempt}/2)" if attempt > 1 else ""
+                    cycle_str = " [2차 복구]" if cycle > 1 else ""
+                    if target_model != models_to_try[0] or cycle > 1:
+                        evt = "audio_switching" if is_audio else "switching"
+                        msg = (
+                            f"🔄 대체 모델 전환: {model_lbl} 음성 분석 중...{attempt_str}{cycle_str}"
+                            if is_audio
+                            else f"🔄 대체 모델 전환: {model_lbl} 모델로 학습 노트를 생성하고 있습니다...{attempt_str}{cycle_str}"
+                        )
+                        update_analysis_state("fallback", model=target_model, event=evt, attempt=attempt, cycle=cycle, message=msg, step=2)
+                    else:
+                        evt = "audio_connecting" if is_audio else "connecting"
+                        msg = (
+                            f"{model_lbl} 음성 분석 중...{attempt_str}"
+                            if is_audio
+                            else f"{model_lbl} 연결 중... 문맥 분석 및 지식 노트를 생성하고 있습니다.{attempt_str}"
+                        )
+                        update_analysis_state("processing", model=target_model, event=evt, attempt=attempt, cycle=cycle, message=msg, step=2)
+
+                    if is_audio:
+                        print(f"[*] Gemini 음성 분석 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
+                    else:
+                        print(f"[*] Gemini ({log_lang_label}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
+
+                    response = client.models.generate_content(
+                        model=target_model,
+                        contents=contents,
+                        config=types.GenerateContentConfig(
+                            system_instruction=system_instruction,
+                            temperature=0.3,
+                        ),
+                    )
+
+                    if is_analysis_cancelled():
+                        return {
+                            "success": False,
+                            "cancelled": True,
+                            "error": "사용자에 의해 분석이 중단되었습니다.",
+                        }
+
+                    done_evt = "audio_completed" if is_audio else "completed"
+                    done_msg = f"✅ {model_lbl} 음성 분석 완료!" if is_audio else f"✅ {model_lbl} 분석 완료! 문서 렌더링 중..."
+                    print(f"[*] Gemini {'음성 분석' if is_audio else '학습 노트 생성'} 완료! (사용 모델: {target_model})")
+                    update_analysis_state("completed", model=target_model, event=done_evt, message=done_msg, step=3)
+                    return {
+                        "success": True,
+                        "text": response.text,
+                        "model_used": target_model,
+                    }
+                except Exception as e:
+                    if is_analysis_cancelled():
+                        return {
+                            "success": False,
+                            "cancelled": True,
+                            "error": "사용자에 의해 분석이 중단되었습니다.",
+                        }
+
+                    last_error = str(e)
+                    is_503 = any(kw in last_error for kw in ["503", "UNAVAILABLE", "high demand", "Overloaded"])
+                    is_rate_limit = any(kw in last_error for kw in ["429", "RESOURCE_EXHAUSTED"])
+                    is_retryable = is_503 or is_rate_limit or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
+
+                    if not is_retryable:
+                        update_analysis_state("error", model=target_model, event="error", message=f"Gemini 오류 발생: {last_error[:100]}", step=2)
+                        return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
+
+                    if is_503:
+                        fail_msg = f"⚠️ {model_lbl} 서버 혼잡(503) 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다..."
+                        print(f"[!] {target_model} 503 서버 과부하 감지 -> 대기 없이 다음 대체 모델로 즉시 전환")
+                        update_analysis_state("fallback", model=target_model, event="503_failover", message=fail_msg, step=2)
+                        break
+
+                    if is_rate_limit and attempt < 2:
+                        rate_msg = f"⏳ {model_lbl} 분당 요청 한도(429) 감지. 2초 후 재시도합니다..."
+                        print(f"[!] {target_model} 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
+                        update_analysis_state("processing", model=target_model, event="rate_limit", attempt=attempt, message=rate_msg, step=2)
+                        if _interruptible_sleep(2.0):
+                            return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
+                        continue
+                    else:
+                        fail_msg = f"⚠️ {model_lbl} 호출 실패. 다음 대체 모델을 시도합니다..."
+                        print(f"[!] {target_model} 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
+                        update_analysis_state("fallback", model=target_model, event="fail_next", message=fail_msg, step=2)
+                        if _interruptible_sleep(0.3):
+                            return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
+                        break
+
+        if cycle == 1:
+            print("[!] 1차 모델 순회 중 일시적 서버 과부하가 지속되어 2.0초 후 2차 복구 사이클을 진행합니다...")
+            update_analysis_state("fallback", event="cycle2", message="서버 일시 혼잡 지속으로 2차 복구 사이클을 준비 중입니다...", step=2)
+            if _interruptible_sleep(2.0):
+                return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
+
+    update_analysis_state("error", event="error", message=f"Gemini 생성 실패: {last_error[:100]}", step=2)
+    return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
+
+
 # 1. Google Gemini API 생성기 (무료 티어 지원)
 def generate_study_note_gemini(
     video_info: Dict[str, Any],
@@ -220,86 +382,25 @@ def generate_study_note_gemini(
     target_name = language_name(target_lang)
     print(f"[*] 자막 언어 감지: {source_lang} -> 목표 언어: {target_name} ({target_lang})")
 
-    # 시도할 모델 목록 (요청받은 모델 우선, 없으면 Gemini 3.8 Flash -> 3.7 -> 3.6 -> 3.5 순회)
-    models_to_try = []
-    preferred_model = model_name or os.environ.get("GEMINI_MODEL") or DEFAULT_NOTE_MODEL
-    models_to_try.append(preferred_model)
+    models_to_try = _build_models_to_try(model_name, FALLBACK_NOTE_MODELS)
+    gen_res = _generate_with_model_fallback(
+        client=client,
+        contents=user_prompt,
+        system_instruction=active_system_prompt,
+        models_to_try=models_to_try,
+        mode_label="note",
+        log_lang_label=target_name,
+    )
+    if not gen_res.get("success"):
+        return gen_res
 
-    for fb in FALLBACK_NOTE_MODELS:
-        if fb not in models_to_try:
-            models_to_try.append(fb)
+    return {
+        "success": True,
+        "markdown": gen_res["text"],
+        "engine": "gemini",
+        "model_used": gen_res["model_used"],
+    }
 
-    last_error = ""
-    # 일시적 과부하(503) 및 트래픽 스파이크 극복을 위해 최대 2개 라운드(Safety Cycle) 실행
-    for cycle in range(1, 3):
-        for target_model in models_to_try:
-            model_lbl = format_model_label(target_model)
-            for attempt in range(1, 3):
-                try:
-                    attempt_str = f" (재시도 {attempt}/2)" if attempt > 1 else ""
-                    cycle_str = f" [2차 복구]" if cycle > 1 else ""
-                    if target_model != models_to_try[0] or cycle > 1:
-                        status_msg = f"🔄 대체 모델 전환: {model_lbl} 모델로 학습 노트를 생성하고 있습니다...{attempt_str}{cycle_str}"
-                        update_analysis_state("fallback", model=target_model, event="switching", attempt=attempt, cycle=cycle, message=status_msg, step=2)
-                    else:
-                        status_msg = f"{model_lbl} 연결 중... 문맥 분석 및 지식 노트를 생성하고 있습니다.{attempt_str}"
-                        update_analysis_state("processing", model=target_model, event="connecting", attempt=attempt, cycle=cycle, message=status_msg, step=2)
-
-                    print(f"[*] Gemini ({target_name}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
-                    response = client.models.generate_content(
-                        model=target_model,
-                        contents=user_prompt,
-                        config=types.GenerateContentConfig(
-                            system_instruction=active_system_prompt,
-                            temperature=0.3,
-                        )
-                    )
-                    print(f"[*] Gemini 학습 노트 생성 완료! (사용 모델: {target_model})")
-                    update_analysis_state("completed", model=target_model, event="completed", message=f"✅ {model_lbl} 분석 완료! 문서 렌더링 중...", step=3)
-                    return {
-                        "success": True,
-                        "markdown": response.text,
-                        "engine": "gemini",
-                        "model_used": target_model
-                    }
-                except Exception as e:
-                    last_error = str(e)
-                    is_503 = any(kw in last_error for kw in ["503", "UNAVAILABLE", "high demand", "Overloaded"])
-                    is_rate_limit = any(kw in last_error for kw in ["429", "RESOURCE_EXHAUSTED"])
-                    is_retryable = is_503 or is_rate_limit or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
-                    
-                    if not is_retryable:
-                        # 복구 불가능한 에러(예: 잘못된 API 키 등)인 경우 즉시 종료
-                        update_analysis_state("error", model=target_model, event="error", message=f"Gemini 오류 발생: {last_error[:100]}", step=2)
-                        return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
-
-                    if is_503:
-                        # [Fast-Failover] 503 서버 혼잡(high demand)은 클러스터 과부하이므로 동일 모델 대기(2.5s) 없이 즉시 다음 모델로 초고속 전환
-                        fail_msg = f"⚠️ {model_lbl} 서버 혼잡(503) 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다..."
-                        print(f"[!] {target_model} 503 서버 과부하 감지 -> 대기 없이 다음 대체 모델로 즉시 전환")
-                        update_analysis_state("fallback", model=target_model, event="503_failover", message=fail_msg, step=2)
-                        break
-
-                    if is_rate_limit and attempt < 2:
-                        rate_msg = f"⏳ {model_lbl} 분당 요청 한도(429) 감지. 2초 후 재시도합니다..."
-                        print(f"[!] {target_model} 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
-                        update_analysis_state("processing", model=target_model, event="rate_limit", attempt=attempt, message=rate_msg, step=2)
-                        time.sleep(2.0)
-                        continue
-                    else:
-                        fail_msg = f"⚠️ {model_lbl} 호출 실패. 다음 대체 모델을 시도합니다..."
-                        print(f"[!] {target_model} 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
-                        update_analysis_state("fallback", model=target_model, event="fail_next", message=fail_msg, step=2)
-                        time.sleep(0.3)
-                        break
-
-        if cycle == 1:
-            print("[!] 1차 모델 순회 중 일시적 서버 과부하가 지속되어 2.0초 후 2차 복구 사이클을 진행합니다...")
-            update_analysis_state("fallback", event="cycle2", message="서버 일시 혼잡 지속으로 2차 복구 사이클을 준비 중입니다...", step=2)
-            time.sleep(2.0)
-
-    update_analysis_state("error", event="error", message=f"Gemini 생성 실패: {last_error}", step=2)
-    return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
 
 def generate_study_note_from_audio(
     audio_path: str,
@@ -315,6 +416,9 @@ def generate_study_note_from_audio(
     key = api_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not key:
         return {"success": False, "error": "Gemini API 키가 필요합니다."}
+
+    if is_analysis_cancelled():
+        return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
 
     client = genai.Client(api_key=key)
 
@@ -360,125 +464,72 @@ Please listen carefully to the attached audio, analyze it, and output clearly di
 {sub_instruction}
 """
 
-    models_to_try = [model_name or DEFAULT_GEMINI_MODEL]
-    for fb in FALLBACK_GEMINI_MODELS:
-        if fb not in models_to_try:
-            models_to_try.append(fb)
-
-    last_error = ""
-    markdown_output = None
-    used_model = ""
-
-    # 일시적 과부하(503) 및 트래픽 스파이크 극복을 위해 최대 2개 라운드(Safety Cycle) 실행
-    for cycle in range(1, 3):
-        for target_model in models_to_try:
-            model_lbl = format_model_label(target_model)
-            for attempt in range(1, 3):
-                try:
-                    attempt_str = f" (재시도 {attempt}/2)" if attempt > 1 else ""
-                    cycle_str = f" [2차 복구]" if cycle > 1 else ""
-                    if target_model != models_to_try[0] or cycle > 1:
-                        update_analysis_state("fallback", model=target_model, event="audio_switching", attempt=attempt, cycle=cycle, message=f"🔄 대체 모델 전환: {model_lbl} 음성 분석 중...{attempt_str}{cycle_str}", step=2)
-                    else:
-                        update_analysis_state("processing", model=target_model, event="audio_connecting", attempt=attempt, message=f"{model_lbl} 음성 분석 중...{attempt_str}", step=2)
-
-                    print(f"[*] Gemini 음성 분석 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
-                    response = client.models.generate_content(
-                        model=target_model,
-                        contents=[uploaded_file, audio_prompt],
-                        config=types.GenerateContentConfig(
-                            system_instruction=active_system_prompt,
-                            temperature=0.3,
-                        )
-                    )
-                    markdown_output = response.text
-                    used_model = target_model
-                    update_analysis_state("completed", model=target_model, event="audio_completed", message=f"✅ {model_lbl} 음성 분석 완료!", step=3)
-                    break
-                except Exception as e:
-                    last_error = str(e)
-                    is_503 = any(kw in last_error for kw in ["503", "UNAVAILABLE", "high demand", "Overloaded"])
-                    is_rate_limit = any(kw in last_error for kw in ["429", "RESOURCE_EXHAUSTED"])
-                    is_retryable = is_503 or is_rate_limit or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
-                    
-                    if not is_retryable:
-                        break
-
-                    if is_503:
-                        print(f"[!] {target_model} 음성 503 서버 과부하 감지 -> 대기 없이 다음 대체 모델로 즉시 전환")
-                        update_analysis_state("fallback", model=target_model, event="503_failover", message=f"⚠️ {model_lbl} 서버 혼잡(503) 감지. 즉시 대체 모델로 전환합니다...", step=2)
-                        break
-
-                    if is_rate_limit and attempt < 2:
-                        print(f"[!] {target_model} 음성 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
-                        update_analysis_state("processing", model=target_model, event="rate_limit", attempt=attempt, message=f"⏳ {model_lbl} 요청 한도(429) 감지. 2초 후 재시도합니다...", step=2)
-                        time.sleep(2.0)
-                        continue
-                    else:
-                        print(f"[!] {target_model} 음성 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
-                        update_analysis_state("fallback", model=target_model, event="fail_next", message=f"⚠️ {model_lbl} 호출 실패. 다음 대체 모델을 시도합니다...", step=2)
-                        time.sleep(0.3)
-                        break
-
-            if markdown_output:
-                break
-        if markdown_output:
-            break
-        if cycle == 1:
-            print("[!] 음성 분석 1차 모델 순회 중 과부하 지속, 2.0초 후 2차 복구 사이클을 진행합니다...")
-            time.sleep(2.0)
-
-    # 임시 업로드 파일 정리
+    models_to_try = _build_models_to_try(model_name, FALLBACK_GEMINI_MODELS)
     try:
-        if uploaded_file:
-            client.files.delete(name=uploaded_file.name)
-    except Exception:
-        pass
+        gen_res = _generate_with_model_fallback(
+            client=client,
+            contents=[uploaded_file, audio_prompt],
+            system_instruction=active_system_prompt,
+            models_to_try=models_to_try,
+            mode_label="audio",
+            log_lang_label=target_name,
+        )
+    finally:
+        # 임시 업로드 파일 정리
+        try:
+            if uploaded_file:
+                client.files.delete(name=uploaded_file.name)
+        except Exception:
+            pass
 
-    if markdown_output:
-        study_note = markdown_output
-        subtitles = []
-        srt_raw = ""
+    if not gen_res.get("success"):
+        return gen_res
 
-        if "===SUBTITLES_SRT===" in markdown_output:
-            parts = markdown_output.split("===SUBTITLES_SRT===")
-            study_part = parts[0].replace("===STUDY_NOTE===", "").strip()
-            srt_raw = parts[1].strip()
-            study_note = study_part
-        elif "===STUDY_NOTE===" in markdown_output:
-            study_note = markdown_output.replace("===STUDY_NOTE===", "").strip()
+    markdown_output = gen_res["text"]
+    used_model = gen_res["model_used"]
 
-        if srt_raw:
-            try:
-                from extractor import parse_srt_vtt_text
-                parsed = parse_srt_vtt_text(srt_raw)
-                subtitles = parsed.get("subtitles", [])
-            except Exception:
-                pass
+    study_note = markdown_output
+    subtitles = []
+    srt_raw = ""
 
-        if not subtitles:
-            # 타임스탬프 라인으로부터 기본 자막 큐 생성 (폴백 보장)
-            ts_matches = re.findall(r'\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)', study_note)
-            for t_str, text_line in ts_matches:
-                parts = [int(p) for p in t_str.split(':')]
-                sec = parts[0] * 60 + parts[1] if len(parts) == 2 else parts[0] * 3600 + parts[1] * 60 + parts[2]
-                subtitles.append({
-                    "start": float(sec),
-                    "duration": 4.0,
-                    "end": float(sec + 4.0),
-                    "timestamp": t_str,
-                    "text": text_line.strip()
-                })
+    if "===SUBTITLES_SRT===" in markdown_output:
+        parts = markdown_output.split("===SUBTITLES_SRT===")
+        study_part = parts[0].replace("===STUDY_NOTE===", "").strip()
+        srt_raw = parts[1].strip()
+        study_note = study_part
+    elif "===STUDY_NOTE===" in markdown_output:
+        study_note = markdown_output.replace("===STUDY_NOTE===", "").strip()
 
-        return {
-            "success": True,
-            "markdown": study_note,
-            "subtitles": subtitles,
-            "srt_raw": srt_raw,
-            "engine": "gemini_audio",
-            "model_used": used_model
-        }
-    return {"success": False, "error": f"Gemini 음성 분석 실패: {last_error}"}
+    if srt_raw:
+        try:
+            from extractor import parse_srt_vtt_text
+            parsed = parse_srt_vtt_text(srt_raw)
+            subtitles = parsed.get("subtitles", [])
+        except Exception:
+            pass
+
+    if not subtitles:
+        # 타임스탬프 라인으로부터 기본 자막 큐 생성 (폴백 보장)
+        ts_matches = re.findall(r'\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)', study_note)
+        for t_str, text_line in ts_matches:
+            parts = [int(p) for p in t_str.split(':')]
+            sec = parts[0] * 60 + parts[1] if len(parts) == 2 else parts[0] * 3600 + parts[1] * 60 + parts[2]
+            subtitles.append({
+                "start": float(sec),
+                "duration": 4.0,
+                "end": float(sec + 4.0),
+                "timestamp": t_str,
+                "text": text_line.strip()
+            })
+
+    return {
+        "success": True,
+        "markdown": study_note,
+        "subtitles": subtitles,
+        "srt_raw": srt_raw,
+        "engine": "gemini_audio",
+        "model_used": used_model
+    }
 
 def _build_translation_prompt(
     batch: List[Dict[str, Any]],

@@ -25,7 +25,17 @@ if sys.stdout is None or sys.stderr is None:
     try:
         log_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TubeScholar")
         os.makedirs(log_dir, exist_ok=True)
-        log_file = open(os.path.join(log_dir, "tubescholar.log"), "a", encoding="utf-8", buffering=1)
+        log_path = os.path.join(log_dir, "tubescholar.log")
+        # 로그 파일이 5MB를 초과하면 .old로 롤오버하여 무한 비대화 방지
+        if os.path.exists(log_path) and os.path.getsize(log_path) > 5 * 1024 * 1024:
+            try:
+                old_path = log_path + ".old"
+                if os.path.exists(old_path):
+                    os.remove(old_path)
+                os.replace(log_path, old_path)
+            except Exception:
+                pass
+        log_file = open(log_path, "a", encoding="utf-8", buffering=1)
         if sys.stdout is None:
             sys.stdout = log_file
         if sys.stderr is None:
@@ -48,12 +58,23 @@ elif sys.platform == "win32":
     except Exception:
         pass
 
+import logging
 import urllib.request
 
+
+class _QuietPollingAccessFilter(logging.Filter):
+    """반복 호출되는 하트비트 및 상태 폴링 로그가 로그 파일을 가득 채우는 것을 방지"""
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        if "/api/system/heartbeat" in msg or "/api/analysis/status" in msg:
+            return False
+        return True
+
+
 def check_already_running(port=8000):
-    """서버가 이미 다른 프로세스에서 구동 중인지 확인"""
+    """서버가 이미 다른 프로세스에서 구동 중인지 경량 헬스체크로 확인"""
     try:
-        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/notes", headers={"x-tubescholar": "1"})
+        req = urllib.request.Request(f"http://127.0.0.1:{port}/api/system/health", headers={"x-tubescholar": "1"})
         with urllib.request.urlopen(req, timeout=1.0) as resp:
             return resp.status == 200
     except Exception:
@@ -68,7 +89,7 @@ def heartbeat_watchdog():
     # 브라우저가 최초 접속하기 전까지는 최대 5분간 넉넉하게 대기 (즉시 꺼짐 방지)
     start_time = time.time()
     while True:
-        time.sleep(3)
+        time.sleep(5)
         try:
             import app as app_module
             has_connected = getattr(app_module, "_heartbeat_received", False)
@@ -78,9 +99,18 @@ def heartbeat_watchdog():
                     os._exit(0)
                 continue
 
-            # 최초 접속 이후: 60초 이상 신호가 없으면 브라우저가 모두 닫힌 것으로 판단하고 안전 종료
+            # 분석 작업이 진행 중일 때는 타임아웃 면제
+            try:
+                from analyzer import get_analysis_state
+                if get_analysis_state().get("status") == "processing":
+                    app_module._last_heartbeat = time.time()
+                    continue
+            except Exception:
+                pass
+
+            # 최초 접속 이후: 300초(5분) 이상 신호가 없을 때만 안전 종료 (실제 탭 닫힘은 beforeunload가 3초 내 처리)
             last_hb = getattr(app_module, "_last_heartbeat", time.time())
-            if time.time() - last_hb > 60:
+            if time.time() - last_hb > 300:
                 os._exit(0)
         except Exception:
             pass
@@ -108,6 +138,9 @@ if __name__ == "__main__":
 
     # FastAPI app 인스턴스 직접 임포트 (PyInstaller 환경 안정성)
     from app import app
+
+    # 반복 폴링 액세스 로그 노이즈 필터 등록
+    logging.getLogger("uvicorn.access").addFilter(_QuietPollingAccessFilter())
 
     # 브라우저 자동 실행 쓰레드
     threading.Thread(target=open_browser, daemon=True).start()

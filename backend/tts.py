@@ -1,5 +1,4 @@
 import os
-import sys
 import re
 import json
 import asyncio
@@ -7,14 +6,9 @@ import hashlib
 from typing import List, Dict, Any, Optional
 import edge_tts
 
-if getattr(sys, 'frozen', False):
-    DEFAULT_DATA_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TubeScholar", "data")
-else:
-    BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    DEFAULT_DATA_DIR = os.path.join(BASE_DIR, "data")
+from config import DATA_DIR, AUDIO_DIR
+from storage import clean_ai_citation_artifacts
 
-DATA_DIR = os.environ.get("TUBESCHOLAR_DATA_DIR") or DEFAULT_DATA_DIR
-AUDIO_DIR = os.path.join(DATA_DIR, "audio")
 os.makedirs(AUDIO_DIR, exist_ok=True)
 
 VOICES = {
@@ -58,65 +52,65 @@ VOICES = {
     },
     # 일본어 (Japanese)
     'keita': {
-        'name': 'Keita / 啓太 (日本語 落ち着いた男性 語り)',
+        'name': 'Keita (日本語 落ち着いた男性)',
         'id': 'ja-JP-KeitaNeural',
         'gender': 'male',
         'lang': 'ja'
     },
     'nanami': {
-        'name': 'Nanami / 七海 (日本語 知的で明瞭な女性)',
+        'name': 'Nanami (日本語 クリアな女性)',
         'id': 'ja-JP-NanamiNeural',
         'gender': 'female',
         'lang': 'ja'
     },
     # 중국어 (Chinese)
     'yunxi': {
-        'name': 'Yunxi / 云希 (中文 男声 沉稳生动)',
+        'name': 'Yunxi / 云希 (중국어 남성 톤)',
         'id': 'zh-CN-YunxiNeural',
         'gender': 'male',
         'lang': 'zh'
     },
     'xiaoxiao': {
-        'name': 'Xiaoxiao / 晓晓 (中文 女声 清晰自然)',
+        'name': 'Xiaoxiao / 晓晓 (중국어 여성 톤)',
         'id': 'zh-CN-XiaoxiaoNeural',
         'gender': 'female',
         'lang': 'zh'
     },
     # 스페인어 (Spanish)
     'alvaro': {
-        'name': 'Alvaro (Español Voz Masculina)',
+        'name': 'Alvaro (스페인어 남성 톤)',
         'id': 'es-ES-AlvaroNeural',
         'gender': 'male',
         'lang': 'es'
     },
     'elvira': {
-        'name': 'Elvira (Español Voz Femenina)',
+        'name': 'Elvira (스페인어 여성 톤)',
         'id': 'es-ES-ElviraNeural',
         'gender': 'female',
         'lang': 'es'
     },
     # 프랑스어 (French)
     'henri': {
-        'name': 'Henri (Français Voix Masculine)',
+        'name': 'Henri (프랑스어 남성 톤)',
         'id': 'fr-FR-HenriNeural',
         'gender': 'male',
         'lang': 'fr'
     },
     'denise': {
-        'name': 'Denise (Français Voix Féminine)',
+        'name': 'Denise (프랑스어 여성 톤)',
         'id': 'fr-FR-DeniseNeural',
         'gender': 'female',
         'lang': 'fr'
     },
     # 독일어 (German)
     'conrad': {
-        'name': 'Conrad (Deutsch Männliche Stimme)',
+        'name': 'Conrad (독일어 남성 톤)',
         'id': 'de-DE-ConradNeural',
         'gender': 'male',
         'lang': 'de'
     },
     'katja': {
-        'name': 'Katja (Deutsch Weibliche Stimme)',
+        'name': 'Katja (독일어 여성 톤)',
         'id': 'de-DE-KatjaNeural',
         'gender': 'female',
         'lang': 'de'
@@ -124,19 +118,48 @@ VOICES = {
 }
 DEFAULT_VOICE = 'injoon'
 
+
+async def _stream_tts_with_retry(text: str, voice_id: str, speed: str, filepath: str, max_attempts: int = 3) -> List[Dict[str, Any]]:
+    """edge-tts 스트리밍 실행 (일시적 핸드셰이크/네트워크 오류 시 자동 재시도 및 빈 파일 정리)"""
+    last_err = None
+    for attempt in range(max_attempts):
+        try:
+            communicate = edge_tts.Communicate(text, voice_id, rate=speed)
+            cues: List[Dict[str, Any]] = []
+            with open(filepath, "wb") as audio:
+                async for message in communicate.stream():
+                    if message["type"] == "audio":
+                        audio.write(message["data"])
+                    elif message["type"] == "SentenceBoundary":
+                        start_s = round(message["offset"] / 10_000_000, 3)
+                        dur_s = round(message["duration"] / 10_000_000, 3)
+                        cues.append({
+                            "start": start_s,
+                            "end": round(start_s + dur_s, 3),
+                            "text": message.get("text", "")
+                        })
+            if os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+                return cues
+            last_err = RuntimeError("MP3 파일이 비어 있습니다.")
+        except Exception as e:
+            last_err = e
+            try:
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+            except Exception:
+                pass
+            if attempt + 1 < max_attempts:
+                await asyncio.sleep(0.8 * (attempt + 1))
+    raise last_err or RuntimeError("edge-tts 음성 생성 실패")
+
 def clean_markdown_for_tts(markdown_text: str, max_chars: int = 15000) -> str:
     if not markdown_text:
         return ''
 
     text = markdown_text
-    # 1. YAML 프론트매터 제거
+    # 1. YAML 프론트매터 및 AI 인용/참조 찌꺼기 태그 정화
     text = re.sub(r'^---\s*[\r\n]+[\s\S]*?[\r\n]+---\s*[\r\n]*', '', text.strip())
-
-    # 1-1. AI 인용/참조 찌꺼기 태그 제거 (:chatgpt-content-reference{...}, 【...†source】 등)
-    text = re.sub(r':?[a-zA-Z0-9_-]*chatgpt-[a-zA-Z0-9_-]+\{[^}]*\}', '', text)
-    text = re.sub(r':[a-zA-Z0-9_-]+-reference\{[^}]*\}', '', text)
-    text = re.sub(r'【[^】]*?(?:source|turn\d+|search|출처)[^】]*?】', '', text)
-    text = re.sub(r'\[cite(?:ation)?:\s*[^\]]+\]', '', text, flags=re.IGNORECASE)
+    text = clean_ai_citation_artifacts(text)
 
     # 2. 코드 블록 및 인라인 코드 제거/변환
     text = re.sub(r'```[\s\S]*?```', '', text)
@@ -241,26 +264,14 @@ async def generate_note_audio(
                 'success': True,
                 'filename': filename,
                 'filepath': filepath,
+                'voice_key': voice_key,
                 'voice': voice_info,
                 'cached': True,
                 'cues': cues
             }
 
     try:
-        communicate = edge_tts.Communicate(script_text, voice_id, rate=speed)
-        cues = []
-        with open(filepath, "wb") as audio:
-            async for message in communicate.stream():
-                if message["type"] == "audio":
-                    audio.write(message["data"])
-                elif message["type"] == "SentenceBoundary":
-                    start_s = round(message["offset"] / 10_000_000, 3)
-                    dur_s = round(message["duration"] / 10_000_000, 3)
-                    cues.append({
-                        "start": start_s,
-                        "end": round(start_s + dur_s, 3),
-                        "text": message.get("text", "")
-                    })
+        cues = await _stream_tts_with_retry(script_text, voice_id, speed, filepath)
 
         if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
             return {'success': False, 'error': 'MP3 파일이 정상적으로 생성되지 않았습니다.'}
@@ -276,6 +287,7 @@ async def generate_note_audio(
             'success': True,
             'filename': filename,
             'filepath': filepath,
+            'voice_key': voice_key,
             'voice': voice_info,
             'cached': False,
             'cues': cues
@@ -356,7 +368,7 @@ def get_audiobook_download_filename(title: str, max_len: int = 40, is_subtitles:
         if re.search(r'[\uac00-\ud7a3]', short_title):
             suffix = "_오디오북"
         elif re.search(r'[\u3040-\u30ff]', short_title):
-            suffix = "_オー디オブック"
+            suffix = "_オーディオブック"
         else:
             suffix = "_Audiobook"
         
@@ -371,10 +383,7 @@ def clean_subtitle_line_for_tts(text: str) -> str:
     text = re.sub(r'\([^\)]*(?:music|음악|applause|laughter|박수|웃음|sound|효과음)[^\)]*\)', '', text, flags=re.IGNORECASE)
     text = re.sub(r'[♪♫♬♩]', '', text)
     # 2. AI 인용 잔여물 및 참조 태그 제거
-    text = re.sub(r':?[a-zA-Z0-9_-]*chatgpt-[a-zA-Z0-9_-]+\{[^}]*\}', '', text)
-    text = re.sub(r':[a-zA-Z0-9_-]+-reference\{[^}]*\}', '', text)
-    text = re.sub(r'【[^】]*?(?:source|turn\d+|search|출처)[^】]*?】', '', text)
-    text = re.sub(r'\[cite(?:ation)?:\s*[^\]]+\]', '', text, flags=re.IGNORECASE)
+    text = clean_ai_citation_artifacts(text)
     # 3. HTML 및 타임스탬프 태그 정리
     text = re.sub(r'<[^>]+>', '', text)
     text = re.sub(r'\[\s*\d{1,2}:\d{2}(?::\d{2})?\s*\]', '', text)
@@ -452,7 +461,9 @@ async def generate_subtitles_audio(
                     'success': True,
                     'filename': c_fn,
                     'filepath': c_fp,
+                    'voice_key': voice_key,
                     'voice': voice_info,
+                    'mode': norm_mode,
                     'cached': True,
                     'cues': cached_data.get("cues", []),
                     'sub_cue_map': cached_data.get("sub_cue_map", {})
@@ -467,20 +478,7 @@ async def generate_subtitles_audio(
     json_filepath = os.path.join(AUDIO_DIR, json_filename)
 
     try:
-        communicate = edge_tts.Communicate(full_script, voice_id, rate=speed)
-        raw_cues = []
-        with open(filepath, "wb") as audio:
-            async for message in communicate.stream():
-                if message["type"] == "audio":
-                    audio.write(message["data"])
-                elif message["type"] == "SentenceBoundary":
-                    start_s = round(message["offset"] / 10_000_000, 3)
-                    dur_s = round(message["duration"] / 10_000_000, 3)
-                    raw_cues.append({
-                        "start": start_s,
-                        "end": round(start_s + dur_s, 3),
-                        "text": message.get("text", "")
-                    })
+        raw_cues = await _stream_tts_with_retry(full_script, voice_id, speed, filepath)
 
         if not os.path.exists(filepath) or os.path.getsize(filepath) == 0:
             return {'success': False, 'error': '자막 MP3 파일이 정상적으로 생성되지 않았습니다.'}
@@ -529,7 +527,9 @@ async def generate_subtitles_audio(
             'success': True,
             'filename': filename,
             'filepath': filepath,
+            'voice_key': voice_key,
             'voice': voice_info,
+            'mode': norm_mode,
             'cached': False,
             'cues': cues,
             'sub_cue_map': sub_cue_map
@@ -539,4 +539,250 @@ async def generate_subtitles_audio(
             'success': False,
             'error': f'자막 edge-tts 실행 실패: {str(e)}'
         }
+
+
+def _extract_voice_key_from_filename(filename: str) -> str:
+    """오디오 파일명에서 음성 키(injoon, christopher 등)를 추출합니다."""
+    for k in VOICES.keys():
+        if f"_{k}_" in filename:
+            return k
+    return DEFAULT_VOICE
+
+
+def bind_temp_note_audio(note_id: str, markdown_text: str) -> Optional[Dict[str, Any]]:
+    """
+    노트가 저장되기 전(current_note / temp_note 상태)에 먼저 생성된 오디오북이 있다면,
+    새로 부여된 고유 note_id 파일명으로 복제/바인딩하여 영구 보존합니다.
+    """
+    if not note_id or not markdown_text or not os.path.isdir(AUDIO_DIR):
+        return None
+    safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
+    if not safe_note or safe_note in ("current_note", "temp_note"):
+        return None
+
+    content_hash = hashlib.sha1((markdown_text or "").encode("utf-8")).hexdigest()[:8]
+    bound_info = None
+    try:
+        for fname in os.listdir(AUDIO_DIR):
+            if not fname.endswith(f"_{content_hash}.mp3"):
+                continue
+            for prefix in ("current_note_", "temp_note_"):
+                if fname.startswith(prefix):
+                    mp3_src = os.path.join(AUDIO_DIR, fname)
+                    json_src = os.path.join(AUDIO_DIR, fname[:-4] + ".json")
+                    if os.path.getsize(mp3_src) <= 1024 or not os.path.exists(json_src):
+                        continue
+                    suffix = fname[len(prefix):]
+                    new_mp3_name = f"{safe_note}_{suffix}"
+                    new_json_name = new_mp3_name[:-4] + ".json"
+                    mp3_dst = os.path.join(AUDIO_DIR, new_mp3_name)
+                    json_dst = os.path.join(AUDIO_DIR, new_json_name)
+                    if not os.path.exists(mp3_dst):
+                        import shutil
+                        shutil.copy2(mp3_src, mp3_dst)
+                        shutil.copy2(json_src, json_dst)
+                    v_key = _extract_voice_key_from_filename(new_mp3_name)
+                    bound_info = {
+                        "filename": new_mp3_name,
+                        "voice_key": v_key,
+                    }
+    except Exception:
+        pass
+    return bound_info
+
+
+def find_saved_note_audiobook(
+    note_id: str,
+    markdown_text: str = "",
+    title: str = "",
+    saved_meta: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    보관함 노트를 열 때 해당 노트에 연결된(또는 디스크에 이미 생성된) 노트 오디오북 MP3 및 Cues를 찾아 반환합니다.
+    """
+    if not note_id or not os.path.isdir(AUDIO_DIR):
+        return None
+
+    safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
+    if markdown_text:
+        bind_temp_note_audio(note_id, markdown_text)
+
+    content_hash = hashlib.sha1((markdown_text or "").encode("utf-8")).hexdigest()[:8] if markdown_text else ""
+
+    candidates: List[str] = []
+    # 1. 메타데이터에 명시적으로 기록된 오디오북 파일 우선 확인
+    if isinstance(saved_meta, dict) and saved_meta.get("filename"):
+        saved_fn = os.path.basename(str(saved_meta["filename"]))
+        if saved_fn.endswith(".mp3"):
+            if not content_hash or saved_fn.endswith(f"_{content_hash}.mp3"):
+                candidates.append(saved_fn)
+
+    # 2. AUDIO_DIR 내 해당 note_id 프리픽스를 가진 파일 탐색
+    try:
+        all_files = os.listdir(AUDIO_DIR)
+    except Exception:
+        all_files = []
+
+    exact_hash_matches = []
+    other_note_matches = []
+    prefix = f"{safe_note}_"
+    for fname in all_files:
+        if not fname.startswith(prefix) or not fname.endswith(".mp3"):
+            continue
+        full_mp3 = os.path.join(AUDIO_DIR, fname)
+        full_json = os.path.join(AUDIO_DIR, fname[:-4] + ".json")
+        try:
+            if os.path.getsize(full_mp3) <= 1024 or not os.path.exists(full_json):
+                continue
+            mtime = os.path.getmtime(full_mp3)
+        except Exception:
+            continue
+        if content_hash and fname.endswith(f"_{content_hash}.mp3"):
+            exact_hash_matches.append((mtime, fname))
+        else:
+            other_note_matches.append((mtime, fname))
+
+    exact_hash_matches.sort(key=lambda x: x[0], reverse=True)
+    other_note_matches.sort(key=lambda x: x[0], reverse=True)
+
+    for _, fn in exact_hash_matches:
+        if fn not in candidates:
+            candidates.append(fn)
+    for _, fn in other_note_matches:
+        if fn not in candidates:
+            candidates.append(fn)
+
+    for fn in candidates:
+        mp3_path = os.path.join(AUDIO_DIR, fn)
+        json_path = os.path.join(AUDIO_DIR, fn[:-4] + ".json")
+        if not os.path.isfile(mp3_path) or os.path.getsize(mp3_path) <= 1024 or not os.path.isfile(json_path):
+            continue
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                cues = json.load(f)
+            if not isinstance(cues, list):
+                continue
+            v_key = _extract_voice_key_from_filename(fn)
+            return {
+                "filename": fn,
+                "voice_key": v_key,
+                "voice": VOICES.get(v_key, VOICES[DEFAULT_VOICE]),
+                "cues": cues,
+                "short_title": abbreviate_note_title(title or "학습노트"),
+                "download_filename": get_audiobook_download_filename(title or "학습노트", is_subtitles=False),
+                "cached": True
+            }
+        except Exception:
+            continue
+    return None
+
+
+def find_saved_subtitle_audiobook(
+    note_id: str,
+    video_id: str = "",
+    title: str = "",
+    saved_meta: Optional[Dict[str, Any]] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    보관함 노트를 열 때 해당 노트/영상에 연결된 자막 더빙 오디오북 MP3 및 Cues를 찾아 반환합니다.
+    """
+    if not os.path.isdir(AUDIO_DIR):
+        return None
+
+    candidates: List[str] = []
+    if isinstance(saved_meta, dict) and saved_meta.get("filename"):
+        saved_fn = os.path.basename(str(saved_meta["filename"]))
+        if saved_fn.startswith("sub_") and saved_fn.endswith(".mp3"):
+            candidates.append(saved_fn)
+
+    prefixes = []
+    if note_id:
+        safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:80]
+        if safe_note:
+            prefixes.append(f"sub_{safe_note}_")
+    if video_id:
+        safe_vid = re.sub(r'[^A-Za-z0-9_-]', '_', video_id)[:80]
+        if safe_vid and f"sub_{safe_vid}_" not in prefixes:
+            prefixes.append(f"sub_{safe_vid}_")
+
+    if prefixes:
+        try:
+            all_files = os.listdir(AUDIO_DIR)
+        except Exception:
+            all_files = []
+        disk_matches = []
+        for fname in all_files:
+            if not fname.endswith(".mp3"):
+                continue
+            if not any(fname.startswith(p) for p in prefixes):
+                continue
+            full_mp3 = os.path.join(AUDIO_DIR, fname)
+            full_json = os.path.join(AUDIO_DIR, fname[:-4] + ".json")
+            try:
+                if os.path.getsize(full_mp3) <= 1024 or not os.path.exists(full_json):
+                    continue
+                mtime = os.path.getmtime(full_mp3)
+                disk_matches.append((mtime, fname))
+            except Exception:
+                continue
+        disk_matches.sort(key=lambda x: x[0], reverse=True)
+        for _, fn in disk_matches:
+            if fn not in candidates:
+                candidates.append(fn)
+
+    for fn in candidates:
+        mp3_path = os.path.join(AUDIO_DIR, fn)
+        json_path = os.path.join(AUDIO_DIR, fn[:-4] + ".json")
+        if not os.path.isfile(mp3_path) or os.path.getsize(mp3_path) <= 1024 or not os.path.isfile(json_path):
+            continue
+        try:
+            with open(json_path, "r", encoding="utf-8") as f:
+                cached_data = json.load(f)
+            if not isinstance(cached_data, dict):
+                continue
+            v_key = _extract_voice_key_from_filename(fn)
+            mode = "original" if "_orig_" in fn else "dub"
+            return {
+                "filename": fn,
+                "voice_key": v_key,
+                "voice": VOICES.get(v_key, VOICES[DEFAULT_VOICE]),
+                "mode": mode,
+                "cues": cached_data.get("cues", []),
+                "sub_cue_map": cached_data.get("sub_cue_map", {}),
+                "short_title": abbreviate_note_title(title or "자막"),
+                "download_filename": get_audiobook_download_filename(title or "자막", is_subtitles=True),
+                "cached": True
+            }
+        except Exception:
+            continue
+    return None
+
+
+def has_saved_audiobook_on_disk(note_id: str, video_id: str = "") -> bool:
+    """보관함 목록 표시용: 해당 노트나 영상에 유효한 오디오북 MP3가 존재하는지 빠르게 확인합니다."""
+    if not os.path.isdir(AUDIO_DIR):
+        return False
+    prefixes = []
+    if note_id:
+        safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
+        if safe_note:
+            prefixes.append(f"{safe_note}_")
+            prefixes.append(f"sub_{safe_note[:80]}_")
+    if video_id:
+        safe_vid = re.sub(r'[^A-Za-z0-9_-]', '_', video_id)[:80]
+        if safe_vid:
+            prefixes.append(f"sub_{safe_vid}_")
+    if not prefixes:
+        return False
+    try:
+        for fname in os.listdir(AUDIO_DIR):
+            if fname.endswith(".mp3") and any(fname.startswith(p) for p in prefixes):
+                mp3_path = os.path.join(AUDIO_DIR, fname)
+                json_path = os.path.join(AUDIO_DIR, fname[:-4] + ".json")
+                if os.path.getsize(mp3_path) > 1024 and os.path.exists(json_path):
+                    return True
+    except Exception:
+        pass
+    return False
+
 

@@ -325,6 +325,45 @@ def list_transcript_tracks(video_id: str, ytdlp_lang: Optional[str] = None) -> D
         return {"success": False, "error": f"자막 목록을 불러올 수 없습니다: {str(e)[:200]}", "tracks": []}
 
 
+def _group_subtitles_into_chunks(
+    subtitles: List[Dict[str, Any]], window_sec: float = 35.0
+) -> List[Dict[str, Any]]:
+    """자막 리스트를 지정된 시간 간격(기본 35초) 단위의 분석용 청크로 병합합니다."""
+    grouped_chunks: List[Dict[str, Any]] = []
+    current_chunk_text: List[str] = []
+    current_chunk_start = 0.0
+
+    for sub in subtitles:
+        text = (sub.get("text") or "").strip()
+        if not text:
+            continue
+        start = float(sub.get("start", 0.0) or 0.0)
+        if not current_chunk_text:
+            current_chunk_start = start
+            current_chunk_text.append(text)
+        elif current_chunk_text[-1].strip() == text:
+            pass
+        elif (start - current_chunk_start) > window_sec:
+            grouped_chunks.append({
+                "start": current_chunk_start,
+                "timestamp": format_timestamp(current_chunk_start),
+                "text": " ".join(current_chunk_text),
+            })
+            current_chunk_start = start
+            current_chunk_text = [text]
+        else:
+            current_chunk_text.append(text)
+
+    if current_chunk_text:
+        grouped_chunks.append({
+            "start": current_chunk_start,
+            "timestamp": format_timestamp(current_chunk_start),
+            "text": " ".join(current_chunk_text),
+        })
+
+    return grouped_chunks
+
+
 def get_video_transcript(
     video_id: str,
     source_lang: Optional[str] = None,
@@ -352,10 +391,6 @@ def get_video_transcript(
         is_korean = base_lang(language_code) == 'ko'
         
         raw_subtitles = []
-        grouped_chunks = []
-        current_chunk_text = []
-        current_chunk_start = 0.0
-        
         for item in raw_items:
             text = getattr(item, 'text', '') if not isinstance(item, dict) else item.get('text', '')
             text = text.replace('\n', ' ').strip()
@@ -376,29 +411,7 @@ def get_video_transcript(
                         "text": text
                     })
 
-            if not current_chunk_text:
-                current_chunk_start = start
-                current_chunk_text.append(text)
-            elif current_chunk_text[-1].strip() == text.strip():
-                pass  # 동일 대사 연속 발생 시 청크 텍스트에서도 중복 방지
-            elif (start - current_chunk_start) > 35.0:
-                grouped_chunks.append({
-                    "start": current_chunk_start,
-                    "timestamp": format_timestamp(current_chunk_start),
-                    "text": " ".join(current_chunk_text)
-                })
-                current_chunk_start = start
-                current_chunk_text = [text]
-            else:
-                current_chunk_text.append(text)
-                
-        if current_chunk_text:
-            grouped_chunks.append({
-                "start": current_chunk_start,
-                "timestamp": format_timestamp(current_chunk_start),
-                "text": " ".join(current_chunk_text)
-            })
-
+        grouped_chunks = _group_subtitles_into_chunks(raw_subtitles, window_sec=35.0)
         full_raw_text = "\n".join([f"[{c['timestamp']}] {c['text']}" for c in grouped_chunks])
 
         # 롤링 캡션 겹침 제거 (다음 대사 지연 표시 방지)
@@ -550,31 +563,7 @@ def parse_srt_vtt_text(sub_text: str) -> Dict[str, Any]:
     _flush()
 
     # 35초 단위로 병합
-    merged_chunks = []
-    curr_chunk = []
-    curr_start = 0.0
-    for c in chunks:
-        if not curr_chunk:
-            curr_start = c["start"]
-            curr_chunk.append(c["text"])
-        elif (c["start"] - curr_start) > 35.0:
-            merged_chunks.append({
-                "start": curr_start,
-                "timestamp": format_timestamp(curr_start),
-                "text": " ".join(curr_chunk)
-            })
-            curr_start = c["start"]
-            curr_chunk = [c["text"]]
-        else:
-            curr_chunk.append(c["text"])
-            
-    if curr_chunk:
-        merged_chunks.append({
-            "start": curr_start,
-            "timestamp": format_timestamp(curr_start),
-            "text": " ".join(curr_chunk)
-        })
-
+    merged_chunks = _group_subtitles_into_chunks(chunks, window_sec=35.0)
     full_text = "\n".join([f"[{c['timestamp']}] {c['text']}" for c in merged_chunks])
     return {
         "success": True,

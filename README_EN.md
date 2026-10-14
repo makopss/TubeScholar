@@ -81,7 +81,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run `TubeScholar-Setup-v1.1.0.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
+Download and run `TubeScholar-Setup-v1.2.0.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
 
 #### Option B: Run from Source
 1. **Clone the repository:**
@@ -132,14 +132,15 @@ Click the ⚙️ **Settings** icon in the top header (saved locally and securely
 TubeScholar/
 ├── backend/
 │   ├── app.py              # FastAPI server & API routing
+│   ├── config.py           # Unified environment & path configuration module
 │   ├── prompt_loader.py    # Dynamic markdown template loader & user overlay manager
 │   ├── extractor.py        # YouTube subtitle & metadata extractor
 │   ├── analyzer.py         # Google Gemini knowledge expansion & smart fallback engine
-│   ├── storage.py          # Markdown notes & AI artifact cleaner & library store
+│   ├── storage.py          # Markdown notes, decoupled subtitle bundles & audiobook store
 │   ├── tts.py              # edge-tts neural audiobook & subtitle dubbing engine
 │   ├── stt.py              # Groq Cloud Whisper-large-v3 ultrafast STT engine
 │   └── languages.py        # 17-language catalog & normalization
-├── prompts/                # [NEW] Decoupled markdown system prompt templates
+├── prompts/                # Decoupled markdown system prompt templates
 │   ├── system_ko.md        # Korean (foreign video translation/analysis)
 │   ├── system_ko_native.md # Korean (native content enhancement)
 │   ├── system_en.md        # English master knowledge note
@@ -149,11 +150,13 @@ TubeScholar/
 ├── frontend/
 │   ├── index.html          # Interactive split-view dashboard UI
 │   ├── app.js              # Unified interactive client JS (Player, Subtitle Editor, Audiobooks)
-│   ├── i18n.js             # Multilingual (English, Korean, Japanese) catalog
+│   ├── i18n.js             # Multilingual (English, Korean) UI catalog
 │   ├── style.css           # Custom dark theme & reader styling
 │   └── vendor/             # Standalone offline vendor libraries (Tailwind, Marked, DOMPurify)
 ├── data/
 │   ├── notes/              # Permanent Markdown (.md) study notes
+│   ├── subtitles/          # Decoupled per-note subtitle & translation bundles (.json)
+│   ├── audio/              # Persistent neural audiobooks (.mp3) & timeline cues (.json)
 │   ├── prompts/            # User custom markdown templates (Optional)
 │   └── library.json        # Video metadata & study session index
 ├── run.py                  # One-click server launcher & browser watchdog

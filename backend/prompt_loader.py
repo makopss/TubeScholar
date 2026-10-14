@@ -1,24 +1,8 @@
 import os
-import sys
 import threading
 from typing import Dict, Tuple, Optional, Any, List
+from config import BUILTIN_PROMPTS_DIR, USER_PROMPTS_DIR
 from languages import language_name
-
-# 1. 기본 내장 템플릿 디렉토리 경로 (PyInstaller 패키징 및 로컬 개발 환경 호환)
-if getattr(sys, 'frozen', False):
-    BUILTIN_PROMPTS_DIR = os.path.join(getattr(sys, '_MEIPASS', os.path.dirname(sys.executable)), "prompts")
-else:
-    BUILTIN_PROMPTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "prompts"))
-
-# 2. 사용자 데이터 디렉토리 내 커스텀 프롬프트 디렉토리
-try:
-    from storage import DATA_DIR
-    USER_PROMPTS_DIR = os.path.join(DATA_DIR, "prompts")
-except Exception:
-    if getattr(sys, 'frozen', False):
-        USER_PROMPTS_DIR = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "TubeScholar", "data", "prompts")
-    else:
-        USER_PROMPTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "data", "prompts"))
 
 # 파일 수정 시간(mtime) 기반 캐시: path -> (mtime, content)
 _cache_lock = threading.Lock()
@@ -139,7 +123,7 @@ def list_available_templates() -> List[Dict[str, Any]]:
         {"filename": "system_ko_native.md", "description": "한국어 (국내 영상 구어체 정돈/심화)", "lang": "ko"},
         {"filename": "system_en.md", "description": "영어 마스터 지식 노트", "lang": "en"},
         {"filename": "system_ja.md", "description": "일본어 마스터 지식 노트", "lang": "ja"},
-        {"filename": "system_default.md", "description": "기타 다국어 범용 템플릿", "lang": "other"},
+        {"filename": "system_default.md", "description": "기타 다국어 범용 템플릿 (${TARGET_NAME} 치환)", "lang": "default"},
     ]
     result = []
     for t in templates:

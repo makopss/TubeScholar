@@ -80,7 +80,7 @@
 ## 🚀 빠른 시작 방법
 
 ### A. Windows 설치 프로그램 사용 (일반 사용자 추천)
-[GitHub Releases](https://github.com/makopss/TubeScholar/releases)에서 `TubeScholar-Setup-v1.1.0.exe`를 다운로드하여 실행하시면 Python 설치 없이 즉시 사용할 수 있습니다.
+[GitHub Releases](https://github.com/makopss/TubeScholar/releases)에서 `TubeScholar-Setup-v1.2.0.exe`를 다운로드하여 실행하시면 Python 설치 없이 즉시 사용할 수 있습니다.
 
 ### B. 소스코드 직접 실행 (개발자용)
 1. **저장소 클론**:
@@ -131,14 +131,15 @@
 TubeScholar/
 ├── backend/
 │   ├── app.py              # FastAPI 메인 서버 & API 라우터
+│   ├── config.py           # 공통 환경 설정 및 경로 상수 모듈
 │   ├── prompt_loader.py    # 동적 마크다운 템플릿 로더 및 사용자 커스텀 오버레이
 │   ├── extractor.py        # 유튜브 자막 및 메타데이터 추출기
 │   ├── analyzer.py         # Google Gemini 지식 확장 & 스마트 모델 엔진
-│   ├── storage.py          # 마크다운 노트 & AI 잔여물 정제기 & 라이브러리 저장소
+│   ├── storage.py          # 마크다운 노트 & 분리형 자막 번들 & 오디오북 저장소
 │   ├── tts.py              # edge-tts 신경망 오디오북 & 자막 더빙 엔진
 │   ├── stt.py              # Groq Cloud Whisper-large-v3 초고속 음성인식
 │   └── languages.py        # 17개 다국어 지원 언어 카탈로그
-├── prompts/                # [신규] 언어별 독립 마크다운 시스템 프롬프트 템플릿
+├── prompts/                # 언어별 독립 마크다운 시스템 프롬프트 템플릿
 │   ├── system_ko.md        # 한국어 (해외 영상 번역/분석용)
 │   ├── system_ko_native.md # 한국어 (국내 영상 구어체 정돈/심화용)
 │   ├── system_en.md        # 영어 마스터 지식 노트
@@ -148,11 +149,13 @@ TubeScholar/
 ├── frontend/
 │   ├── index.html          # 스플릿 뷰 대시보드 UI
 │   ├── app.js              # 통합 인터랙티브 클라이언트 JS (플레이어, 자막 편집기, 오디오북)
-│   ├── i18n.js             # 다국어(한국어, 영어, 일본어) 번역 카탈로그
+│   ├── i18n.js             # 다국어(한국어, 영어) UI 카탈로그
 │   ├── style.css           # 전용 다크 테마 & 커스텀 UI 스타일
 │   └── vendor/             # 독립 오프라인 라이브러리 (Tailwind, Marked, DOMPurify)
 ├── data/
 │   ├── notes/              # 영구 보관 마크다운(.md) 학습 노트
+│   ├── subtitles/          # 노트별 분리 보관 자막·번역 번들 (.json)
+│   ├── audio/              # 영구 보관 신경망 오디오북 (.mp3) 및 타임라인 큐 (.json)
 │   ├── prompts/            # 사용자 맞춤 커스텀 마크다운 템플릿 (선택 사항)
 │   └── library.json        # 영상 메타데이터 및 학습 기록 색인
 ├── run.py                  # 원클릭 서버 실행 및 브라우저 자동 실행

@@ -2,9 +2,9 @@ import os
 from typing import Optional, Dict, Any, List
 from groq import Groq
 try:
-    from extractor import format_srt_time, convert_to_srt
+    from extractor import format_timestamp, format_srt_time, convert_to_srt
 except ImportError:
-    from backend.extractor import format_srt_time, convert_to_srt
+    from backend.extractor import format_timestamp, format_srt_time, convert_to_srt
 
 import re
 
@@ -81,12 +81,6 @@ def split_long_segments(
 
     return refined
 
-def format_timestamp(seconds: float) -> str:
-    sec = int(seconds)
-    m = sec // 60
-    s = sec % 60
-    return f"{m:02d}:{s:02d}"
-
 def transcribe_audio_groq(
     audio_path: str,
     api_key: Optional[str] = None,
@@ -101,7 +95,7 @@ def transcribe_audio_groq(
         return {"success": False, "error": "Groq API 키가 설정되지 않았습니다."}
 
     if not os.path.exists(audio_path):
-        return {"success": False, "error": f"오디오 파일을 찾을 수 없습니다: {audio_path}"}
+        return {"success": False, "error": "오디오 파일을 찾을 수 없습니다."}
 
     file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
     if file_size_mb > 25.0:
@@ -116,7 +110,7 @@ def transcribe_audio_groq(
 
         with open(audio_path, "rb") as f:
             transcription = client.audio.transcriptions.create(
-                file=(filename, f.read()),
+                file=(filename, f),
                 model=model,
                 response_format="verbose_json",
                 temperature=0.0,
