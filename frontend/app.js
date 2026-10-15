@@ -3074,7 +3074,19 @@ document.addEventListener("DOMContentLoaded", () => {
   form.addEventListener("submit", (e) => {
     e.preventDefault();
     const url = document.getElementById("url-input").value.trim();
-    if (!url) return;
+    if (!url) {
+      // 유튜브 URL이 비어있을 때 로컬 비디오 파일이 선택되어 있으면 로컬 분석 실행, 아니면 로컬 파일 모달 오픈 안내
+      const localVideoInput = document.getElementById("local-video-input");
+      const localSubInput = document.getElementById("local-subtitle-input");
+      const hasLocalVideo = localVideoInput && localVideoInput.files && localVideoInput.files.length > 0;
+      const hasLocalSub = localSubInput && localSubInput.files && localSubInput.files.length > 0;
+      if (hasLocalVideo || hasLocalSub) {
+        handleLocalFileAction(currentMode !== "gemini");
+      } else if (isLocalVideo && currentSubtitles && currentSubtitles.length > 0) {
+        regenerateStudyNote();
+      }
+      return;
+    }
 
     if (url.includes("/@") || url.includes("/channel/") || url.includes("/c/")) {
       document.getElementById("channel-modal").classList.remove("hidden");
@@ -3282,125 +3294,15 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("local-file-modal").classList.add("hidden");
   });
 
-  // 로컬 파일 처리 (Gemini 분석 또는 프롬프트 복사)
-  async function handleLocalFileAction(isPromptOnly) {
-    const videoFile = document.getElementById("local-video-input").files[0];
-    const subFile = document.getElementById("local-subtitle-input").files[0];
-    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : (typeof t === "function" ? t("default_local_video_title") : "로컬 비디오"));
-
-    if (!subFile) {
-      alert(typeof t === "function" ? t("alert_select_local_sub") : "자막 파일(.srt 또는 .vtt)을 선택해 주세요.");
-      return;
-    }
-
-    const subText = await subFile.text();
-
-    // 로컬 파일용 새 컨텍스트 (이전 YouTube 영상 ID·싱크값·번역이 섞이지 않도록)
-    const gen = switchMediaContext(localMediaKey(videoFile, title), null);
-    isKoreanContent = false;
-    isSameLanguage = false;
-    currentTracks = [];
-    currentSourceLang = null;
-    currentTranslationSource = null;
-    renderSourceLangSelect();
-    setSubtitles([]);
-
-    if (videoFile) {
-      initLocalVideoPlayer(videoFile);
-      displayVideoMetadata({
-        title: title,
-        channel: typeof t === "function" ? t("local_channel_name") : "내 로컬 PC 파일",
-        video_type: "local",
-        duration_str: typeof t === "function" ? t("local_duration_str") : "로컬 영상"
-      });
-    }
-
-    document.getElementById("local-file-modal").classList.add("hidden");
-
-    if (isPromptOnly) {
-      // 구독 AI 프롬프트 복사
-      try {
-        const res = await fetch("/api/local/prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title,
-            subtitle_text: subText,
-            target_lang: currentTargetLang,
-            note_target_lang: currentNoteTargetLang
-          })
-        });
-        const d = await res.json();
-        if (isCurrentMedia(gen)) {
-          if (d.video_info && d.video_info.video_id) {
-            currentVideoId = d.video_info.video_id;
-            if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
-          }
-          if (d.subtitles) {
-            setSubtitles(d.subtitles);
-            applyLanguageState(d);
-          }
-        }
-        await navigator.clipboard.writeText(d.prompt);
-        switchMode("subscription");
-        alert(typeof t === "function" ? t("alert_local_prompt_copied") : "✨ 로컬 자막으로 완성된 심화 프롬프트가 복사되었습니다!\nChatGPT/Claude에 붙여넣은 뒤 우측 '답변 붙여넣기'에 넣어주세요.");
-      } catch (e) {
-        alert(typeof t === "function" ? t("alert_prompt_copy_error", { err: e.message }) : ("프롬프트 복사 오류: " + e.message));
-      }
-    } else {
-      // Gemini 분석
-      setAnalysisRunning(true);
-      setAnalysisStep(2);
-      try {
-        const res = await fetch("/api/local/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title,
-            subtitle_text: subText,
-            engine: "gemini",
-            target_lang: currentTargetLang,
-            note_target_lang: currentNoteTargetLang
-          })
-        });
-        let d = null;
-        try {
-          d = await res.json();
-        } catch (e) {}
-        if (!res.ok) throw new Error((d && d.detail) || "분석 실패");
-        if (!isCurrentMedia(gen)) return;
-        if (d.video_info && d.video_info.video_id) {
-          currentVideoId = d.video_info.video_id;
-          if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
-        }
-        renderMarkdownNote(d.markdown, `Gemini: ${d.model_used}`, d.note_id);
-        if (d.subtitles) setSubtitles(d.subtitles);
-        applyLanguageState(d);
-        if (typeof restoreSavedAudiobookForNote === "function") {
-          restoreSavedAudiobookForNote(d);
-        }
-        loadLibrary();
-      } catch (e) {
-        alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
-      } finally {
-        setAnalysisRunning(false);
-      }
-    }
-  }
-
-  document.getElementById("local-analyze-btn").addEventListener("click", () => handleLocalFileAction(false));
-  document.getElementById("local-prompt-btn").addEventListener("click", () => handleLocalFileAction(true));
-
-  // 자막 없는 로컬 비디오 -> 영상에서 오디오 추출 후 Gemini 멀티모달 직접 분석
-  document.getElementById("local-audio-direct-btn").addEventListener("click", async () => {
-    const videoFile = document.getElementById("local-video-input").files[0];
+  // 자막 없는 로컬 비디오 -> 영상에서 오디오 추출 후 Groq Whisper / Gemini 멀티모달 직접 분석 공통 함수
+  async function runLocalAudioDirectAnalysis(videoFile, customTitle) {
     if (!videoFile) {
       alert(typeof t === "function" ? t("alert_select_local_video") : "분석할 로컬 비디오 파일(.mp4, .webm, .mkv 등)을 먼저 선택해 주세요.");
       return;
     }
 
-    const title = document.getElementById("local-title-input").value.trim() || videoFile.name.replace(/\.[^/.]+$/, "");
-    
+    const title = (customTitle && customTitle.trim()) || videoFile.name.replace(/\.[^/.]+$/, "");
+
     // 로컬 비디오 플레이어 바로 준비 및 재생 (새 컨텍스트)
     const gen = switchMediaContext(localMediaKey(videoFile, title), null);
     isKoreanContent = false;
@@ -3483,6 +3385,141 @@ document.addEventListener("DOMContentLoaded", () => {
       currentAbortController = null;
       setAnalysisRunning(false);
     }
+  }
+
+  // 로컬 파일 처리 (Gemini 분석 또는 프롬프트 복사)
+  async function handleLocalFileAction(isPromptOnly) {
+    const videoFile = document.getElementById("local-video-input").files[0];
+    const subFile = document.getElementById("local-subtitle-input").files[0];
+    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : (typeof t === "function" ? t("default_local_video_title") : "로컬 비디오"));
+
+    if (!subFile) {
+      // 자막 파일이 비어있지만 비디오 파일이 선택되어 있고 Gemini 분석 버튼([⚡ 자막으로 분석])을 누른 경우,
+      // 모달 안내문("자막이 없으면 비워두세요")과 일치하도록 자동으로 음성 직접 분석 플로우로 연결합니다.
+      if (!isPromptOnly && videoFile) {
+        await runLocalAudioDirectAnalysis(videoFile, title);
+        return;
+      }
+      alert(typeof t === "function" ? t("alert_select_local_sub") : "자막 파일(.srt 또는 .vtt)을 선택해 주세요.");
+      return;
+    }
+
+    const subText = await subFile.text();
+
+    // 로컬 파일용 새 컨텍스트 (이전 YouTube 영상 ID·싱크값·번역이 섞이지 않도록)
+    const gen = switchMediaContext(localMediaKey(videoFile, title), null);
+    isKoreanContent = false;
+    isSameLanguage = false;
+    currentTracks = [];
+    currentSourceLang = null;
+    currentTranslationSource = null;
+    renderSourceLangSelect();
+    setSubtitles([]);
+
+    if (videoFile) {
+      initLocalVideoPlayer(videoFile);
+      displayVideoMetadata({
+        title: title,
+        channel: typeof t === "function" ? t("local_channel_name") : "내 로컬 PC 파일",
+        video_type: "local",
+        duration_str: typeof t === "function" ? t("local_duration_str") : "로컬 영상"
+      });
+    }
+
+    document.getElementById("local-file-modal").classList.add("hidden");
+
+    if (isPromptOnly) {
+      // 구독 AI 프롬프트 복사
+      try {
+        const res = await fetch("/api/local/prompt", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            title: title,
+            subtitle_text: subText,
+            target_lang: currentTargetLang,
+            note_target_lang: currentNoteTargetLang
+          })
+        });
+        const d = await res.json();
+        if (isCurrentMedia(gen)) {
+          if (d.video_info && d.video_info.video_id) {
+            currentVideoId = d.video_info.video_id;
+            if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
+          }
+          if (d.subtitles) {
+            setSubtitles(d.subtitles);
+            applyLanguageState(d);
+          }
+        }
+        await navigator.clipboard.writeText(d.prompt);
+        switchMode("subscription");
+        alert(typeof t === "function" ? t("alert_local_prompt_copied") : "✨ 로컬 자막으로 완성된 심화 프롬프트가 복사되었습니다!\nChatGPT/Claude에 붙여넣은 뒤 우측 '답변 붙여넣기'에 넣어주세요.");
+      } catch (e) {
+        alert(typeof t === "function" ? t("alert_prompt_copy_error", { err: e.message }) : ("프롬프트 복사 오류: " + e.message));
+      }
+    } else {
+      // Gemini 분석
+      const loadingTitle = document.getElementById("loading-title");
+      const loadingDesc = document.getElementById("loading-desc");
+      currentAbortController = new AbortController();
+      setAnalysisRunning(true);
+      setAnalysisStep(2);
+      if (loadingTitle) {
+        loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: 로컬 자막 기반 Gemini 지식 노트 생성 중...";
+      }
+      if (loadingDesc) {
+        loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "로컬 자막을 분석하여 Gemini AI가 심층 학습 노트를 구성합니다.";
+      }
+      try {
+        const res = await fetch("/api/local/analyze", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: currentAbortController.signal,
+          body: JSON.stringify({
+            title: title,
+            subtitle_text: subText,
+            engine: "gemini",
+            target_lang: currentTargetLang,
+            note_target_lang: currentNoteTargetLang
+          })
+        });
+        let d = null;
+        try {
+          d = await res.json();
+        } catch (e) {}
+        if (!res.ok) throw new Error((d && d.detail) || "분석 실패");
+        if (!isCurrentMedia(gen)) return;
+        setAnalysisStep(3);
+        if (d.video_info && d.video_info.video_id) {
+          currentVideoId = d.video_info.video_id;
+          if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
+        }
+        renderMarkdownNote(d.markdown, `Gemini: ${d.model_used}`, d.note_id);
+        if (d.subtitles) setSubtitles(d.subtitles);
+        applyLanguageState(d);
+        if (typeof restoreSavedAudiobookForNote === "function") {
+          restoreSavedAudiobookForNote(d);
+        }
+        loadLibrary();
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
+      } finally {
+        currentAbortController = null;
+        setAnalysisRunning(false);
+      }
+    }
+  }
+
+  document.getElementById("local-analyze-btn").addEventListener("click", () => handleLocalFileAction(false));
+  document.getElementById("local-prompt-btn").addEventListener("click", () => handleLocalFileAction(true));
+
+  // 자막 없는 로컬 비디오 -> 영상에서 오디오 추출 후 Gemini 멀티모달 직접 분석
+  document.getElementById("local-audio-direct-btn").addEventListener("click", async () => {
+    const videoFile = document.getElementById("local-video-input").files[0];
+    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : "");
+    await runLocalAudioDirectAnalysis(videoFile, title);
   });
 
   // 플레이어 버튼

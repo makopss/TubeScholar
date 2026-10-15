@@ -11,32 +11,32 @@ from prompt_loader import get_system_prompt_for_lang
 
 suppress_genai_warnings()
 
-# 1) 학습 노트 심층 생성용 모델 (1순위 일반 Flash Latest, 2순위 일반 Flash Lite Latest, 3순위부터 특정 버전 모델)
-DEFAULT_NOTE_MODEL = "gemini-flash-latest"
+# 1) 학습 노트 심층 생성용 모델 (응답 안정성이 검증된 3.5/3.6 Flash 및 Lite 모델을 최우선 배치하고 혼잡 모델을 후순위로 배치)
+DEFAULT_NOTE_MODEL = "gemini-3.5-flash"
 FALLBACK_NOTE_MODELS = [
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-flash-lite-latest",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-flash-latest",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
 ]
 DEFAULT_GEMINI_MODEL = DEFAULT_NOTE_MODEL
 FALLBACK_GEMINI_MODELS = FALLBACK_NOTE_MODELS
 
-# 2) 한국어 및 다국어 자막 번역 전담 모델 (Lite 우선: 일반 Lite Latest -> 개별 Lite -> 최신 Flash 순환)
+# 2) 한국어 및 다국어 자막 번역 전담 모델 (Lite 우선: 일반 Lite Latest -> 개별 Lite -> 안정적 Flash 순환)
 DEFAULT_TRANSLATE_MODEL = "gemini-flash-lite-latest"
 FALLBACK_TRANSLATE_MODELS = [
     "gemini-flash-lite-latest",
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-flash-latest",
-    "gemini-3.8-flash",
-    "gemini-3.7-flash",
-    "gemini-3.6-flash",
     "gemini-3.5-flash",
+    "gemini-3.6-flash",
+    "gemini-flash-latest",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
 ]
 
 # 3) 실시간 분석 진행, 모델 폴백 상태 추적 및 중단(Cancel) 이벤트
@@ -66,8 +66,17 @@ def request_analysis_cancel() -> None:
 
 
 def reset_analysis_cancel() -> None:
-    """새 분석 시작 전 중단 플래그를 초기화합니다."""
+    """새 분석 시작 전 중단 플래그와 이전 분석 상태를 초기화합니다."""
     _analysis_cancel_event.clear()
+    with _analysis_state_lock:
+        _current_analysis_state["status"] = "processing"
+        _current_analysis_state["model"] = ""
+        _current_analysis_state["event"] = "preparing"
+        _current_analysis_state["attempt"] = 1
+        _current_analysis_state["cycle"] = 1
+        _current_analysis_state["message"] = ""
+        _current_analysis_state["step"] = 1
+        _current_analysis_state["timestamp"] = time.time()
 
 
 def is_analysis_cancelled() -> bool:
@@ -78,6 +87,55 @@ def is_analysis_cancelled() -> bool:
 def _interruptible_sleep(seconds: float) -> bool:
     """대기 중 중단 신호가 들어오면 즉시 깨어납니다. 중단되었으면 True 반환."""
     return _analysis_cancel_event.wait(timeout=max(0.0, seconds))
+
+
+def _call_generate_content_interruptible(
+    client: genai.Client,
+    model: str,
+    contents: Any,
+    config: types.GenerateContentConfig,
+    timeout_sec: float = 65.0,
+) -> Any:
+    """
+    Gemini generate_content 호출이 무한정 블로킹되거나 사용자 중단 시 멈추는 현상을 방지하기 위해
+    데몬 스레드 + 0.25초 주기 중단 감지 및 하드 타임아웃을 적용합니다.
+    """
+    result_box: Dict[str, Any] = {}
+    done_evt = threading.Event()
+
+    # HttpOptions timeout (밀리초 단위) 설정
+    try:
+        config.http_options = types.HttpOptions(timeout=int(timeout_sec * 1000))
+    except Exception:
+        pass
+
+    def _worker():
+        try:
+            result_box["response"] = client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as exc:
+            result_box["error"] = exc
+        finally:
+            done_evt.set()
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+
+    start_ts = time.time()
+    while not done_evt.wait(timeout=0.25):
+        if is_analysis_cancelled():
+            raise RuntimeError("CANCELLED_BY_USER")
+        if (time.time() - start_ts) >= timeout_sec:
+            raise TimeoutError(f"503 UNAVAILABLE: {model} 응답 시간 초과 ({int(timeout_sec)}s)")
+
+    if is_analysis_cancelled():
+        raise RuntimeError("CANCELLED_BY_USER")
+    if "error" in result_box:
+        raise result_box["error"]
+    return result_box.get("response")
 
 
 def get_analysis_state() -> Dict[str, Any]:
@@ -281,13 +339,15 @@ def _generate_with_model_fallback(
                     else:
                         print(f"[*] Gemini ({log_lang_label}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
 
-                    response = client.models.generate_content(
+                    response = _call_generate_content_interruptible(
+                        client=client,
                         model=target_model,
                         contents=contents,
                         config=types.GenerateContentConfig(
                             system_instruction=system_instruction,
                             temperature=0.3,
                         ),
+                        timeout_sec=95.0 if is_audio else 75.0,
                     )
 
                     if is_analysis_cancelled():
@@ -296,6 +356,9 @@ def _generate_with_model_fallback(
                             "cancelled": True,
                             "error": "사용자에 의해 분석이 중단되었습니다.",
                         }
+
+                    if not response or not getattr(response, "text", None):
+                        raise RuntimeError(f"503 Empty response from {target_model}")
 
                     done_evt = "audio_completed" if is_audio else "completed"
                     done_msg = f"✅ {model_lbl} 음성 분석 완료!" if is_audio else f"✅ {model_lbl} 분석 완료! 문서 렌더링 중..."
@@ -307,7 +370,7 @@ def _generate_with_model_fallback(
                         "model_used": target_model,
                     }
                 except Exception as e:
-                    if is_analysis_cancelled():
+                    if is_analysis_cancelled() or "CANCELLED_BY_USER" in str(e):
                         return {
                             "success": False,
                             "cancelled": True,
@@ -315,17 +378,36 @@ def _generate_with_model_fallback(
                         }
 
                     last_error = str(e)
-                    is_503 = any(kw in last_error for kw in ["503", "UNAVAILABLE", "high demand", "Overloaded"])
+                    is_503 = any(
+                        kw in last_error
+                        for kw in [
+                            "503",
+                            "UNAVAILABLE",
+                            "high demand",
+                            "Overloaded",
+                            "시간 초과",
+                            "timed out",
+                            "timeout",
+                            "Timeout",
+                            "Deadline",
+                            "disconnected",
+                            "Connection",
+                            "RemoteProtocolError",
+                            "Empty response",
+                        ]
+                    )
                     is_rate_limit = any(kw in last_error for kw in ["429", "RESOURCE_EXHAUSTED"])
-                    is_retryable = is_503 or is_rate_limit or any(kw in last_error for kw in ["404", "NOT_FOUND", "500"])
+                    is_retryable = is_503 or is_rate_limit or any(
+                        kw in last_error for kw in ["404", "NOT_FOUND", "500", "502", "504", "INTERNAL", "ServerError"]
+                    )
 
                     if not is_retryable:
                         update_analysis_state("error", model=target_model, event="error", message=f"Gemini 오류 발생: {last_error[:100]}", step=2)
                         return {"success": False, "error": f"Gemini 생성 중 오류 발생: {last_error}"}
 
                     if is_503:
-                        fail_msg = f"⚠️ {model_lbl} 서버 혼잡(503) 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다..."
-                        print(f"[!] {target_model} 503 서버 과부하 감지 -> 대기 없이 다음 대체 모델로 즉시 전환")
+                        fail_msg = f"⚠️ {model_lbl} 서버 혼잡/지연 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다..."
+                        print(f"[!] {target_model} 서버 과부하/응답 지연 감지 ({last_error[:90]}) -> 다음 대체 모델로 즉시 전환")
                         update_analysis_state("fallback", model=target_model, event="503_failover", message=fail_msg, step=2)
                         break
 
@@ -425,6 +507,12 @@ def generate_study_note_from_audio(
     # 1. 오디오 파일 업로드
     uploaded_file = None
     try:
+        update_analysis_state(
+            "processing",
+            event="audio_uploading",
+            message="오디오 트랙을 Gemini 멀티모달 서버로 전송 중...",
+            step=1,
+        )
         uploaded_file = client.files.upload(file=audio_path)
     except Exception as e:
         return {"success": False, "error": f"오디오 업로드 실패: {str(e)}"}
@@ -657,7 +745,11 @@ def _translate_batch_with_recovery(
             resp = client.models.generate_content(
                 model=model_name,
                 contents=prompt,
-                config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=8192)
+                config=types.GenerateContentConfig(
+                    temperature=0.0,
+                    max_output_tokens=8192,
+                    http_options=types.HttpOptions(timeout=45000),
+                )
             )
             raw_map = _parse_translation_response(resp.text or "", len(pending))
             ko_map = {pending[k]: v for k, v in raw_map.items()}
@@ -679,7 +771,11 @@ def _translate_batch_with_recovery(
                     m_resp = client.models.generate_content(
                         model=model_name,
                         contents=m_prompt,
-                        config=types.GenerateContentConfig(temperature=0.0, max_output_tokens=4096)
+                        config=types.GenerateContentConfig(
+                            temperature=0.0,
+                            max_output_tokens=4096,
+                            http_options=types.HttpOptions(timeout=45000),
+                        )
                     )
                     m_map = _parse_translation_response(m_resp.text or "", len(missing_items))
                     for m_i, orig_i in enumerate(missing_indices):

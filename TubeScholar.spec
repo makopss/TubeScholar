@@ -38,6 +38,8 @@ hiddenimports = [
     'yt_dlp',
     'imageio_ffmpeg',
     'config',
+    'async_timeout',
+    'exceptiongroup',
 ]
 
 # imageio_ffmpeg, edge_tts, uvicorn, yt_dlp 데이터 및 서브모듈 수집

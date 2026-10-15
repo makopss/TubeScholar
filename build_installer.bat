@@ -38,17 +38,12 @@ echo [*] PyInstaller 바이너리 빌드 완료!
 
 :: 4. Inno Setup 컴파일러(ISCC.exe) 찾기
 set "ISCC_PATH="
-if exist "%LocalAppData%\Programs\Inno Setup 6\ISCC.exe" (
-    set "ISCC_PATH=%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"
-) else if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" (
-    set "ISCC_PATH=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
-) else if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" (
-    set "ISCC_PATH=%ProgramFiles%\Inno Setup 6\ISCC.exe"
-) else (
+if exist "%LocalAppData%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%LocalAppData%\Programs\Inno Setup 6\ISCC.exe"
+if not defined ISCC_PATH if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+if not defined ISCC_PATH if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC_PATH=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
+if not defined ISCC_PATH (
     where iscc.exe >nul 2>nul
-    if not errorlevel 1 (
-        set "ISCC_PATH=iscc.exe"
-    )
+    if not errorlevel 1 set "ISCC_PATH=iscc.exe"
 )
 
 if "%ISCC_PATH%"=="" (

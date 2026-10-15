@@ -41,7 +41,8 @@ from extractor import (
     parse_srt_vtt_text,
     detect_text_language,
     convert_to_srt,
-    convert_to_txt
+    convert_to_txt,
+    _group_subtitles_into_chunks,
 )
 from analyzer import (
     generate_study_note_gemini,
@@ -480,6 +481,12 @@ def analyze_local_video_audio(
     """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성
     (일반 def: FastAPI 가 작업 스레드에서 실행하므로 분석 중에도 다른 요청이 멈추지 않음)"""
     reset_analysis_cancel()
+    update_analysis_state(
+        "processing",
+        event="extracting_audio",
+        message="1단계: 로컬 영상에서 오디오 트랙(MP3) 추출 중...",
+        step=1,
+    )
     vid_title = title or os.path.splitext(os.path.basename(video.filename or "") or "로컬 비디오")[0]
     target = normalize_target_lang(target_lang)
     note_target = normalize_target_lang(note_target_lang or target_lang)
@@ -512,7 +519,7 @@ def analyze_local_video_audio(
         _raise_if_cancelled()
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [
-            ffmpeg_exe, "-y",
+            ffmpeg_exe, "-nostdin", "-y",
             "-i", temp_video_path,
             "-vn",
             "-acodec", "libmp3lame",
@@ -521,7 +528,14 @@ def analyze_local_video_audio(
             "-b:a", "32k",
             temp_audio_path
         ]
-        proc = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        popen_kwargs: Dict[str, Any] = {
+            "stdin": subprocess.DEVNULL,
+            "stdout": subprocess.DEVNULL,
+            "stderr": subprocess.PIPE,
+        }
+        if sys.platform == "win32":
+            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        proc = subprocess.run(cmd, **popen_kwargs)
         if proc.returncode != 0:
             raise HTTPException(status_code=500, detail="영상에서 오디오를 추출하지 못했습니다.")
 
@@ -530,11 +544,17 @@ def analyze_local_video_audio(
         groq_key = os.environ.get("GROQ_API_KEY")
         stt_result = None
         if groq_key:
+            update_analysis_state(
+                "processing",
+                event="groq_stt",
+                message="Groq Whisper 초고속 음성인식으로 타임스탬프 자막 추출 중...",
+                step=1,
+            )
             stt_result = transcribe_audio_groq(temp_audio_path, api_key=groq_key)
 
         _raise_if_cancelled()
         if stt_result and stt_result.get("success") and stt_result.get("subtitles"):
-            # Groq Whisper 자막 완성 -> Gemini에게 전달하여 지식 확장 노트 생성
+            # Groq Whisper 자막 완성 -> 35초 단위로 병합하여 Gemini에게 전달 (토큰 절약 및 속도 향상)
             subtitles = stt_result["subtitles"]
             src_lang = detect_text_language(subtitles)
             duration_str = subtitles[-1]["timestamp"] if subtitles else "00:00"
@@ -545,9 +565,12 @@ def analyze_local_video_audio(
                 "video_type": "local",
                 "duration_str": duration_str
             }
+            merged_chunks = _group_subtitles_into_chunks(subtitles, window_sec=35.0)
+            full_text = "\n".join(f"[{c['timestamp']}] {c['text']}" for c in (merged_chunks or subtitles))
             transcript_data = {
                 "language": src_lang,
-                "full_text": "\n".join(f"[{s['timestamp']}] {s['text']}" for s in subtitles),
+                "full_text": full_text,
+                "chunks": merged_chunks,
                 "subtitles": subtitles
             }
             llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=note_target)
@@ -751,9 +774,12 @@ def regenerate_study_note(req: RegenerateNoteRequest):
     }
 
     src_lang = req.source_lang or detect_text_language(req.subtitles)
+    merged_chunks = _group_subtitles_into_chunks(req.subtitles, window_sec=35.0)
+    full_text = "\n".join(f"[{c.get('timestamp', '00:00')}] {c.get('text', '')}" for c in (merged_chunks or req.subtitles))
     transcript_data = {
         "language": src_lang,
-        "full_text": "\n".join(f"[{s.get('timestamp', '00:00')}] {s.get('text', '')}" for s in req.subtitles),
+        "full_text": full_text,
+        "chunks": merged_chunks,
         "subtitles": req.subtitles
     }
 
