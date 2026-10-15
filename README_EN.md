@@ -8,6 +8,16 @@ Going far beyond simple subtitle translation and generic summaries, it delivers 
 
 Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Claude Pro subscriptions, with all study notes saved locally on your machine in standard Markdown (`.md`)—100% compatible with Notion, Obsidian, and Logseq.
 
+## 🆕 v1.2.3 — Unified local analysis and saved video playback
+
+- **One analysis action**: Start Analysis automatically uses supplied subtitles or processes the video's audio.
+- **Audio routing**: Supplied subtitles go to Gemini. Without subtitles, a configured Groq key transcribes the audio before Gemini writes the note. If Groq is unavailable or transcription fails, Gemini analyzes the extracted audio. Missing or invalid generated SRT is reported explicitly.
+- **Prompt readiness**: Copy Prompt becomes available when subtitles are ready; imported SRT/VTT does not require note generation, and saved transcriptions can be reused.
+- **Videos reopen with notes**: Original media is copied into the app data's `videos/` directory. Saved notes restore video, subtitles and notes after restart, even if the original file moves. Older notes need **Reconnect Original Video** once.
+- Identical files are shared between notes. Deleting the final linked note removes the managed copy without touching the original. Copies consume disk space, and playback depends on the browser's codec support.
+
+[Release and installer](https://github.com/makopss/TubeScholar/releases/tag/v1.2.3) · [Analysis and verification guide](docs/local-analysis.md)
+
 ## 🆕 v1.2.2 — Reliable local video analysis
 
 - **Cancellation and switching**: Each analysis owns its cancellation and progress state; late results cannot overwrite a newer analysis.
@@ -93,7 +103,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run [TubeScholar-Setup-v1.2.2.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.2/TubeScholar-Setup-v1.2.2.exe). No Python installation is required. A SHA-256 checksum file is included with the release.
+Download and run [TubeScholar-Setup-v1.2.3.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.3/TubeScholar-Setup-v1.2.3.exe). No Python installation is required. A SHA-256 checksum file is included with the release.
 
 #### Option B: Run from Source
 1. **Clone the repository:**

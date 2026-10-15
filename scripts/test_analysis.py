@@ -235,6 +235,101 @@ class APITests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self):
         await self.client.aclose()
 
+    async def test_supplied_subtitles_skip_audio_and_retain_video_on_note_failure(self):
+        job_id = uuid.uuid4().hex
+        with patch.object(api, "run_ffmpeg") as ffmpeg, patch.object(api, "transcribe_audio_groq") as groq, patch.object(
+            api, "generate_study_note_gemini", return_value={"success": False, "error": "timeout"}
+        ):
+            response = await self.client.post("/api/local/video-analyze", headers={"x-analysis-id": job_id},
+                data={"subtitle_text": SRT}, files={"video": ("lesson.mp4", b"original-video")})
+        self.assertEqual(response.status_code, 500)
+        ffmpeg.assert_not_called()
+        groq.assert_not_called()
+        note_id = jobs.get_analysis_state(job_id)["checkpoint_note_id"]
+        note = (await self.client.get(f"/api/notes/{note_id}")).json()
+        self.assertTrue(note["metadata"]["local_video_available"])
+        media = await self.client.get(f"/api/notes/{note_id}/video", headers={"Range": "bytes=0-7"})
+        self.assertEqual(media.status_code, 206)
+        self.assertEqual(media.content, b"original")
+        self.assertEqual(media.headers["content-range"], "bytes 0-7/14")
+
+    async def test_reconnect_deduplicates_preserves_edits_and_deletes_only_last_reference(self):
+        info = {"video_id": "local_" + uuid.uuid4().hex, "video_type": "local", "title": "Old note"}
+        first = storage.save_note(info, "original", subtitles=[])['note_id']
+        self.assertFalse((await self.client.get(f"/api/notes/{first}")).json()["metadata"]["local_video_available"])
+        response = await self.client.post(f"/api/notes/{first}/video", files={"video": ("lesson.mp4", b"shared-video")})
+        self.assertEqual(response.status_code, 200, response.text)
+        path = storage.local_video_path(response.json()["local_video"])
+        second = storage.save_note(info, "second version")['note_id']
+        self.assertEqual(storage.get_note(second)["metadata"]["local_video"]["filename"], Path(path).name)
+        storage.save_note(info, "updated", note_id=first)
+        self.assertEqual((await self.client.get(f"/api/notes/{first}/video")).content, b"shared-video")
+        same = await self.client.post(f"/api/notes/{second}/video", files={"video": ("renamed.mp4", b"shared-video")})
+        self.assertEqual(same.json()["local_video"]["filename"], Path(path).name)
+        replaced = await self.client.post(f"/api/notes/{first}/video", files={"video": ("replacement.mp4", b"other-video")})
+        replacement = storage.local_video_path(replaced.json()["local_video"])
+        self.assertTrue(Path(path).exists())
+        storage.delete_note(first)
+        self.assertFalse(Path(replacement).exists())
+        self.assertTrue(Path(path).exists())
+        storage.delete_note(second)
+        self.assertFalse(Path(path).exists())
+
+    async def test_video_reconnect_rejects_youtube_empty_and_oversize_files(self):
+        youtube = storage.save_note({"video_id": "youtube-test", "title": "YT"}, "note")["note_id"]
+        response = await self.client.post(f"/api/notes/{youtube}/video", files={"video": ("v.mp4", b"data")})
+        self.assertEqual(response.status_code, 400)
+        local = storage.save_note({"video_id": "local_" + uuid.uuid4().hex, "video_type": "local"}, "note")["note_id"]
+        response = await self.client.post(f"/api/notes/{local}/video", files={"video": ("page.html", b"<script>bad()</script>")})
+        self.assertEqual(response.status_code, 400)
+        response = await self.client.post(f"/api/notes/{local}/video", files={"video": ("v.mp4", b"")})
+        self.assertEqual(response.status_code, 400)
+        with patch.object(jobs, "MAX_LOCAL_VIDEO_BYTES", 8):
+            response = await self.client.post(f"/api/notes/{local}/video", files={"video": ("v.mp4", b"0" * 70000)})
+        self.assertEqual(response.status_code, 413)
+        with patch.object(storage, "MAX_LOCAL_VIDEO_BYTES", 2):
+            response = await self.client.post(f"/api/notes/{local}/video", files={"video": ("v.mp4", b"too large")})
+        self.assertEqual(response.status_code, 400)
+        self.assertNotIn("local_video", storage.get_note(local)["metadata"])
+
+    async def test_video_references_cannot_escape_managed_directory(self):
+        self.assertIsNone(storage.local_video_path({"filename": "../../.env"}))
+        self.assertIsNone(storage.local_video_path({"filename": str(Path(_test_data.name) / "secret.mp4")}))
+        self.assertEqual((await self.client.get("/api/notes/unknown/video")).status_code, 404)
+
+    async def test_cancelling_video_retention_does_not_publish_a_partial_file(self):
+        note_id = storage.save_note({"video_id": "local_" + uuid.uuid4().hex, "video_type": "local"}, "note")["note_id"]
+        with bound_job() as job:
+            class CancelledStream(io.BytesIO):
+                def read(self, size):
+                    data = super().read(size)
+                    job.cancel.set()
+                    return data
+            with self.assertRaises(jobs.AnalysisStopped):
+                storage.attach_note_video(note_id, CancelledStream(b"partial"), "v.mp4", jobs.check_analysis, jobs.analysis_commit)
+        self.assertNotIn("local_video", storage.get_note(note_id)["metadata"])
+        self.assertEqual(list(Path(storage.VIDEOS_DIR).glob("*.upload")), [])
+
+    async def test_gemini_audio_without_groq_also_retains_video_without_fake_subtitles(self):
+        with patch.dict(os.environ, {"GROQ_API_KEY": ""}), patch.object(api, "run_ffmpeg"), patch.object(
+            api, "generate_study_note_from_audio", return_value={"success": True, "markdown": "note", "model_used": "fake", "subtitles": [], "subtitle_status": "unavailable"}
+        ):
+            response = await self.client.post("/api/local/video-analyze", files={"video": ("v.mp4", b"audio-video")})
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual(data["subtitles"], [])
+        self.assertEqual((await self.client.get(f"/api/notes/{data['note_id']}/video")).content, b"audio-video")
+
+    async def test_prompt_copy_needs_subtitles_but_never_calls_generation(self):
+        with patch.object(api, "generate_study_note_gemini") as generate:
+            valid = await self.client.post("/api/local/prompt", json={"title": "test", "subtitle_text": SRT})
+            invalid = await self.client.post("/api/local/prompt", json={"title": "test", "subtitle_text": ""})
+        self.assertEqual(valid.status_code, 200)
+        self.assertTrue(valid.json()["prompt"])
+        self.assertIn("Hello world.", valid.json()["prompt"])
+        self.assertEqual(invalid.status_code, 400)
+        generate.assert_not_called()
+
     async def post(self, path="/api/local/analyze", title="test", job_id=None):
         job_id = job_id or uuid.uuid4().hex
         response = await self.client.post(path, headers={"x-analysis-id": job_id}, json={"title": title, "subtitle_text": SRT})

@@ -242,7 +242,8 @@ class AnalysisMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
-        if scope["type"] != "http" or scope["method"] != "POST" or scope["path"] not in ANALYSIS_PATHS:
+        attachment = scope["type"] == "http" and bool(re.fullmatch(r"/api/notes/[A-Za-z0-9_-]{1,120}/video", scope["path"]))
+        if scope["type"] != "http" or scope["method"] != "POST" or (scope["path"] not in ANALYSIS_PATHS and not attachment):
             return await self.app(scope, receive, send)
         headers = dict(scope.get("headers", []))
         try:
@@ -253,7 +254,7 @@ class AnalysisMiddleware:
         token = _context.set(job)
         started_response = False
         received = 0
-        is_video = scope["path"] == "/api/local/video-analyze"
+        is_video = scope["path"] == "/api/local/video-analyze" or attachment
         # Allow only small multipart framing overhead in addition to the file limit.
         body_limit = MAX_LOCAL_VIDEO_BYTES + 64 * 1024
         receive_task = None

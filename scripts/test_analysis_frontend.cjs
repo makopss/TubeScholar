@@ -25,8 +25,9 @@ function setup(fetch) {
     setAnalysisRunning: value => states.push(value),
     setAnalysisStep: () => {}, setSubtitles: () => {}, applyLanguageState: () => {},
     renderMarkdownNote: () => {}, loadLibrary: () => {},
+    t: key => key,
   });
-  vm.runInContext(`let mediaGeneration = 0; let currentNoteId = null; let currentVideoId = null; let currentVideoInfo = {};
+  vm.runInContext(`let mediaGeneration = 0; let currentNoteId = null; let currentVideoId = null; let currentVideoInfo = {}; let currentSubtitles = [];
     ${helpers}\n${polling}`, context);
   return { context, states, calls, elements, poll: () => interval(), run: code => vm.runInContext(code, context) };
 }
@@ -91,4 +92,52 @@ test('checkpoint recovery cannot overwrite a newer media context', async () => {
   release({ ok: true, json: async () => ({ metadata: { video_id: 'old', subtitles: [] }, markdown: 'old' }) });
   await pending;
   assert.equal(env.run('currentNoteId'), null);
+});
+
+test('prompt copying requires supplied subtitles or a transcription for this exact selection', () => {
+  const env = setup(async () => ({ok: true}));
+  env.run('updateLocalActions();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, true);
+  env.elements.get('local-subtitle-input').files = [{name: 'sub.srt', size: 30, lastModified: 1}];
+  env.run('updateLocalActions();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, false);
+  env.elements.get('local-subtitle-input').files = [];
+  env.elements.get('local-video-input').files = [{name: 'one.mp4', size: 100, lastModified: 1}];
+  env.run('currentVideoInfo = {video_type: "local"}; currentSubtitles = [{start: 0, end: 2, text: "Actual dialogue"}]; rememberLocalTranscript();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, false);
+  env.elements.get('local-video-input').files[0].lastModified = 2;
+  env.run('updateLocalActions();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, true);
+});
+
+test('a saved note without timed subtitles cannot copy a prompt and other media cannot reuse local text', () => {
+  const env = setup(async () => ({ok: true}));
+  env.run('currentVideoInfo = {video_type: "local"}; currentSubtitles = [{text: "Summary"}]; rememberLocalTranscript();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, true);
+  env.run('currentSubtitles = [{start: 0, end: 2, text: "Speech"}]; rememberLocalTranscript(); mediaGeneration++; updateLocalActions();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, true);
+  env.run('currentVideoInfo = {video_type: "youtube"}; updateLocalActions();');
+  assert.equal(env.elements.get('local-prompt-btn').disabled, true);
+});
+
+test('saved local notes restore their own managed video or show reconnect after clearing old media', () => {
+  const env = setup(async () => ({ok: true}));
+  const events = [];
+  const player = {src: 'blob:previous-video', pause() { events.push('pause'); },
+    removeAttribute() { this.src = ''; }, load() { events.push('load'); }, classList: {add() {}}};
+  env.elements.set('local-video-player', player);
+  env.elements.set('youtube-player-placeholder', {style: {}});
+  env.elements.set('player', {classList: {add() {}}});
+  env.elements.set('local-video-reconnect', {classList: {remove() {events.push('reconnect');}}});
+  env.context.ytPlayer = {pauseVideo() {events.push('pause-youtube');}};
+  env.context.URL = {revokeObjectURL: url => events.push(url)};
+  env.context.initLocalVideoPlayer = url => events.push(url);
+  vm.runInContext('let isLocalVideo = false;\n' + source.slice(source.indexOf('function restoreLocalVideo'), source.indexOf('async function attachLocalVideo')), env.context);
+  env.run('restoreLocalVideo("legacy-note", {local_video_available: false});');
+  assert.equal(env.run('isLocalVideo'), true);
+  assert.equal(player.src, '');
+  assert.ok(events.includes('blob:previous-video'));
+  assert.ok(events.includes('reconnect'));
+  env.run('restoreLocalVideo("saved-note", {local_video_available: true, local_video: {filename: "managed.mp4"}});');
+  assert.equal(events.at(-1), '/api/notes/saved-note/video');
 });

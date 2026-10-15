@@ -25,6 +25,43 @@ let currentEngineTagInfo = null;
 let currentAbortController = null;
 let currentAnalysisJob = null;
 let maxLocalVideoBytes = null;
+let localPreparedTranscript = null;
+let localActionBusy = false;
+let currentLocalFile = null;
+let savedNoteRequest = 0;
+
+function localInputKey() {
+  return ["local-video-input", "local-subtitle-input"].map(id => {
+    const file = document.getElementById(id)?.files?.[0];
+    return file ? JSON.stringify([file.name, file.size, file.lastModified]) : "";
+  }).join("|");
+}
+
+function preparedLocalSubtitles() {
+  if (!localPreparedTranscript || localPreparedTranscript.generation !== mediaGeneration ||
+      localPreparedTranscript.inputKey !== localInputKey() || currentVideoInfo?.video_type !== "local") return [];
+  return currentSubtitles.filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end > s.start && String(s.text || "").trim());
+}
+
+function rememberLocalTranscript(inputKey = localInputKey()) {
+  if (currentVideoInfo?.video_type !== "local") return;
+  localPreparedTranscript = { generation: mediaGeneration, inputKey };
+  updateLocalActions();
+}
+
+function updateLocalActions() {
+  const supplied = document.getElementById("local-subtitle-input")?.files?.[0];
+  const video = document.getElementById("local-video-input")?.files?.[0];
+  const prepared = preparedLocalSubtitles().length > 0;
+  const busy = localActionBusy || !!currentAnalysisJob?.running;
+  const ready = !!supplied?.size || prepared;
+  const prompt = document.getElementById("local-prompt-btn");
+  const analyze = document.getElementById("local-analyze-btn");
+  if (prompt) prompt.disabled = busy || !ready;
+  if (analyze) analyze.disabled = busy || (!video && !supplied && !prepared);
+  const status = document.getElementById("local-prompt-status");
+  if (status) status.textContent = t(busy ? "local_prompt_busy" : ready ? "local_prompt_ready" : "local_prompt_waiting");
+}
 
 // Each request owns its controller, status polling and recovery context.
 function beginAnalysis() {
@@ -73,6 +110,7 @@ async function recoverAnalysisCheckpoint(job, state) {
     currentVideoId = note.metadata.video_id;
     currentVideoInfo = { ...currentVideoInfo, ...note.metadata };
     if (note.metadata.subtitles) setSubtitles(note.metadata.subtitles);
+    if (job.localInputKey !== undefined) rememberLocalTranscript(job.localInputKey);
     applyLanguageState(note.metadata);
     renderMarkdownNote(note.markdown, typeof t === "function" ? t("note_status_transcript_saved") : "자막 보관 완료 · 노트 재작성 가능", noteId);
     loadLibrary();
@@ -230,6 +268,8 @@ function escapeHtmlStr(str) {
 }
 
 function initYouTubePlayer(videoId, onReadyCallback) {
+  document.getElementById("local-video-reconnect")?.classList.add("hidden");
+  currentLocalFile = null;
   isLocalVideo = false;
   isKoreanContent = false;
   document.getElementById("local-video-player").classList.add("hidden");
@@ -264,6 +304,8 @@ function initYouTubePlayer(videoId, onReadyCallback) {
 }
 
 function initLocalVideoPlayer(videoFile) {
+  document.getElementById("local-video-reconnect")?.classList.add("hidden");
+  currentLocalFile = typeof videoFile === "string" ? null : videoFile;
   isLocalVideo = true;
   if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
     try { ytPlayer.pauseVideo(); } catch (e) {}
@@ -278,9 +320,38 @@ function initLocalVideoPlayer(videoFile) {
   if (localPlayer.src && localPlayer.src.startsWith("blob:")) {
     try { URL.revokeObjectURL(localPlayer.src); } catch (e) {}
   }
-  localPlayer.src = URL.createObjectURL(videoFile);
-  localPlayer.play();
+  localPlayer.src = typeof videoFile === "string" ? videoFile : URL.createObjectURL(videoFile);
+  localPlayer.play().catch(() => {});
   document.getElementById("player-controls").classList.remove("hidden");
+}
+
+function restoreLocalVideo(noteId, metadata) {
+  isLocalVideo = true;
+  currentLocalFile = null;
+  const player = document.getElementById("local-video-player");
+  player.pause();
+  if (player.src.startsWith("blob:")) URL.revokeObjectURL(player.src);
+  player.removeAttribute("src");
+  player.load();
+  document.getElementById("player").classList.add("hidden");
+  document.getElementById("youtube-player-placeholder").style.display = "none";
+  if (ytPlayer?.pauseVideo) { try { ytPlayer.pauseVideo(); } catch (e) {} }
+  if (metadata.local_video_available !== false && metadata.local_video) {
+    initLocalVideoPlayer(`/api/notes/${encodeURIComponent(noteId)}/video`);
+  } else {
+    player.classList.add("hidden");
+    document.getElementById("local-video-reconnect").classList.remove("hidden");
+  }
+}
+
+async function attachLocalVideo(noteId, file) {
+  await validateLocalVideoFile(file);
+  const body = new FormData();
+  body.append("video", file);
+  const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}/video`, { method: "POST", body });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.detail || t("local_video_attach_failed"));
+  return data.local_video;
 }
 
 function seekVideo(seconds) {
@@ -639,7 +710,7 @@ function updateRegenerateNoteButtonState() {
   }
 }
 
-async function regenerateStudyNote() {
+async function regenerateStudyNote(askConfirmation = true) {
   const originalMedia = mediaGeneration;
   if (!currentSubtitles || currentSubtitles.length === 0) {
     if (currentVideoId || currentNoteId) {
@@ -673,7 +744,7 @@ async function regenerateStudyNote() {
     ? t("confirm_regenerate_note", { lang: targetName }) 
     : `학습 노트를 '${targetName}' 언어로 다시 생성하시겠습니까?\n(Gemini API 호출이 발생합니다)`;
   
-  if (!confirm(confirmMsg)) return;
+  if (askConfirmation && !confirm(confirmMsg)) return;
 
   const regenBtn = document.getElementById("regenerate-note-btn");
   const origBtnContent = regenBtn ? regenBtn.innerHTML : "";
@@ -2582,6 +2653,7 @@ function stopAnalysisStatusPolling() {
 }
 
 function setAnalysisRunning(isRunning) {
+  updateLocalActions();
   const loadingOverlay = document.getElementById("loading-overlay");
   const headerCancelBtn = document.getElementById("header-cancel-btn");
   const submitBtn = document.getElementById("submit-btn");
@@ -2834,22 +2906,23 @@ async function loadLibrary() {
 }
 
 async function loadSingleSavedNote(noteIdOrVid) {
+  const requestId = ++savedNoteRequest;
+  const startingGeneration = mediaGeneration;
   try {
     const res = await fetch(`/api/notes/${noteIdOrVid}`);
     if (!res.ok) throw new Error(typeof t === "function" ? t("alert_note_load_error", { err: "404" }) : "노트를 불러올 수 없습니다.");
     const data = await res.json();
+    if (requestId !== savedNoteRequest || startingGeneration !== mediaGeneration) return;
 
     const gen = switchMediaContext(data.metadata.video_id, data.note_id);
 
     if (data.metadata.video_type !== 'local') {
       initYouTubePlayer(currentVideoId);
     } else {
-      // 로컬 영상 노트: 원본 파일이 없으므로 이전 영상 재생을 멈춤
-      if (ytPlayer && typeof ytPlayer.pauseVideo === 'function') {
-        try { ytPlayer.pauseVideo(); } catch (e) {}
-      }
-      const lp = document.getElementById("local-video-player");
-      if (lp) lp.pause();
+      restoreLocalVideo(data.note_id, data.metadata);
+      document.getElementById("local-video-input").value = "";
+      document.getElementById("local-subtitle-input").value = "";
+      document.getElementById("local-title-input").value = data.metadata.title || "";
     }
     displayVideoMetadata(data.metadata);
     renderMarkdownNote(data.markdown, { key: "note_status_saved" }, currentNoteId);
@@ -2984,9 +3057,12 @@ async function loadSingleSavedNote(noteIdOrVid) {
         }).catch(() => {});
     }
     
+    if (meta.video_type === "local") rememberLocalTranscript();
+    else updateLocalActions();
     // 편집 모드 종료 상태로 복원
     if (isEditing) toggleEditor(false);
   } catch (err) {
+    if (requestId !== savedNoteRequest || startingGeneration !== mediaGeneration) return;
     alert(typeof t === "function" ? t("alert_note_load_error", { err: err.message }) : ("노트 로드 실패: " + err.message));
   }
 }
@@ -3173,7 +3249,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (hasLocalVideo || hasLocalSub) {
         handleLocalFileAction(currentMode !== "gemini");
       } else if (isLocalVideo && currentSubtitles && currentSubtitles.length > 0) {
-        regenerateStudyNote();
+        handleLocalFileAction(currentMode !== "gemini");
       }
       return;
     }
@@ -3231,7 +3307,7 @@ document.addEventListener("DOMContentLoaded", () => {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ 
-            url: currentVideoInfo?.url || document.getElementById("url-input")?.value?.trim() || "",
+            url: isLocalVideo ? "" : (currentVideoInfo?.url || document.getElementById("url-input")?.value?.trim() || ""),
             video_id: currentVideoId || currentVideoInfo?.video_id || null,
             channel: currentVideoInfo?.channel || "",
             video_type: currentVideoInfo?.video_type || (isLocalVideo ? "local" : "youtube"),
@@ -3268,7 +3344,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 인라인 붙여넣기 적용 버튼
   document.getElementById("inline-paste-apply-btn").addEventListener("click", async () => {
-    const url = document.getElementById("url-input").value.trim() || (currentVideoInfo ? currentVideoInfo.url : "");
+    const saveGeneration = mediaGeneration;
+    const localFileToRetain = isLocalVideo ? currentLocalFile : null;
+    const url = isLocalVideo ? "" : (document.getElementById("url-input").value.trim() || (currentVideoInfo ? currentVideoInfo.url : ""));
     const rawInput = document.getElementById("inline-paste-textarea").value.trim();
     if (!rawInput) {
       alert(typeof t === "function" ? t("alert_paste_empty") : "붙여넣을 마크다운 내용을 입력해 주세요.");
@@ -3296,6 +3374,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || "저장 실패");
+      if (data.video_info?.video_type === "local" && localFileToRetain) {
+        data.video_info.local_video = await attachLocalVideo(data.note_id, localFileToRetain);
+      }
+      if (!isCurrentMedia(saveGeneration)) { loadLibrary(); return; }
       if (typeof resetTtsPlayerState === "function") {
         resetTtsPlayerState("note");
       } else {
@@ -3346,6 +3428,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 로컬 비디오 모달 열기/닫기 및 커스텀 파일 인풋 라벨 동기화
   function updateLocalFileInputLabels() {
+    updateLocalActions();
     const localVideoInput = document.getElementById("local-video-input");
     const localVideoFileName = document.getElementById("local-video-file-name");
     const localSubInput = document.getElementById("local-subtitle-input");
@@ -3384,239 +3467,142 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("local-file-modal").classList.add("hidden");
   });
 
-  // 자막 없는 로컬 비디오 -> 영상에서 오디오 추출 후 Groq Whisper / Gemini 멀티모달 직접 분석 공통 함수
-  async function runLocalAudioDirectAnalysis(videoFile, customTitle) {
-    if (!videoFile) {
-      alert(typeof t === "function" ? t("alert_select_local_video") : "분석할 로컬 비디오 파일(.mp4, .webm, .mkv 등)을 먼저 선택해 주세요.");
-      return;
-    }
-
-    try {
-      await validateLocalVideoFile(videoFile);
-    } catch (err) {
-      alert(err.message);
-      return;
-    }
-
-    const title = (customTitle && customTitle.trim()) || videoFile.name.replace(/\.[^/.]+$/, "");
-
-    // 로컬 비디오 플레이어 바로 준비 및 재생 (새 컨텍스트)
-    const gen = switchMediaContext(localMediaKey(videoFile, title), null);
-    isKoreanContent = false;
-    isSameLanguage = false;
-    currentTracks = [];
-    currentSourceLang = null;
-    currentTranslationSource = null;
-    renderSourceLangSelect();
-    setSubtitles([]);
-    initLocalVideoPlayer(videoFile);
-    displayVideoMetadata({
-      title: title,
-      channel: typeof t === "function" ? t("local_channel_audio") : "내 로컬 PC 영상 (음성 직접 청취)",
-      video_type: "local",
-      duration_str: typeof t === "function" ? t("local_audio_duration_str") : "로컬 음성 분석"
-    });
-
-    document.getElementById("local-file-modal").classList.add("hidden");
-
-    const loadingTitle = document.getElementById("loading-title");
-    const loadingDesc = document.getElementById("loading-desc");
-
-    const analysisJob = beginAnalysis();
-    setAnalysisRunning(true);
-
-    setAnalysisStep(1);
-    loadingTitle.textContent = typeof t === "function" ? t("loading_local_step1_title") : "1단계: 영상에서 오디오 추출 중...";
-    loadingDesc.textContent = typeof t === "function" ? t("loading_local_step1_desc") : "FFmpeg를 통해 영상에서 고압축 음성 트랙(MP3)을 신속하게 추출하고 있습니다.";
-
-    const formData = new FormData();
-    formData.append("video", videoFile);
-    formData.append("title", title);
-    formData.append("target_lang", currentTargetLang);
-    formData.append("note_target_lang", currentNoteTargetLang);
-
-    try {
-      const res = await analysisFetch(analysisJob, "/api/local/video-analyze", {
-        method: "POST",
-        body: formData
-      });
-      let data = null;
-      try {
-        data = await res.json();
-      } catch (e) {}
-      if (!res.ok) throw new Error((data && data.detail) || "로컬 영상 음성 분석 실패");
-      if (!isAnalysisCurrent(analysisJob) || !isCurrentMedia(gen)) return;
-
-      analysisJob.resultApplied = true;
-      setAnalysisStep(3);
-      loadingTitle.textContent = typeof t === "function" ? t("loading_local_step3_title") : "3단계: 노트 렌더링 및 보관함 저장 완료!";
-
-      if (data.video_info && data.video_info.video_id) {
-        currentVideoId = data.video_info.video_id;
-        if (currentVideoInfo) currentVideoInfo.video_id = data.video_info.video_id;
-      }
-      renderMarkdownNote(data.markdown, { key: "note_status_model_prefix", params: { model: data.model_used } }, data.note_id);
-      if (data.subtitles) {
-        setSubtitles(data.subtitles);
-      }
-      applyLanguageState(data);
-      if (typeof restoreSavedAudiobookForNote === "function") {
-        restoreSavedAudiobookForNote(data);
-      }
-      loadLibrary();
-      if (data.warning) alert(typeof t === "function" && data.subtitle_status === "unavailable" ? t("alert_audio_subtitles_unavailable") : data.warning);
-    } catch (e) {
-      if (e.name === 'AbortError' || !isAnalysisCurrent(analysisJob)) return;
-      alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
-    } finally {
-      finishAnalysis(analysisJob);
-    }
-  }
-
-  // 로컬 파일 처리 (Gemini 분석 또는 프롬프트 복사)
+  // One action chooses supplied subtitles, prepared transcription, or audio automatically.
   async function handleLocalFileAction(isPromptOnly) {
+    if (localActionBusy || currentAnalysisJob?.running) return;
+    if (isSubtitleEditMode) flushSubtitleEditInputs();
     const videoFile = document.getElementById("local-video-input").files[0];
     const subFile = document.getElementById("local-subtitle-input").files[0];
-    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : (typeof t === "function" ? t("default_local_video_title") : "로컬 비디오"));
-
-    if (!subFile) {
-      // 자막 파일이 비어있지만 비디오 파일이 선택되어 있고 Gemini 분석 버튼([⚡ 자막으로 분석])을 누른 경우,
-      // 모달 안내문("자막이 없으면 비워두세요")과 일치하도록 자동으로 음성 직접 분석 플로우로 연결합니다.
-      if (!isPromptOnly && videoFile) {
-        await runLocalAudioDirectAnalysis(videoFile, title);
+    const prepared = preparedLocalSubtitles();
+    const inputKey = localInputKey();
+    const inputGeneration = mediaGeneration;
+    const inputTitle = document.getElementById("local-title-input").value.trim();
+    const title = inputTitle || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : prepared.length ? currentVideoInfo.title : subFile?.name.replace(/\.[^/.]+$/, "")) || t("default_local_video_title");
+    if (isPromptOnly && !subFile && !prepared.length) return;
+    if (!isPromptOnly && !videoFile && !subFile && !prepared.length) return;
+    if (!isPromptOnly && prepared.length && !subFile && currentNoteId) {
+      document.getElementById("local-file-modal").classList.add("hidden");
+      await regenerateStudyNote(false);
+      return;
+    }
+    localActionBusy = true;
+    updateLocalActions();
+    let job = null;
+    try {
+      if (videoFile) await validateLocalVideoFile(videoFile);
+      const subText = subFile ? await subFile.text() : prepared.length
+        ? buildClientSubtitleDownload(prepared, "srt", "original", title, "", 0).content : null;
+      if (subText !== null && !subText.trim()) throw new Error(t("local_empty_subtitles"));
+      // File reads/config requests may finish after the selection or media changed.
+      if (inputKey !== localInputKey() || !isCurrentMedia(inputGeneration)) return;
+      let gen = mediaGeneration;
+      if (!prepared.length || subFile) {
+        gen = switchMediaContext(localMediaKey(videoFile, title), null);
+        currentTracks = [];
+        currentSourceLang = null;
+        currentTranslationSource = null;
+        isKoreanContent = false;
+        isSameLanguage = false;
+        renderSourceLangSelect();
+        setSubtitles([]);
+        if (videoFile) initLocalVideoPlayer(videoFile);
+        else restoreLocalVideo(null, {});
+        displayVideoMetadata({title, video_type: "local", channel: t("local_channel_name"), duration_str: t("local_duration_str")});
+      }
+      if (isPromptOnly) {
+        const res = await fetch("/api/local/prompt", {
+          method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({title, subtitle_text: subText, target_lang: currentTargetLang, note_target_lang: currentNoteTargetLang})
+        });
+        const data = await res.json();
+        if (!res.ok || !data.prompt) throw new Error(data.detail || t("local_empty_subtitles"));
+        if (!isCurrentMedia(gen) || inputKey !== localInputKey()) return;
+        if (!currentNoteId) {
+          currentVideoId = data.video_info.video_id;
+          currentVideoInfo.video_id = currentVideoId;
+        }
+        setSubtitles(data.subtitles || []);
+        applyLanguageState(data);
+        rememberLocalTranscript(inputKey);
+        await navigator.clipboard.writeText(data.prompt);
+        if (!isCurrentMedia(gen)) return;
+        document.getElementById("local-file-modal").classList.add("hidden");
+        switchMode("subscription");
+        alert(t("alert_local_prompt_copied"));
         return;
       }
-      alert(typeof t === "function" ? t("alert_select_local_sub") : "자막 파일(.srt 또는 .vtt)을 선택해 주세요.");
-      return;
-    }
-
-    const subText = await subFile.text();
-    if (!subText.trim()) {
-      alert("자막 파일이 비어 있습니다.");
-      return;
-    }
-
-    // 로컬 파일용 새 컨텍스트 (이전 YouTube 영상 ID·싱크값·번역이 섞이지 않도록)
-    const gen = switchMediaContext(localMediaKey(videoFile, title), null);
-    isKoreanContent = false;
-    isSameLanguage = false;
-    currentTracks = [];
-    currentSourceLang = null;
-    currentTranslationSource = null;
-    renderSourceLangSelect();
-    setSubtitles([]);
-
-    if (videoFile) {
-      initLocalVideoPlayer(videoFile);
-      displayVideoMetadata({
-        title: title,
-        channel: typeof t === "function" ? t("local_channel_name") : "내 로컬 PC 파일",
-        video_type: "local",
-        duration_str: typeof t === "function" ? t("local_duration_str") : "로컬 영상"
-      });
-    }
-
-    if (!videoFile) {
-      isLocalVideo = true;
-      if (ytPlayer && typeof ytPlayer.pauseVideo === "function") ytPlayer.pauseVideo();
-      const lp = document.getElementById("local-video-player");
-      if (lp) { lp.pause(); lp.removeAttribute("src"); lp.load(); }
-      displayVideoMetadata({ title, video_type: "local", channel: "Local Video", duration_str: "자막 파일" });
-    }
-
-    document.getElementById("local-file-modal").classList.add("hidden");
-
-    if (isPromptOnly) {
-      // 구독 AI 프롬프트 복사
-      try {
-        const res = await fetch("/api/local/prompt", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title,
-            subtitle_text: subText,
-            target_lang: currentTargetLang,
-            note_target_lang: currentNoteTargetLang
-          })
-        });
-        const d = await res.json();
-        if (isCurrentMedia(gen)) {
-          if (d.video_info && d.video_info.video_id) {
-            currentVideoId = d.video_info.video_id;
-            if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
-          }
-          if (d.subtitles) {
-            setSubtitles(d.subtitles);
-            applyLanguageState(d);
-          }
-        }
-        await navigator.clipboard.writeText(d.prompt);
-        switchMode("subscription");
-        alert(typeof t === "function" ? t("alert_local_prompt_copied") : "✨ 로컬 자막으로 완성된 심화 프롬프트가 복사되었습니다!\nChatGPT/Claude에 붙여넣은 뒤 우측 '답변 붙여넣기'에 넣어주세요.");
-      } catch (e) {
-        alert(typeof t === "function" ? t("alert_prompt_copy_error", { err: e.message }) : ("프롬프트 복사 오류: " + e.message));
-      }
-    } else {
-      // Gemini 분석
-      const loadingTitle = document.getElementById("loading-title");
-      const loadingDesc = document.getElementById("loading-desc");
-      const analysisJob = beginAnalysis();
+      document.getElementById("local-file-modal").classList.add("hidden");
+      job = beginAnalysis();
+      job.localInputKey = inputKey;
       setAnalysisRunning(true);
-      setAnalysisStep(2);
-      if (loadingTitle) {
-        loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: 로컬 자막 기반 Gemini 지식 노트 생성 중...";
+      setAnalysisStep(subText === null ? 1 : 2);
+      document.getElementById("loading-title").textContent = t(subText === null ? "loading_local_step1_title" : "loading_local_step2_title");
+      let url, options;
+      if (videoFile) {
+        const body = new FormData();
+        body.append("video", videoFile);
+        body.append("title", title);
+        body.append("target_lang", currentTargetLang);
+        body.append("note_target_lang", currentNoteTargetLang);
+        if (subText !== null) body.append("subtitle_text", subText);
+        url = "/api/local/video-analyze";
+        options = {method: "POST", body};
+      } else {
+        url = "/api/local/analyze";
+        options = {method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({title, subtitle_text: subText, target_lang: currentTargetLang, note_target_lang: currentNoteTargetLang})};
       }
-      if (loadingDesc) {
-        loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "로컬 자막을 분석하여 Gemini AI가 심층 학습 노트를 구성합니다.";
-      }
-      try {
-        const res = await analysisFetch(analysisJob, "/api/local/analyze", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: title,
-            subtitle_text: subText,
-            engine: "gemini",
-            target_lang: currentTargetLang,
-            note_target_lang: currentNoteTargetLang
-          })
-        });
-        let d = null;
-        try {
-          d = await res.json();
-        } catch (e) {}
-        if (!res.ok) throw new Error((d && d.detail) || "분석 실패");
-        if (!isAnalysisCurrent(analysisJob) || !isCurrentMedia(gen)) return;
-        analysisJob.resultApplied = true;
-        setAnalysisStep(3);
-        if (d.video_info && d.video_info.video_id) {
-          currentVideoId = d.video_info.video_id;
-          if (currentVideoInfo) currentVideoInfo.video_id = d.video_info.video_id;
-        }
-        renderMarkdownNote(d.markdown, `Gemini: ${d.model_used}`, d.note_id);
-        if (d.subtitles) setSubtitles(d.subtitles);
-        applyLanguageState(d);
-        if (typeof restoreSavedAudiobookForNote === "function") {
-          restoreSavedAudiobookForNote(d);
-        }
-        loadLibrary();
-      } catch (e) {
-        if (e.name === 'AbortError' || !isAnalysisCurrent(analysisJob)) return;
-        alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
-      } finally {
-      finishAnalysis(analysisJob);
-      }
+      const res = await analysisFetch(job, url, options);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail || t("local_analysis_failed"));
+      if (!isAnalysisCurrent(job) || !isCurrentMedia(gen)) return;
+      job.resultApplied = true;
+      currentVideoId = data.video_info.video_id;
+      displayVideoMetadata(data.video_info);
+      renderMarkdownNote(data.markdown, {key: "note_status_model_prefix", params: {model: data.model_used}}, data.note_id);
+      setSubtitles(data.subtitles || []);
+      applyLanguageState(data);
+      rememberLocalTranscript(inputKey);
+      restoreSavedAudiobookForNote(data);
+      loadLibrary();
+      if (data.warning) alert(data.subtitle_status === "unavailable" ? t("alert_audio_subtitles_unavailable") : data.warning);
+    } catch (err) {
+      if (err.name !== "AbortError" && (!job || isAnalysisCurrent(job))) alert(t("alert_analysis_error", {err: err.message}));
+    } finally {
+      localActionBusy = false;
+      if (job) finishAnalysis(job);
+      updateLocalActions();
     }
   }
 
   document.getElementById("local-analyze-btn").addEventListener("click", () => handleLocalFileAction(false));
   document.getElementById("local-prompt-btn").addEventListener("click", () => handleLocalFileAction(true));
-
-  // 자막 없는 로컬 비디오 -> 영상에서 오디오 추출 후 Gemini 멀티모달 직접 분석
-  document.getElementById("local-audio-direct-btn").addEventListener("click", async () => {
-    const videoFile = document.getElementById("local-video-input").files[0];
-    const title = document.getElementById("local-title-input").value.trim() || (videoFile ? videoFile.name.replace(/\.[^/.]+$/, "") : "");
-    await runLocalAudioDirectAnalysis(videoFile, title);
+  document.getElementById("local-video-reconnect-btn").addEventListener("click", () => {
+    if (!currentAnalysisJob?.running) document.getElementById("local-video-reconnect-input").click();
+  });
+  document.getElementById("local-video-reconnect-input").addEventListener("change", async event => {
+    const file = event.target.files[0];
+    const noteId = currentNoteId;
+    const gen = mediaGeneration;
+    event.target.value = "";
+    if (!file || !noteId || currentVideoInfo?.video_type !== "local" || currentAnalysisJob?.running || localActionBusy) return;
+    localActionBusy = true;
+    const button = document.getElementById("local-video-reconnect-btn");
+    button.disabled = true;
+    updateLocalActions();
+    try {
+      const reference = await attachLocalVideo(noteId, file);
+      if (!isCurrentMedia(gen) || currentNoteId !== noteId) return;
+      currentVideoInfo.local_video = reference;
+      currentVideoInfo.local_video_available = true;
+      initLocalVideoPlayer(`/api/notes/${encodeURIComponent(noteId)}/video`);
+    } catch (err) {
+      alert(t("local_video_attach_failed") + " " + err.message);
+    } finally {
+      button.disabled = false;
+      localActionBusy = false;
+      updateLocalActions();
+    }
   });
 
   // 플레이어 버튼

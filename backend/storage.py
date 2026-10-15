@@ -7,6 +7,9 @@ import shutil
 import threading
 import functools
 import uuid
+import hashlib
+import tempfile
+from contextlib import nullcontext
 from typing import List, Dict, Any, Optional
 
 from config import (
@@ -16,6 +19,8 @@ from config import (
     TRANSLATIONS_DIR,
     PROMPTS_DIR,
     AUDIO_DIR,
+    VIDEOS_DIR,
+    MAX_LOCAL_VIDEO_BYTES,
     LIBRARY_FILE,
     LIBRARY_BACKUP,
 )
@@ -51,6 +56,81 @@ def _require_safe_note_id(note_id: str):
         raise ValueError(f"허용되지 않는 노트 ID 형식입니다: {note_id!r}")
 
 
+def local_video_path(reference):
+    """Only content-addressed files inside the managed video directory are readable."""
+    name = (reference or {}).get("filename", "") if isinstance(reference, dict) else ""
+    if not isinstance(name, str) or not re.fullmatch(r"[0-9a-f]{64}\.[a-z0-9]{1,8}", name):
+        return None
+    root = os.path.realpath(VIDEOS_DIR)
+    path = os.path.realpath(os.path.join(root, name))
+    if os.path.commonpath([root, path]) != root or not os.path.isfile(path):
+        return None
+    return path
+
+
+def _remove_unused_video(reference, notes):
+    if reference and not any((m.get("local_video") or {}).get("filename") == reference.get("filename")
+                             for m in notes.values() if isinstance(m, dict)):
+        path = local_video_path(reference)
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
+@_locked
+def attach_note_video(note_id, stream, original_name, check=lambda: None, commit=nullcontext):
+    """Atomically retain a bounded, deduplicated video and link it to a local note."""
+    _require_safe_note_id(note_id)
+    lib = load_library()
+    meta = lib.get("notes", {}).get(note_id)
+    if not meta or meta.get("video_type") != "local":
+        raise ValueError("로컬 노트를 찾을 수 없습니다.")
+    ensure_dirs()
+    ext = os.path.splitext(os.path.basename(original_name or ""))[1].lower()
+    if ext not in {".mp4", ".webm", ".mkv", ".mov", ".avi", ".m4v", ".mpeg", ".mpg", ".ts", ".m2ts", ".mts", ".ogv", ".ogg", ".wav", ".mp3", ".m4a", ".flac", ".aac"}:
+        raise ValueError("지원되는 영상 또는 음성 파일을 선택해 주세요.")
+    temp_path = None
+    destination = None
+    created = False
+    try:
+        digest, size = hashlib.sha256(), 0
+        with tempfile.NamedTemporaryFile(dir=VIDEOS_DIR, suffix=".upload", delete=False) as output:
+            temp_path = output.name
+            while True:
+                check()
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                size += len(chunk)
+                if size > MAX_LOCAL_VIDEO_BYTES:
+                    raise ValueError("영상이 업로드 허용 용량을 초과했습니다.")
+                digest.update(chunk)
+                output.write(chunk)
+        if not size:
+            raise ValueError("영상 파일이 비어 있습니다.")
+        with commit():
+            check()
+            reference = {"filename": digest.hexdigest() + ext, "original_name": os.path.basename(original_name or "video"), "size": size}
+            destination = os.path.join(VIDEOS_DIR, reference["filename"])
+            if not os.path.exists(destination):
+                os.replace(temp_path, destination)
+                created = True
+            old = meta.get("local_video")
+            meta["local_video"] = reference
+            save_library(lib)
+            _remove_unused_video(old, lib["notes"])
+            return reference
+    except Exception:
+        if created and destination:
+            os.remove(destination)
+        raise
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.remove(temp_path)
+
+
 def ensure_dirs():
     """데이터 및 노트 저장 디렉토리를 확인하고 생성합니다."""
     os.makedirs(NOTES_DIR, exist_ok=True)
@@ -58,6 +138,7 @@ def ensure_dirs():
     os.makedirs(TRANSLATIONS_DIR, exist_ok=True)
     os.makedirs(PROMPTS_DIR, exist_ok=True)
     os.makedirs(AUDIO_DIR, exist_ok=True)
+    os.makedirs(VIDEOS_DIR, exist_ok=True)
     if not os.path.exists(LIBRARY_FILE) and not os.path.exists(LIBRARY_BACKUP):
         _atomic_write_json(LIBRARY_FILE, {"notes": {}})
 
@@ -533,10 +614,15 @@ created_at: "{created_time}"
         "created_at": existing_meta.get("created_at") or created_time,
         "updated_at": created_time,
     }
-    for k in ("source_lang", "original_lang", "target_lang", "note_target_lang", "translation_source", "translation_track", "audiobook", "subtitle_audiobook", "subtitle_status"):
+    for k in ("source_lang", "original_lang", "target_lang", "note_target_lang", "translation_source", "translation_track", "audiobook", "subtitle_audiobook", "subtitle_status", "local_video"):
         if existing_meta.get(k) is not None:
             meta[k] = existing_meta[k]
     meta.update(_clean_lang_meta(lang_meta))
+    if meta["video_type"] == "local" and not meta.get("local_video"):
+        for sibling in lib["notes"].values():
+            if sibling.get("video_type") == "local" and sibling.get("video_id") == video_id and local_video_path(sibling.get("local_video")):
+                meta["local_video"] = dict(sibling["local_video"])
+                break
     
     # 번역된 자막이 포함되어 있으면 translations 및 비디오 글로벌 캐시에도 보관
     t_lang = (meta.get("target_lang") or "ko").lower()
@@ -1041,6 +1127,7 @@ def delete_note(note_id: str) -> bool:
     if note_id in lib.get("notes", {}):
         deleted_meta = lib["notes"].pop(note_id, None)
         save_library(lib)
+        _remove_unused_video((deleted_meta or {}).get("local_video"), lib["notes"])
 
     # 1. 마크다운 노트 파일 삭제
     file_path = os.path.join(NOTES_DIR, f"{note_id}.md")

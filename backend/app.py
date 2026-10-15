@@ -9,6 +9,7 @@ import tempfile
 import shutil
 import logging
 import uuid
+import mimetypes
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
@@ -63,7 +64,7 @@ from analyzer import (
 from storage import (
     save_note as _save_note, get_note, list_saved_notes, delete_note, update_note,
     update_note_subtitles, update_note_audiobook, is_safe_note_id, get_cached_subtitles, save_translation_cache,
-    clean_ai_citation_artifacts
+    clean_ai_citation_artifacts, attach_note_video, local_video_path
 )
 from prompt_loader import list_available_templates, get_user_prompts_dir
 from languages import TARGET_LANGUAGES, DEFAULT_TARGET_LANG, language_name, normalize_target_lang, is_same_language
@@ -458,6 +459,15 @@ def _raise_if_cancelled(llm_result: Optional[Dict[str, Any]] = None):
 
 @app.post("/api/local/analyze")
 def analyze_local_video(req: LocalAnalyzeRequest):
+    return _analyze_local_subtitles(req)
+
+
+def _retain_video(note_id, source_path, original_name):
+    with open(source_path, "rb") as stream:
+        return attach_note_video(note_id, stream, original_name, check_analysis, analysis_commit)
+
+
+def _analyze_local_subtitles(req, source_path=None, original_name=None):
     """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
     reset_analysis_cancel()
     update_analysis_state("processing", event="extracting_local", message="로컬 자막 파싱 및 분석 준비 중...", step=1)
@@ -481,6 +491,8 @@ def analyze_local_video(req: LocalAnalyzeRequest):
         "source_lang": src_lang, "target_lang": target, "note_target_lang": note_target,
         "translation_source": trans_source,
     })
+    if source_path:
+        video_info["local_video"] = _retain_video(checkpoint_id, source_path, original_name)
     update_analysis_state("processing", event="transcript_ready", message="자막을 보관했습니다. 학습 노트 생성 중...", step=2)
     llm_result = generate_study_note_gemini(
         video_info=video_info,
@@ -529,7 +541,8 @@ def analyze_local_video_audio(
     video: UploadFile = File(...),
     title: Optional[str] = Form(None),
     target_lang: Optional[str] = Form(None),
-    note_target_lang: Optional[str] = Form(None)
+    note_target_lang: Optional[str] = Form(None),
+    subtitle_text: Optional[str] = Form(None)
 ):
     """자막이 없는 로컬 영상 파일에서 오디오를 추출하여 Gemini로 타임스탬프 학습 노트 생성
     (일반 def: FastAPI 가 작업 스레드에서 실행하므로 분석 중에도 다른 요청이 멈추지 않음)"""
@@ -575,6 +588,11 @@ def analyze_local_video_audio(
         # Release Starlette's spool as soon as the extraction input is ready.
         video.file.close()
         _raise_if_cancelled()
+        if subtitle_text is not None:
+            return _analyze_local_subtitles(LocalAnalyzeRequest(
+                title=vid_title, subtitle_text=subtitle_text, target_lang=target,
+                note_target_lang=note_target,
+            ), temp_video_path, video.filename)
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [
             ffmpeg_exe, "-nostdin", "-y",
@@ -631,6 +649,7 @@ def analyze_local_video_audio(
                 "source_lang": src_lang, "target_lang": target, "note_target_lang": note_target,
                 "translation_source": "same" if is_same_language(src_lang, target) else None,
             })
+            video_info["local_video"] = _retain_video(checkpoint_id, temp_video_path, video.filename)
             update_analysis_state("processing", event="transcript_ready", message="전사 자막을 보관했습니다. 학습 노트 생성 중...", step=2)
             llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=note_target)
             _raise_if_cancelled(llm_result)
@@ -682,6 +701,9 @@ def analyze_local_video_audio(
             }
         )
         subtitles = save_res["metadata"].get("subtitles", subtitles)
+        if not checkpoint_id:
+            set_checkpoint(save_res["note_id"])
+            video_info["local_video"] = _retain_video(save_res["note_id"], temp_video_path, video.filename)
         return {
             "success": True,
             "subtitle_status": subtitle_status,
@@ -1206,7 +1228,34 @@ def get_single_note(note_id: str):
     note = get_note(note_id)
     if not note:
         raise HTTPException(status_code=404, detail="저장된 학습 노트를 찾을 수 없습니다.")
+    if note["metadata"].get("video_type") == "local":
+        note["metadata"]["local_video_available"] = bool(local_video_path(note["metadata"].get("local_video")))
     return note
+
+
+@app.get("/api/notes/{note_id}/video")
+def get_saved_video(note_id: str):
+    note = get_note(note_id) if is_safe_note_id(note_id) else None
+    path = local_video_path(note["metadata"].get("local_video")) if note and note["metadata"].get("video_type") == "local" else None
+    if not path:
+        raise HTTPException(404, "보관된 영상이 없습니다. 원본 파일을 다시 연결해 주세요.")
+    mime = mimetypes.guess_type(path)[0] or "application/octet-stream"
+    if not mime.startswith(("video/", "audio/")):
+        mime = "application/octet-stream"
+    return FileResponse(path, media_type=mime, headers={"Cache-Control": "private, no-store", "X-Content-Type-Options": "nosniff"})
+
+
+@app.post("/api/notes/{note_id}/video")
+def reconnect_saved_video(note_id: str, video: UploadFile = File(...)):
+    if not is_safe_note_id(note_id):
+        raise HTTPException(400, "잘못된 노트 ID입니다.")
+    try:
+        reference = attach_note_video(note_id, video.file, video.filename, check_analysis, analysis_commit)
+        return {"success": True, "local_video": reference}
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    finally:
+        video.file.close()
 
 @app.put("/api/notes/{note_id}")
 def update_single_note(note_id: str, req: UpdateNoteRequest):

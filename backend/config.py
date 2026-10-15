@@ -46,6 +46,7 @@ SUBTITLES_DIR = os.path.join(DATA_DIR, "subtitles")
 TRANSLATIONS_DIR = os.path.join(DATA_DIR, "translations")
 PROMPTS_DIR = os.path.join(DATA_DIR, "prompts")
 AUDIO_DIR = os.path.join(DATA_DIR, "audio")
+VIDEOS_DIR = os.path.join(DATA_DIR, "videos")
 
 LIBRARY_FILE = os.path.join(DATA_DIR, "library.json")
 LIBRARY_BACKUP = LIBRARY_FILE + ".bak"

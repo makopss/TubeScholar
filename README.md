@@ -8,6 +8,18 @@
 
 무료 Google Gemini API는 물론, 이미 구독 중인 ChatGPT Plus / Claude Pro 등의 외부 LLM과도 유연하게 연동되며, 모든 학습 결과는 내 PC에 표준 마크다운(`.md`)으로 영구 보관되어 노션(Notion) 및 옵시디언(Obsidian)과 완벽하게 호환됩니다.
 
+## 🆕 v1.2.3 — 로컬 분석 통합과 영상 보관
+
+- **분석 버튼 통합**: ‘분석 진행’ 하나로 첨부 자막 분석과 음성 분석을 자동 선택합니다.
+- **음성 처리 경로**: 자막이 있으면 Gemini에 전달합니다. 자막이 없으면 Groq 키가 등록된 경우 Groq 전사 후 Gemini가 노트를 생성하며, Groq 미등록 또는 전사 실패 시 Gemini가 추출한 음성을 분석합니다. 생성된 SRT가 없거나 유효하지 않으면 별도로 안내합니다.
+- **프롬프트 복사**: 자막이 준비되면 활성화됩니다. 첨부 SRT/VTT는 노트 생성 전에도 사용할 수 있고, 음성에서 얻은 자막은 보관된 전사를 재사용합니다.
+- **영상과 노트 함께 열기**: 분석한 원본 영상을 앱 데이터의 `videos/`에 보관합니다. 원본을 이동하거나 앱을 다시 실행해도 보관함에서 영상·자막·노트가 함께 열립니다. 구버전 노트는 **원본 영상 연결**을 한 번 선택해 주세요.
+- 같은 파일을 여러 노트에서 공유하며 마지막 연결 노트 삭제 시 앱에 보관된 사본도 정리합니다. 원본 파일은 변경하지 않습니다. 사본은 영상 크기만큼 저장 공간을 사용하며, 재생 가능 여부는 브라우저의 코덱 지원에 따릅니다.
+
+![로컬 분석 화면](docs/images/local-analysis-modal.jpg)
+
+[릴리즈 및 설치 파일](https://github.com/makopss/TubeScholar/releases/tag/v1.2.3) · [분석 처리·검증 문서](docs/local-analysis.md)
+
 ## 🆕 v1.2.2 — 로컬 영상 분석 안정화
 
 - **중단·새 작업 전환 개선**: 작업별 취소와 진행 상태를 분리하여 이전 분석 결과가 새 화면에 섞이지 않도록 수정했습니다.
@@ -92,7 +104,7 @@
 ## 🚀 빠른 시작 방법
 
 ### A. Windows 설치 프로그램 사용 (일반 사용자 추천)
-[TubeScholar-Setup-v1.2.2.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.2/TubeScholar-Setup-v1.2.2.exe)를 다운로드하여 실행하시면 Python 설치 없이 사용할 수 있습니다. 같은 릴리즈에 SHA-256 체크섬 파일도 제공합니다.
+[TubeScholar-Setup-v1.2.3.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.3/TubeScholar-Setup-v1.2.3.exe)를 다운로드하여 실행하시면 Python 설치 없이 사용할 수 있습니다. 같은 릴리즈에 SHA-256 체크섬 파일도 제공합니다.
 
 ### B. 소스코드 직접 실행 (개발자용)
 1. **저장소 클론**:

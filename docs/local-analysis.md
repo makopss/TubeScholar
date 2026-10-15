@@ -1,5 +1,36 @@
 # Local analysis reliability
 
+## Local input and saved video
+
+The local dialog has two actions: **Start Analysis** and **Copy Prompt**. Supplied
+SRT/VTT is analyzed directly. Without a subtitle file, Groq transcribes extracted
+audio when a Groq key is configured, then Gemini writes the note. If Groq is not
+configured or transcription fails, Gemini analyzes the extracted audio and
+attempts to produce dialogue SRT alongside the note. Missing SRT keeps prompt
+copying disabled; a generated note alone is not a transcript.
+
+Copy Prompt requires a supplied subtitle file or a valid timed transcription for
+the selected video/current saved note. It does not require successful note
+generation. Imported subtitle files are validated when the prompt is requested;
+this operation does not call an AI API.
+
+Analyzed videos are retained under the app data's `videos/` directory. In an
+installed app this is `%LOCALAPPDATA%\TubeScholar\data\videos`. The app stores a
+copy, so moving/deleting the original file does not break the saved note. Files
+are addressed by SHA-256 and shared between notes; deleting the last linked note
+removes the managed copy. Disk usage is approximately the sum of retained unique
+video sizes. Browser-supported codecs are required for playback.
+
+Older releases deleted uploaded temporary files and did not retain the original
+path or a persistent browser file permission. That information cannot be recovered
+from an old note. Open it and choose **Reconnect Original Video** once; future
+loads restore its video automatically without retranscribing.
+
+Media is served only through a validated local note ID and a managed file
+reference, with HTTP Range support for seeking. Arbitrary filesystem paths are
+never accepted. Upload limits, cancellation, CSRF and localhost restrictions also
+apply when reconnecting a video.
+
 Local subtitles are saved in the library before study-note generation begins. If
 generation fails or is cancelled, reopen that entry and use **Regenerate note**;
 the original video does not need to be uploaded or transcribed again.
