@@ -6,6 +6,7 @@ import re
 import shutil
 import threading
 import functools
+import uuid
 from typing import List, Dict, Any, Optional
 
 from config import (
@@ -315,7 +316,7 @@ def _normalize_subs(subtitles: Optional[List[Dict[str, Any]]]) -> List[Dict[str,
     except Exception:
         return subtitles
 
-_LANG_META_KEYS = ("source_lang", "target_lang", "translation_source", "note_target_lang")
+_LANG_META_KEYS = ("source_lang", "target_lang", "translation_source", "note_target_lang", "subtitle_status")
 
 
 def _clean_lang_meta(lang_meta: Optional[Dict[str, Any]]) -> Dict[str, Any]:
@@ -482,7 +483,7 @@ def save_note(
     # 기존 수정이 아니면 매번 고유한 note_id 생성 (같은 영상도 여러 버전 보관 가능)
     if not note_id:
         safe_vid = re.sub(r"[^A-Za-z0-9_-]", "_", str(video_id))[:100] or "note"
-        note_id = f"{safe_vid}_{timestamp}"
+        note_id = f"{safe_vid}_{timestamp}_{uuid.uuid4().hex[:8]}"[:120]
     _require_safe_note_id(note_id)
 
     filename = f"{note_id}.md"
@@ -532,7 +533,7 @@ created_at: "{created_time}"
         "created_at": existing_meta.get("created_at") or created_time,
         "updated_at": created_time,
     }
-    for k in ("source_lang", "original_lang", "target_lang", "note_target_lang", "translation_source", "translation_track", "audiobook", "subtitle_audiobook"):
+    for k in ("source_lang", "original_lang", "target_lang", "note_target_lang", "translation_source", "translation_track", "audiobook", "subtitle_audiobook", "subtitle_status"):
         if existing_meta.get(k) is not None:
             meta[k] = existing_meta[k]
     meta.update(_clean_lang_meta(lang_meta))

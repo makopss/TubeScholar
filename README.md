@@ -8,6 +8,16 @@
 
 무료 Google Gemini API는 물론, 이미 구독 중인 ChatGPT Plus / Claude Pro 등의 외부 LLM과도 유연하게 연동되며, 모든 학습 결과는 내 PC에 표준 마크다운(`.md`)으로 영구 보관되어 노션(Notion) 및 옵시디언(Obsidian)과 완벽하게 호환됩니다.
 
+## 🆕 v1.2.2 — 로컬 영상 분석 안정화
+
+- **중단·새 작업 전환 개선**: 작업별 취소와 진행 상태를 분리하여 이전 분석 결과가 새 화면에 섞이지 않도록 수정했습니다.
+- **지연 처리 개선**: 오디오 추출·음성 인식·Gemini 요청에 시간 제한과 취소 처리를 적용했습니다. 전체 분석 제한 시간은 업로드를 포함해 기본 10분입니다.
+- **전사 자막 복구**: Groq 전사가 완료되거나 자막 파일을 입력하면 노트 생성 전에 자막을 보관합니다. 생성 실패·취소 후 보관함에서 해당 항목을 열고 **노트 재작성(🔄)** 을 실행하면 영상 재업로드나 재전사 없이 이어갈 수 있습니다.
+- **자막 정확성 보호**: 생성된 SRT가 없거나 유효하지 않으면 자막 생성 실패를 안내하며, 노트의 요약문을 원문 자막으로 대신 저장하지 않습니다.
+- **업로드·패키징 검증**: 업로드 수신 중 용량을 검사하고, 빌드 전에 Python과 네이티브 패키지의 호환성을 확인합니다.
+
+[릴리즈 및 설치 파일](https://github.com/makopss/TubeScholar/releases/tag/v1.2.2) · [분석 처리·검증 문서](docs/local-analysis.md)
+
 <p align="center">
   <img src="docs/images/tubescholar_main_splitview.png" alt="TubeScholar 메인 스플릿 뷰" width="100%" />
 </p>
@@ -82,7 +92,7 @@
 ## 🚀 빠른 시작 방법
 
 ### A. Windows 설치 프로그램 사용 (일반 사용자 추천)
-[GitHub Releases](https://github.com/makopss/TubeScholar/releases)에서 `TubeScholar-Setup-v1.2.1.exe`를 다운로드하여 실행하시면 Python 설치 없이 즉시 사용할 수 있습니다.
+[TubeScholar-Setup-v1.2.2.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.2/TubeScholar-Setup-v1.2.2.exe)를 다운로드하여 실행하시면 Python 설치 없이 사용할 수 있습니다. 같은 릴리즈에 SHA-256 체크섬 파일도 제공합니다.
 
 ### B. 소스코드 직접 실행 (개발자용)
 1. **저장소 클론**:
@@ -113,12 +123,33 @@
 
 ---
 
+## 🔧 분석 설정·빌드·검증
+
+- 업로드 한도는 기본 **2GB**, 전체 분석 제한 시간은 기본 **600초**입니다.
+- 설치판은 `%LOCALAPPDATA%\TubeScholar\.env`, 소스 실행은 프로젝트 `.env`에서 `TUBESCHOLAR_MAX_VIDEO_MB`와 `TUBESCHOLAR_ANALYSIS_TIMEOUT_SECONDS`로 값을 조정할 수 있습니다.
+- 로그에는 작업 ID, UTC 시각, 처리 단계·모델·소요 시간이 기록됩니다. 설치판 로그는 `%LOCALAPPDATA%\TubeScholar\tubescholar.log`에 있습니다.
+- 빌드 가상환경은 같은 Python 버전으로 생성하고 의존성을 설치하세요. 다른 Python 버전의 `site-packages`를 복사하면 DLL 로딩 오류가 생길 수 있습니다.
+
+```powershell
+# 외부 AI API를 호출하지 않는 회귀 테스트 (백엔드 28개 + 프론트엔드 6개)
+.\.venv\Scripts\python.exe -u -B scripts\test_analysis.py
+node --test scripts\test_analysis_frontend.cjs
+
+# Windows 설치 파일 생성 (Inno Setup 6 필요)
+.\build_installer.bat
+
+# 패키지 기동·자막 보관 확인 (PowerShell 7, 포트 8000이 비어 있어야 함)
+.\scripts\smoke_packaged.ps1
+```
+
+---
+
 ## ⚙️ API 키 설정
 
 웹 화면 우측 상단의 ⚙️ **설정** 아이콘을 클릭하여 등록합니다 (로컬 `.env`에 안전하게 보관됩니다):
 
 1. **Google Gemini 무료 API 키**: [Google AI Studio](https://aistudio.google.com/app/apikey)에서 무료로 발급받아 입력합니다.
-   - **스마트 자동 모델 엔진**: 복잡한 모델 선택 없이, 지식 분석 노트 생성에는 고성능 `gemini-flash-latest`가, 고속 자막 번역에는 `gemini-flash-lite`가 자동 적용됩니다. 무료 사용량 한도(429 Rate Limit) 도달 시에도 중단 없이 안정적인 하위 모델로 자동 다단계 페일오버(Fallback)됩니다.
+   - **스마트 자동 모델 엔진**: 노트 생성은 기본 `gemini-3.5-flash`, 자막 번역은 `gemini-flash-lite-latest`를 사용합니다. 서버 혼잡·응답 지연 시 제한 시간 안에서 대체 모델을 순서대로 시도합니다.
 2. **Groq Cloud 무료 API 키 (선택 사항)**: [Groq Console](https://console.groq.com/keys)에서 무료로 발급받아 등록합니다.
    - 자막이 없는 로컬 영상이나 음성 파일 학습 시, 오픈소스 최강 Whisper-large-v3 초고속 AI 음성인식 엔진으로 실시간 자막을 추출하거나 번역할 때 활용됩니다.
 3. **💡 구독형 AI 사용자 (API 키 없이 무료 사용)**:
@@ -134,6 +165,8 @@ TubeScholar/
 ├── backend/
 │   ├── app.py              # FastAPI 메인 서버 & API 라우터
 │   ├── config.py           # 공통 환경 설정 및 경로 상수 모듈
+│   ├── analysis_jobs.py    # 작업별 취소·진행 상태·전체 제한 시간·업로드 검사
+│   ├── media_process.py    # 취소 가능한 FFmpeg 실행 및 오류 기록
 │   ├── prompt_loader.py    # 동적 마크다운 템플릿 로더 및 사용자 커스텀 오버레이
 │   ├── extractor.py        # 유튜브 자막 및 메타데이터 추출기
 │   ├── analyzer.py         # Google Gemini 지식 확장 & 스마트 모델 엔진
@@ -160,6 +193,8 @@ TubeScholar/
 │   ├── audio/              # 영구 보관 신경망 오디오북 (.mp3) 및 타임라인 큐 (.json)
 │   ├── prompts/            # 사용자 맞춤 커스텀 마크다운 템플릿 (선택 사항)
 │   └── library.json        # 영상 메타데이터 및 학습 기록 색인
+├── scripts/                # 회귀 테스트, 빌드 환경 검사, 패키지 기동 검증
+├── docs/local-analysis.md  # 로컬 분석 복구·제한 시간·검증 가이드
 ├── run.py                  # 원클릭 서버 실행 및 브라우저 자동 실행
 ├── requirements.txt        # Python 백엔드 의존성 목록
 ├── build_installer.bat     # Windows 원클릭 설치 프로그램 빌드 스크립트
@@ -171,7 +206,7 @@ TubeScholar/
 
 ## 🛠️ 기술 스택 (Tech Stack)
 
-- **Backend**: FastAPI, Python 3.12, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `edge-tts` (`7.3.1+`)
+- **Backend**: FastAPI, Python 3.10+, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `edge-tts` (`7.3.1+`)
 - **Frontend**: Vanilla JavaScript (ES6+), Web Worker Heartbeat, Tailwind CSS (Standalone build), Marked.js, DOMPurify
 - **Security & Stability**: Localhost Origin/Host 검증 미들웨어, `os.replace` 원자적 파일 쓰기(Atomic Write), `threading.RLock` 동시성 보호
 - **Packaging**: PyInstaller (`onedir` 모드), Inno Setup 6 (`lzma2/ultra64` Windows 설치 마법사)

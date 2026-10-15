@@ -5,6 +5,13 @@
 
 const TUBESCHOLAR_I18N = {
   ko: {
+    note_status_transcript_saved: "자막 보관 완료 · 노트 재작성 가능",
+    alert_audio_subtitles_unavailable: "학습 노트는 생성했으나 원문 자막을 생성하지 못했습니다. 자막 파일을 별도로 선택해 주세요.",
+    analysis_status_preparing: "분석 준비 중...",
+    analysis_status_uploading: "로컬 영상 업로드 중...",
+    analysis_status_transcript_ready: "전사 자막을 보관했습니다. 학습 노트 생성 중...",
+    analysis_status_saving: "분석 결과를 검증하고 보관함에 저장 중...",
+    analysis_status_audio_processing: "업로드한 오디오 처리 대기 중...",
     // 앱 헤더 및 기본 정보
     app_title: "TubeScholar - 유튜브 & 로컬 비디오 LLM 심층 지식 확장 학습기",
     brand_subtitle: "유튜브 & 로컬 비디오 LLM 심층 학습기",
@@ -349,7 +356,7 @@ const TUBESCHOLAR_I18N = {
     alert_no_subs_to_dl: "다운로드할 자막 데이터가 없습니다. 먼저 영상을 분석하거나 불러와주세요.",
     confirm_request_trans_before_switch: "[{mode}]이 아직 생성되지 않았습니다.\n지금 Gemini에 {lang} 번역을 요청하시겠습니까? (API 사용량이 발생합니다)\n\n[확인]을 누르면 번역 후 표시되고, [취소]를 누르면 원문 자막이 유지됩니다.",
     confirm_request_trans_before_dl: "{mode} 자막 데이터가 아직 없습니다.\n지금 Gemini 번역을 요청하여 생성한 후 다운로드하시겠습니까? (API 사용량이 발생합니다)\n\n[취소]를 누르면 번역 없이 원문 자막으로 다운로드합니다.",
-    alert_analysis_cancelled: "🛑 분석 작업이 사용자에 의해 즉시 중단되었습니다.",
+    alert_analysis_cancelled: "🛑 분석 중단을 요청했습니다. 보관된 자막은 노트 재작성에 사용할 수 있습니다.",
     alert_prompt_copied_detail: "✨ 완성된 심화 프롬프트가 클립보드에 복사되었습니다!\n\n1. 사용 중이신 ChatGPT 또는 Claude 대화창에 붙여넣고(Ctrl+V) 답변을 받으세요.\n2. 받은 답변을 우측 'ChatGPT / Claude 답변 붙여넣기' 창에 넣고 [노트 적용]을 누르면 즉시 연동됩니다.",
     alert_note_copied: "학습 노트 내용이 클립보드에 복사되었습니다!",
     alert_apikey_saved: "API 키가 성공적으로 저장되었습니다.",
@@ -448,7 +455,7 @@ const TUBESCHOLAR_I18N = {
     analysis_status_rate_limit: "⏳ {model} 분당 요청 한도(429) 감지. 2초 후 재시도합니다...",
     analysis_status_fail_next: "⚠️ {model} 호출 실패. 다음 대체 모델을 시도합니다...",
     analysis_status_cycle2: "서버 일시 혼잡 지속으로 2차 복구 사이클을 준비 중입니다...",
-    analysis_status_completed: "✅ {model} 분석 완료! 문서 렌더링 중...",
+    analysis_status_completed: "✅ 분석 및 보관함 저장 완료!",
     analysis_status_audio_connecting: "{model} 음성 분석 중...{attempt}",
     analysis_status_audio_switching: "🔄 대체 모델 전환: {model} 음성 분석 중...{attempt}{cycle}",
     analysis_status_audio_completed: "✅ {model} 음성 분석 완료!",
@@ -465,6 +472,13 @@ const TUBESCHOLAR_I18N = {
   },
 
   en: {
+    note_status_transcript_saved: "Transcript saved · Ready to regenerate note",
+    alert_audio_subtitles_unavailable: "The study note was generated, but dialogue subtitles are unavailable. Select a subtitle file separately.",
+    analysis_status_preparing: "Preparing analysis...",
+    analysis_status_uploading: "Uploading local video...",
+    analysis_status_transcript_ready: "Transcript saved. Generating the study note...",
+    analysis_status_saving: "Validating results and saving to your library...",
+    analysis_status_audio_processing: "Waiting for the uploaded audio to be processed...",
     // App Header & Info
     app_title: "TubeScholar - YouTube & Local Video LLM Deep Learning Note Studio",
     brand_subtitle: "YouTube & Local Video LLM Deep Learning Studio",
@@ -809,7 +823,7 @@ const TUBESCHOLAR_I18N = {
     alert_no_subs_to_dl: "No subtitle data to download. Please analyze or load a video first.",
     confirm_request_trans_before_switch: "[{mode}] has not been generated yet.\nRequest {lang} translation from Gemini now? (Uses API quota)\n\nClick [OK] to translate and show, or [Cancel] to keep original subtitles.",
     confirm_request_trans_before_dl: "{mode} subtitle data does not exist yet.\nRequest Gemini translation to generate and download? (Uses API quota)\n\nClick [Cancel] to download original subtitles without translation.",
-    alert_analysis_cancelled: "🛑 Analysis task was stopped by the user.",
+    alert_analysis_cancelled: "🛑 Cancellation requested. Saved transcripts can be used to regenerate the note.",
     alert_prompt_copied_detail: "✨ Comprehensive study prompt copied to clipboard!\n\n1. Paste (Ctrl+V) into ChatGPT or Claude to get the analysis.\n2. Paste the response into 'Paste ChatGPT / Claude Note' and click [Apply Note].",
     alert_note_copied: "Study note copied to clipboard!",
     alert_apikey_saved: "API key saved successfully.",
@@ -908,7 +922,7 @@ const TUBESCHOLAR_I18N = {
     analysis_status_rate_limit: "⏳ {model} rate limit (429) detected. Retrying in 2 seconds...",
     analysis_status_fail_next: "⚠️ {model} call failed. Trying next candidate model...",
     analysis_status_cycle2: "High server traffic persists. Preparing secondary recovery cycle...",
-    analysis_status_completed: "✅ {model} analysis complete! Rendering document...",
+    analysis_status_completed: "✅ Analysis complete and saved to your library!",
     analysis_status_audio_connecting: "Analyzing audio with {model}...{attempt}",
     analysis_status_audio_switching: "🔄 Failover transition: Analyzing audio with {model}...{attempt}{cycle}",
     analysis_status_audio_completed: "✅ {model} audio analysis complete!",

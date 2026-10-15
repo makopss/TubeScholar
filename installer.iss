@@ -1,5 +1,5 @@
 ; TubeScholar Inno Setup Installation Script
-; Generates TubeScholar-Setup-v1.0.0.exe
+; Generates TubeScholar-Setup-v1.2.2.exe
 
 #define MyAppName "TubeScholar"
 #define MyAppVersion "1.2.2"

@@ -7,6 +7,8 @@ import threading
 import subprocess
 import tempfile
 import shutil
+import logging
+import uuid
 from typing import Optional, List, Dict, Any
 from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
@@ -59,7 +61,7 @@ from analyzer import (
     is_analysis_cancelled,
 )
 from storage import (
-    save_note, get_note, list_saved_notes, delete_note, update_note,
+    save_note as _save_note, get_note, list_saved_notes, delete_note, update_note,
     update_note_subtitles, update_note_audiobook, is_safe_note_id, get_cached_subtitles, save_translation_cache,
     clean_ai_citation_artifacts
 )
@@ -71,7 +73,47 @@ from tts import (
     abbreviate_note_title, get_audiobook_download_filename
 )
 
+from analysis_jobs import (
+    AnalysisMiddleware, check_analysis, analysis_commit, set_checkpoint, current_job,
+)
+from media_process import run_ffmpeg
+
+log = logging.getLogger("tubescholar.analysis")
+
+
+def save_note(*args, **kwargs):
+    with analysis_commit():
+        update_analysis_state("processing", event="saving", message="분석 결과를 보관함에 저장 중...", step=3)
+        return _save_note(*args, **kwargs)
+
+
+def save_transcript_checkpoint(video_info, subtitles, lang_meta):
+    with analysis_commit():
+        note_id = f"{video_info['video_id']}_{uuid.uuid4().hex[:12]}"
+        _save_note(
+            video_info, "자막 전사를 보관했습니다. ‘노트 재작성’으로 학습 노트를 생성할 수 있습니다.",
+            note_id=note_id, subtitles=subtitles, lang_meta=lang_meta,
+        )
+        set_checkpoint(note_id)
+        return note_id
+
+
+def parse_local_transcript(text):
+    result = parse_srt_vtt_text(text)
+    subtitles = [s for s in result.get("subtitles", [])
+                 if s.get("text", "").strip() and s.get("end", 0) > s.get("start", 0)]
+    if not subtitles:
+        raise HTTPException(400, "유효한 타임코드와 대사가 있는 SRT/VTT 자막 파일이 필요합니다.")
+    chunks = _group_subtitles_into_chunks(subtitles, window_sec=35.0)
+    language = detect_text_language(subtitles)
+    result.update(subtitles=subtitles, chunks=chunks,
+                  full_text="\n".join(f"[{s['timestamp']}] {s['text']}" for s in chunks),
+                  language=language, source_lang=language, original_lang=language)
+    return result
+
+
 app = FastAPI(title="TubeScholar API")
+app.add_middleware(AnalysisMiddleware)
 
 # 🔒 로컬 서버 보안
 # 1) DNS 리바인딩 방지: Host 헤더가 127.0.0.1/localhost 인 요청만 허용
@@ -117,6 +159,7 @@ async def csrf_guard(request: Request, call_next):
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    log.error("Unhandled request failure path=%s", request.url.path, exc_info=exc)
     return JSONResponse(
         status_code=500,
         content={"detail": f"서버 처리 중 오류가 발생했습니다: {str(exc)}"}
@@ -246,6 +289,7 @@ def get_config():
     masked_groq = f"{groq_key[:4]}...{groq_key[-4:]}" if len(groq_key) >= 8 else ("configured" if has_groq else "")
 
     return {
+        "max_local_video_bytes": MAX_LOCAL_VIDEO_BYTES,
         "has_api_key": has_gemini,
         "masked_key": masked_gemini,
         "has_groq_key": has_groq,
@@ -335,15 +379,15 @@ def get_languages():
     }
 
 @app.get("/api/analysis/status")
-def get_analysis_status():
+def get_analysis_status(job_id: Optional[str] = None):
     """실시간 분석 진행 및 모델 폴백 상태 조회 (프론트엔드 폴링용)"""
-    return get_analysis_state()
+    return get_analysis_state(job_id)
 
 @app.post("/api/analysis/cancel")
-def cancel_analysis():
+def cancel_analysis(job_id: Optional[str] = None):
     """프론트엔드에서 [중단] 버튼 클릭 시 진행 중인 AI 분석 루프를 즉시 중단합니다."""
-    request_analysis_cancel()
-    return {"success": True, "status": "cancelled"}
+    request_analysis_cancel(job_id)
+    return {"success": True, "state": get_analysis_state(job_id)}
 
 
 
@@ -378,13 +422,13 @@ def get_prompt_for_ai(req: PromptRequest):
 @app.post("/api/local/prompt")
 def get_local_prompt_for_ai(req: LocalPromptRequest):
     """로컬 자막 파일로부터 ChatGPT/Claude 복사용 프롬프트 생성"""
-    transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    transcript_result = parse_local_transcript(req.subtitle_text)
     target = normalize_target_lang(req.target_lang)
     note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
     src_lang = transcript_result.get("language") or "en"
     same_lang = is_same_language(src_lang, target)
     video_info = {
-        "video_id": f"local_{int(time.time())}",
+        "video_id": f"local_{uuid.uuid4().hex}",
         "title": req.title or "로컬 비디오",
         "channel": "Local Video",
         "video_type": "local",
@@ -407,6 +451,7 @@ def get_local_prompt_for_ai(req: LocalPromptRequest):
     }
 
 def _raise_if_cancelled(llm_result: Optional[Dict[str, Any]] = None):
+    check_analysis()
     if (llm_result and llm_result.get("cancelled")) or is_analysis_cancelled():
         raise HTTPException(status_code=499, detail="사용자에 의해 분석이 중단되었습니다.")
 
@@ -416,20 +461,27 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     """로컬 자막 텍스트를 Gemini로 분석하여 학습 노트 생성"""
     reset_analysis_cancel()
     update_analysis_state("processing", event="extracting_local", message="로컬 자막 파싱 및 분석 준비 중...", step=1)
-    transcript_result = parse_srt_vtt_text(req.subtitle_text)
+    transcript_result = parse_local_transcript(req.subtitle_text)
     target = normalize_target_lang(req.target_lang)
     note_target = normalize_target_lang(req.note_target_lang or req.target_lang)
     src_lang = transcript_result.get("language") or "en"
     same_lang = is_same_language(src_lang, target)
     trans_source = "same" if same_lang else None
     video_info = {
-        "video_id": f"local_{int(time.time())}",
+        "video_id": f"local_{uuid.uuid4().hex}",
         "title": req.title or "로컬 비디오",
         "channel": "Local Video",
         "video_type": "local",
         "duration_str": "로컬 파일"
     }
     
+    if not transcript_result.get("subtitles") or not transcript_result.get("full_text", "").strip():
+        raise HTTPException(400, "분석할 유효한 자막이 없습니다.")
+    checkpoint_id = save_transcript_checkpoint(video_info, transcript_result["subtitles"], {
+        "source_lang": src_lang, "target_lang": target, "note_target_lang": note_target,
+        "translation_source": trans_source,
+    })
+    update_analysis_state("processing", event="transcript_ready", message="자막을 보관했습니다. 학습 노트 생성 중...", step=2)
     llm_result = generate_study_note_gemini(
         video_info=video_info,
         transcript_data=transcript_result,
@@ -443,6 +495,7 @@ def analyze_local_video(req: LocalAnalyzeRequest):
     save_res = save_note(
         video_info, 
         llm_result["markdown"], 
+        note_id=checkpoint_id,
         subtitles=transcript_result.get("subtitles", []),
         lang_meta={
             "source_lang": src_lang,
@@ -491,6 +544,9 @@ def analyze_local_video_audio(
     target = normalize_target_lang(target_lang)
     note_target = normalize_target_lang(note_target_lang or target_lang)
     
+    checkpoint_id = None
+    subtitle_status = "complete"
+    warning = None
     temp_dir = tempfile.mkdtemp()
     # 클라이언트 파일명은 경로로 쓰지 않음 (경로 탈출 방지) → 고정 이름 + 검증된 확장자만 사용
     ext = os.path.splitext(os.path.basename(video.filename or ""))[1].lower()
@@ -516,6 +572,8 @@ def analyze_local_video_audio(
                     )
                 f.write(buf)
 
+        # Release Starlette's spool as soon as the extraction input is ready.
+        video.file.close()
         _raise_if_cancelled()
         ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
         cmd = [
@@ -528,16 +586,12 @@ def analyze_local_video_audio(
             "-b:a", "32k",
             temp_audio_path
         ]
-        popen_kwargs: Dict[str, Any] = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.PIPE,
-        }
-        if sys.platform == "win32":
-            popen_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        proc = subprocess.run(cmd, **popen_kwargs)
-        if proc.returncode != 0:
-            raise HTTPException(status_code=500, detail="영상에서 오디오를 추출하지 못했습니다.")
+        try:
+            run_ffmpeg(cmd)
+        except TimeoutError as exc:
+            raise HTTPException(504, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
 
         _raise_if_cancelled()
         # 1. Groq Whisper Cloud STT 시도 (Groq API 키가 설정되어 있는 경우)
@@ -559,7 +613,7 @@ def analyze_local_video_audio(
             src_lang = detect_text_language(subtitles)
             duration_str = subtitles[-1]["timestamp"] if subtitles else "00:00"
             video_info = {
-                "video_id": f"local_{int(time.time())}",
+                "video_id": f"local_{uuid.uuid4().hex}",
                 "title": vid_title,
                 "channel": "내 로컬 PC 영상 (Groq Whisper 자막)",
                 "video_type": "local",
@@ -573,6 +627,11 @@ def analyze_local_video_audio(
                 "chunks": merged_chunks,
                 "subtitles": subtitles
             }
+            checkpoint_id = save_transcript_checkpoint(video_info, subtitles, {
+                "source_lang": src_lang, "target_lang": target, "note_target_lang": note_target,
+                "translation_source": "same" if is_same_language(src_lang, target) else None,
+            })
+            update_analysis_state("processing", event="transcript_ready", message="전사 자막을 보관했습니다. 학습 노트 생성 중...", step=2)
             llm_result = generate_study_note_gemini(video_info, transcript_data, target_lang=note_target)
             _raise_if_cancelled(llm_result)
             if not llm_result.get("success"):
@@ -580,6 +639,9 @@ def analyze_local_video_audio(
 
             model_used = f"Groq Whisper Large-v3 + Gemini {llm_result.get('model_used')}"
         else:
+            if stt_result:
+                log.warning("job=%s Groq failed; switching to Gemini audio: %s",
+                            current_job().job_id if current_job() else "-", stt_result.get("error", "empty transcription"))
             # Groq 키가 없거나 실패한 경우: 기존 Gemini Multimodal Audio 직접 청취 방식으로 폴백
             llm_result = generate_study_note_from_audio(
                 audio_path=temp_audio_path,
@@ -591,7 +653,7 @@ def analyze_local_video_audio(
                 raise HTTPException(status_code=500, detail=f"Gemini 음성 분석 실패: {llm_result.get('error')}")
 
             video_info = {
-                "video_id": f"local_{int(time.time())}",
+                "video_id": f"local_{uuid.uuid4().hex}",
                 "title": vid_title,
                 "channel": "내 로컬 PC 영상 (Gemini 음성 직접 청취)",
                 "video_type": "local",
@@ -600,6 +662,8 @@ def analyze_local_video_audio(
             subtitles = llm_result.get("subtitles", [])
             src_lang = detect_text_language(subtitles)
             model_used = llm_result.get("model_used")
+            subtitle_status = llm_result.get("subtitle_status", "unavailable")
+            warning = llm_result.get("warning")
 
         _raise_if_cancelled(llm_result)
         same_lang = is_same_language(src_lang, target)
@@ -607,17 +671,21 @@ def analyze_local_video_audio(
         save_res = save_note(
             video_info,
             llm_result["markdown"],
+            note_id=checkpoint_id,
             subtitles=subtitles,
             lang_meta={
                 "source_lang": src_lang,
                 "target_lang": target,
                 "note_target_lang": note_target,
-                "translation_source": trans_source
+                "translation_source": trans_source,
+                "subtitle_status": subtitle_status,
             }
         )
         subtitles = save_res["metadata"].get("subtitles", subtitles)
         return {
             "success": True,
+            "subtitle_status": subtitle_status,
+            "warning": warning,
             "note_id": save_res["note_id"],
             "video_info": video_info,
             "subtitles": subtitles,
@@ -761,6 +829,8 @@ def regenerate_study_note(req: RegenerateNoteRequest):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
     if not req.subtitles:
         raise HTTPException(status_code=400, detail="학습 노트 재작성을 위한 자막 데이터가 없습니다.")
+    if req.note_id:
+        set_checkpoint(req.note_id)
 
     note_target = normalize_target_lang(req.note_target_lang)
 

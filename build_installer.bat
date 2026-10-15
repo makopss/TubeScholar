@@ -20,6 +20,14 @@ if not exist ".venv\Scripts\pyinstaller.exe" (
     )
 )
 
+:: 네이티브 wheel/Python 버전 불일치는 PyInstaller가 경고만 남길 수 있으므로 먼저 차단
+.venv\Scripts\python.exe scripts\check_build_environment.py
+if errorlevel 1 (
+    echo [!] 빌드 가상환경의 패키지 호환성을 먼저 복구해주세요.
+    pause
+    exit /b 1
+)
+
 :: 2. 기존 빌드 폴더 정리
 echo [*] 이전 빌드 캐시를 정리하는 중...
 if exist "build" rmdir /s /q "build"
@@ -71,7 +79,7 @@ echo  ✨ TubeScholar Windows 설치 파일이 성공적으로 제작되었습�
 echo ================================================================
 echo.
 echo  📍 설치 파일 위치:
-echo     dist\installer\TubeScholar-Setup-v1.2.1.exe
+echo     dist\installer\TubeScholar-Setup-v1.2.2.exe
 echo.
 echo  이제 위 Setup 파일을 다른 PC로 전달하여 설치 마법사로 설치할 수 있습니다.
 echo ================================================================

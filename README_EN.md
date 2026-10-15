@@ -8,6 +8,16 @@ Going far beyond simple subtitle translation and generic summaries, it delivers 
 
 Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Claude Pro subscriptions, with all study notes saved locally on your machine in standard Markdown (`.md`)—100% compatible with Notion, Obsidian, and Logseq.
 
+## 🆕 v1.2.2 — Reliable local video analysis
+
+- **Cancellation and switching**: Each analysis owns its cancellation and progress state; late results cannot overwrite a newer analysis.
+- **Bounded processing**: Audio extraction, transcription and Gemini requests support cancellation and time limits. The default total deadline is 10 minutes, including upload.
+- **Recoverable transcripts**: Completed Groq transcripts and imported subtitle files are saved before note generation. After a failure or cancellation, reopen the saved entry and choose **Regenerate note (🔄)** without uploading or transcribing the video again.
+- **Subtitle integrity**: Missing or invalid generated SRT is reported as unavailable. Note summaries are never substituted for spoken dialogue.
+- **Upload and packaging checks**: Upload limits are enforced while receiving data, and builds check native-wheel compatibility with the Python interpreter.
+
+[Release and installer](https://github.com/makopss/TubeScholar/releases/tag/v1.2.2) · [Analysis and verification guide](docs/local-analysis.md)
+
 <p align="center">
   <img src="docs/images/tubescholar_main_splitview_en.png" alt="TubeScholar Main Split-View" width="100%" />
 </p>
@@ -83,7 +93,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run `TubeScholar-Setup-v1.2.1.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
+Download and run [TubeScholar-Setup-v1.2.2.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.2/TubeScholar-Setup-v1.2.2.exe). No Python installation is required. A SHA-256 checksum file is included with the release.
 
 #### Option B: Run from Source
 1. **Clone the repository:**
@@ -114,12 +124,33 @@ Download and run `TubeScholar-Setup-v1.2.1.exe` from the [Latest Release](https:
 
 ---
 
+## 🔧 Analysis settings, builds and verification
+
+- The default upload limit is **2GB** and the total analysis deadline is **600 seconds**.
+- Configure `TUBESCHOLAR_MAX_VIDEO_MB` and `TUBESCHOLAR_ANALYSIS_TIMEOUT_SECONDS` in `%LOCALAPPDATA%\TubeScholar\.env` for the installed app, or the project `.env` when running from source.
+- Logs include job IDs, UTC timestamps, stages, models and elapsed time. Installed-app logs are stored at `%LOCALAPPDATA%\TubeScholar\tubescholar.log`.
+- Create the build environment with its own Python interpreter and install dependencies there. Copying `site-packages` from another Python version can cause DLL import failures.
+
+```powershell
+# Offline regression tests (28 backend + 6 frontend tests)
+.\.venv\Scripts\python.exe -u -B scripts\test_analysis.py
+node --test scripts\test_analysis_frontend.cjs
+
+# Build the Windows installer (requires Inno Setup 6)
+.\build_installer.bat
+
+# Verify packaged startup and transcript persistence (PowerShell 7; port 8000 must be free)
+.\scripts\smoke_packaged.ps1
+```
+
+---
+
 ## ⚙️ Configuration
 
 Click the ⚙️ **Settings** icon in the top header (saved locally and securely in `.env`):
 
 1. **Google Gemini Free API Key**: Get a free API key from [Google AI Studio](https://aistudio.google.com/app/apikey) and enter it.
-   - **Smart Automatic Engine**: No tedious model configuration required. TubeScholar automatically pairs high-performance `gemini-flash-latest` for in-depth knowledge notes and `gemini-flash-lite` for high-speed subtitle translations, with seamless multi-tier fallback upon hitting quota limits.
+   - **Automatic model fallback**: Study notes default to `gemini-3.5-flash`; subtitle translation uses `gemini-flash-lite-latest`. When a server is overloaded or slow, alternative models are tried within the analysis deadline.
 2. **Groq Cloud Free API Key (Optional)**: Get a free key from [Groq Console](https://console.groq.com/keys).
    - Used for ultra-fast local video/audio speech recognition (Whisper-large-v3) when analyzing local files without existing subtitle tracks.
 3. **💡 Subscription AI Users (Free without API Keys)**:
@@ -135,6 +166,8 @@ TubeScholar/
 ├── backend/
 │   ├── app.py              # FastAPI server & API routing
 │   ├── config.py           # Unified environment & path configuration module
+│   ├── analysis_jobs.py    # Per-job cancellation, progress, deadlines & upload limits
+│   ├── media_process.py    # Cancellable FFmpeg execution & diagnostics
 │   ├── prompt_loader.py    # Dynamic markdown template loader & user overlay manager
 │   ├── extractor.py        # YouTube subtitle & metadata extractor
 │   ├── analyzer.py         # Google Gemini knowledge expansion & smart fallback engine
@@ -161,6 +194,8 @@ TubeScholar/
 │   ├── audio/              # Persistent neural audiobooks (.mp3) & timeline cues (.json)
 │   ├── prompts/            # User custom markdown templates (Optional)
 │   └── library.json        # Video metadata & study session index
+├── scripts/                # Regression tests, build checks & packaged smoke test
+├── docs/local-analysis.md  # Recovery, deadlines & verification guide
 ├── run.py                  # One-click server launcher & browser watchdog
 ├── requirements.txt        # Python backend dependency manifest
 ├── build_installer.bat     # Windows one-click installer build script
@@ -172,7 +207,7 @@ TubeScholar/
 
 ## 🛠️ Tech Stack
 
-- **Backend**: FastAPI, Python 3.12, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `edge-tts` (`7.3.1+`)
+- **Backend**: FastAPI, Python 3.10+, Uvicorn, Google GenAI SDK (`google-genai`), Groq SDK (`groq`), `imageio-ffmpeg`, `yt-dlp`, `youtube-transcript-api`, `edge-tts` (`7.3.1+`)
 - **Frontend**: Vanilla JavaScript (ES6+), Web Worker Heartbeat, Tailwind CSS (Standalone build), Marked.js, DOMPurify
 - **Security & Stability**: Localhost Origin/Host validation middleware, atomic file writes (`os.replace`), `threading.RLock` concurrency protection
 - **Packaging**: PyInstaller (`onedir` mode), Inno Setup 6 (`lzma2/ultra64` Windows Setup Wizard)

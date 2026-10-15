@@ -118,7 +118,8 @@ def heartbeat_watchdog():
 if __name__ == "__main__":
     # 이미 백그라운드에서 TubeScholar 서버가 실행 중이면 브라우저 창만 새로 띄우고 즉시 종료
     if check_already_running(8000):
-        webbrowser.open("http://127.0.0.1:8000")
+        if os.environ.get("TUBESCHOLAR_NO_BROWSER") != "1":
+            webbrowser.open("http://127.0.0.1:8000")
         sys.exit(0)
 
     if getattr(sys, 'frozen', False):
@@ -143,7 +144,8 @@ if __name__ == "__main__":
     logging.getLogger("uvicorn.access").addFilter(_QuietPollingAccessFilter())
 
     # 브라우저 자동 실행 쓰레드
-    threading.Thread(target=open_browser, daemon=True).start()
+    if os.environ.get("TUBESCHOLAR_NO_BROWSER") != "1":
+        threading.Thread(target=open_browser, daemon=True).start()
 
     # 브라우저 종료 감지 워치독 쓰레드
     threading.Thread(target=heartbeat_watchdog, daemon=True).start()

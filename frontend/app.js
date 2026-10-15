@@ -23,6 +23,86 @@ let currentMarkdown = "";
 let currentVideoInfo = null;
 let currentEngineTagInfo = null;
 let currentAbortController = null;
+let currentAnalysisJob = null;
+let maxLocalVideoBytes = null;
+
+// Each request owns its controller, status polling and recovery context.
+function beginAnalysis() {
+  const previous = currentAnalysisJob;
+  if (previous && previous.running) {
+    previous.cancelled = true;
+    previous.controller.abort();
+    fetch(`/api/analysis/cancel?job_id=${encodeURIComponent(previous.id)}`, { method: "POST" }).catch(() => {});
+  }
+  const job = {
+    id: crypto.randomUUID(), controller: new AbortController(), running: true,
+    cancelled: false, resultApplied: false, mediaGeneration,
+  };
+  currentAnalysisJob = job;
+  currentAbortController = job.controller;
+  return job;
+}
+
+function isAnalysisCurrent(job) {
+  return currentAnalysisJob === job && !job.cancelled && job.mediaGeneration === mediaGeneration;
+}
+
+function finishAnalysis(job) {
+  job.running = false;
+  if (currentAnalysisJob !== job) return;
+  currentAbortController = null;
+  setAnalysisRunning(false);
+}
+
+async function recoverAnalysisCheckpoint(job, state) {
+  if (currentAnalysisJob !== job || job.resultApplied || job.mediaGeneration !== mediaGeneration) return;
+  try {
+    if (!state) {
+      const res = await fetch(`/api/analysis/status?job_id=${encodeURIComponent(job.id)}`);
+      if (!res.ok) return;
+      state = await res.json();
+    }
+    const noteId = state.checkpoint_note_id;
+    if (!noteId || job.recoveredNoteId === noteId) return;
+    const res = await fetch(`/api/notes/${encodeURIComponent(noteId)}`);
+    if (!res.ok) return;
+    const note = await res.json();
+    if (currentAnalysisJob !== job || job.resultApplied || job.mediaGeneration !== mediaGeneration) return;
+    job.recoveredNoteId = noteId;
+    currentNoteId = noteId;
+    currentVideoId = note.metadata.video_id;
+    currentVideoInfo = { ...currentVideoInfo, ...note.metadata };
+    if (note.metadata.subtitles) setSubtitles(note.metadata.subtitles);
+    applyLanguageState(note.metadata);
+    renderMarkdownNote(note.markdown, typeof t === "function" ? t("note_status_transcript_saved") : "자막 보관 완료 · 노트 재작성 가능", noteId);
+    loadLibrary();
+  } catch (e) {
+    // The persisted checkpoint remains available in the library after reload.
+  }
+}
+
+async function analysisFetch(job, url, options) {
+  const headers = new Headers(options.headers);
+  headers.set("X-Analysis-Id", job.id);
+  const response = await fetch(url, { ...options, headers, signal: job.controller.signal });
+  if (!isAnalysisCurrent(job)) throw new DOMException("Analysis superseded", "AbortError");
+  if (!response.ok) await recoverAnalysisCheckpoint(job);
+  return response;
+}
+
+async function validateLocalVideoFile(file) {
+  if (maxLocalVideoBytes === null) {
+    const res = await fetch("/api/config");
+    if (!res.ok) throw new Error("영상 업로드 용량 설정을 불러오지 못했습니다.");
+    maxLocalVideoBytes = (await res.json()).max_local_video_bytes;
+  }
+  if (!Number.isFinite(maxLocalVideoBytes) || maxLocalVideoBytes <= 0) {
+    throw new Error("영상 업로드 용량 설정이 올바르지 않습니다.");
+  }
+  if (file.size > maxLocalVideoBytes) {
+    throw new Error(`영상 크기가 업로드 한도(${Math.round(maxLocalVideoBytes / 1024 / 1024)}MB)를 초과했습니다.`);
+  }
+}
 let currentMode = "gemini"; // 'gemini' or 'subscription'
 let isEditing = false;
 let isLocalVideo = false;
@@ -424,6 +504,13 @@ function displayVideoMetadata(info) {
 let mediaGeneration = 0;
 
 function switchMediaContext(videoId, noteId) {
+  const analysis = currentAnalysisJob;
+  if (analysis && analysis.running && !analysis.resultApplied) {
+    analysis.cancelled = true;
+    analysis.controller.abort();
+    finishAnalysis(analysis);
+    fetch(`/api/analysis/cancel?job_id=${encodeURIComponent(analysis.id)}`, { method: "POST" }).catch(() => {});
+  }
   mediaGeneration++;
   // 이전 영상의 번역이 진행 중이면 중단 (완료 시 새 영상 자막을 덮어쓰는 사고 방지)
   if (isTranslatingSubtitles || transAbortController) {
@@ -553,19 +640,21 @@ function updateRegenerateNoteButtonState() {
 }
 
 async function regenerateStudyNote() {
+  const originalMedia = mediaGeneration;
   if (!currentSubtitles || currentSubtitles.length === 0) {
     if (currentVideoId || currentNoteId) {
       try {
         const fetchRes = await fetch("/api/subtitles", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
+      body: JSON.stringify({
             video_id: currentVideoId,
             note_id: currentNoteId,
             target_lang: currentTargetLang
           })
         });
         const d = await fetchRes.json();
+        if (originalMedia !== mediaGeneration) return;
         if (d.success && d.subtitles && d.subtitles.length > 0) {
           setSubtitles(d.subtitles);
         }
@@ -573,6 +662,7 @@ async function regenerateStudyNote() {
     }
   }
 
+  if (originalMedia !== mediaGeneration) return;
   if (!currentSubtitles || currentSubtitles.length === 0) {
     alert(typeof t === "function" ? t("alert_no_subs_to_regen") : "학습 노트를 재작성할 자막 데이터가 없습니다.");
     return;
@@ -595,7 +685,8 @@ async function regenerateStudyNote() {
   const loadingTitle = document.getElementById("loading-title");
   const loadingDesc = document.getElementById("loading-desc");
 
-  currentAbortController = new AbortController();
+  const analysisJob = beginAnalysis();
+  if (regenBtn) regenBtn.dataset.analysisJobId = analysisJob.id;
   setAnalysisRunning(true);
 
   setAnalysisStep(2);
@@ -607,10 +698,9 @@ async function regenerateStudyNote() {
     : `Gemini가 ${targetName} 언어로 학습 노트를 재작성하고 있습니다...`;
 
   try {
-    const res = await fetch("/api/note/regenerate", {
+    const res = await analysisFetch(analysisJob, "/api/note/regenerate", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: currentAbortController.signal,
       body: JSON.stringify({
         video_id: currentVideoId,
         title: currentVideoInfo?.title || "",
@@ -626,8 +716,10 @@ async function regenerateStudyNote() {
     });
 
     const data = await res.json();
+    if (!isAnalysisCurrent(analysisJob)) return;
     if (!res.ok) throw new Error(data.detail || "학습 노트 재작성 실패");
 
+    analysisJob.resultApplied = true;
     setAnalysisStep(3);
     currentNoteId = data.note_id;
     if (typeof resetTtsPlayerState === "function") {
@@ -642,12 +734,12 @@ async function regenerateStudyNote() {
     if (isEditing) toggleEditor(false);
     loadLibrary();
   } catch (err) {
-    if (err.name === 'AbortError') return;
+    if (err.name === 'AbortError' || !isAnalysisCurrent(analysisJob)) return;
     alert(typeof t === "function" ? t("alert_note_regen_error", { err: err.message }) : (`학습 노트 재작성 실패: ${err.message}`));
   } finally {
-    currentAbortController = null;
-    setAnalysisRunning(false);
-    if (regenBtn) {
+    finishAnalysis(analysisJob);
+    if (regenBtn && regenBtn.dataset.analysisJobId === analysisJob.id) {
+      delete regenBtn.dataset.analysisJobId;
       regenBtn.disabled = false;
       regenBtn.innerHTML = origBtnContent;
     }
@@ -2396,7 +2488,6 @@ function setAnalysisStep(stepNum) {
 }
 
 let analysisStatusTimer = null;
-let isAnalysisPollingInFlight = false;
 
 function getFriendlyModelName(model) {
   if (!model) return "";
@@ -2429,15 +2520,19 @@ function getI18nAnalysisMessage(data) {
 
 function startAnalysisStatusPolling() {
   stopAnalysisStatusPolling();
-  isAnalysisPollingInFlight = false;
+  const job = currentAnalysisJob;
+  let pollingInFlight = false;
   analysisStatusTimer = setInterval(async () => {
-    if (isAnalysisPollingInFlight) return;
-    isAnalysisPollingInFlight = true;
+    if (!job || !job.running || !isAnalysisCurrent(job) || pollingInFlight) return;
+    pollingInFlight = true;
     try {
-      const res = await fetch("/api/analysis/status");
+      const res = await fetch(`/api/analysis/status?job_id=${encodeURIComponent(job.id)}`);
       if (!res.ok) return;
       const data = await res.json();
-      if (!data || data.status === "idle") return;
+      if (!isAnalysisCurrent(job) || !job.running || !data || data.job_id !== job.id || data.status === "idle") return;
+      if (data.checkpoint_note_id) recoverAnalysisCheckpoint(job, data);
+      const title = document.getElementById("loading-title");
+      if (title && data.message) title.textContent = getI18nAnalysisMessage(data);
 
       const loadingDesc = document.getElementById("loading-desc");
       const statusBadge = document.getElementById("analysis-model-status-badge");
@@ -2469,7 +2564,7 @@ function startAnalysisStatusPolling() {
     } catch (e) {
       // Background status polling error ignore
     } finally {
-      isAnalysisPollingInFlight = false;
+      pollingInFlight = false;
     }
   }, 600);
 }
@@ -2521,14 +2616,19 @@ function setAnalysisRunning(isRunning) {
   }
 }
 
-function abortCurrentAnalysis() {
-  if (currentAbortController) {
-    currentAbortController.abort();
-    currentAbortController = null;
+async function abortCurrentAnalysis() {
+  const job = currentAnalysisJob;
+  if (!job || !job.running) return;
+  job.cancelled = true;
+  job.controller.abort();
+  finishAnalysis(job);
+  try {
+    const response = await fetch(`/api/analysis/cancel?job_id=${encodeURIComponent(job.id)}`, { method: "POST" });
+    if (response.ok) await recoverAnalysisCheckpoint(job, (await response.json()).state);
+  } catch (e) {}
+  if (currentAnalysisJob === job) {
+    alert(typeof t === "function" ? t("alert_analysis_cancelled") : "분석 중단을 요청했습니다. 보관된 자막은 노트 재작성에 사용할 수 있습니다.");
   }
-  fetch("/api/analysis/cancel", { method: "POST" }).catch(() => {});
-  setAnalysisRunning(false);
-  alert(typeof t === "function" ? t("alert_analysis_cancelled") : "🛑 분석 작업이 사용자에 의해 즉시 중단되었습니다.");
 }
 
 // 1. Gemini 자동 분석 실행
@@ -2536,27 +2636,17 @@ async function runGeminiAnalysis(url) {
   const loadingTitle = document.getElementById("loading-title");
   const loadingDesc = document.getElementById("loading-desc");
 
-  currentAbortController = new AbortController();
+  const analysisJob = beginAnalysis();
   setAnalysisRunning(true);
 
   setAnalysisStep(1);
   loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step1_title") : "1단계: 자막 및 영상 정보 추출 중...";
   loadingDesc.textContent = typeof t === "function" ? t("loading_yt_step1_desc") : "유튜브 서버에서 타임스탬프 자막을 가져오고 있습니다.";
 
-  const stepTimer = setTimeout(() => {
-    setAnalysisStep(2);
-    loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step2_title") : "2단계: Gemini가 문맥 오류 교정 및 Deep Dive 생성 중...";
-    const statusBadge = document.getElementById("analysis-model-status-badge");
-    if (!statusBadge || statusBadge.classList.contains("hidden")) {
-      loadingDesc.textContent = typeof t === "function" ? t("loading_yt_step2_desc") : "초대형 컨텍스트 윈도우로 전체 흐름을 정밀 분석하고 지식 해설을 작성합니다.";
-    }
-  }, 1200);
-
   try {
-    const response = await fetch("/api/analyze", {
+    const response = await analysisFetch(analysisJob, "/api/analyze", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      signal: currentAbortController.signal,
       body: JSON.stringify({
         url: url,
         engine: "gemini",
@@ -2566,9 +2656,6 @@ async function runGeminiAnalysis(url) {
       })
     });
 
-    clearTimeout(stepTimer);
-    setAnalysisStep(3);
-    loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step3_title") : "3단계: 문서 렌더링 및 로컬 저장 완료 중...";
 
     let data = null;
     try {
@@ -2579,6 +2666,10 @@ async function runGeminiAnalysis(url) {
       throw new Error((data && data.detail) || "분석 요청에 실패했습니다.");
     }
 
+    if (!isAnalysisCurrent(analysisJob)) return;
+    analysisJob.resultApplied = true;
+    setAnalysisStep(3);
+    loadingTitle.textContent = typeof t === "function" ? t("loading_yt_step3_title") : "3단계: 문서 렌더링 및 로컬 저장 완료 중...";
     switchMediaContext(data.video_info.video_id, data.note_id);
     initYouTubePlayer(currentVideoId);
     displayVideoMetadata(data.video_info);
@@ -2602,12 +2693,10 @@ async function runGeminiAnalysis(url) {
     }
     loadLibrary();
   } catch (err) {
-    if (err.name === 'AbortError') return;
+    if (err.name === 'AbortError' || !isAnalysisCurrent(analysisJob)) return;
     alert(typeof t === "function" ? t("alert_error_prefix", { err: err.message }) : ("오류: " + err.message));
   } finally {
-    clearTimeout(stepTimer);
-    currentAbortController = null;
-    setAnalysisRunning(false);
+    finishAnalysis(analysisJob);
   }
 }
 
@@ -2961,6 +3050,7 @@ async function checkConfig() {
   try {
     const res = await fetch("/api/config");
     const data = await res.json();
+    if (Number.isFinite(data.max_local_video_bytes)) maxLocalVideoBytes = data.max_local_video_bytes;
     if (data.has_api_key) {
       document.getElementById("api-key-input").placeholder = typeof t === "function" ? t("placeholder_api_key_set", { key: data.masked_key }) : `현재 설정됨 (${data.masked_key})`;
     }
@@ -3301,6 +3391,13 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
+    try {
+      await validateLocalVideoFile(videoFile);
+    } catch (err) {
+      alert(err.message);
+      return;
+    }
+
     const title = (customTitle && customTitle.trim()) || videoFile.name.replace(/\.[^/.]+$/, "");
 
     // 로컬 비디오 플레이어 바로 준비 및 재생 (새 컨텍스트)
@@ -3325,21 +3422,12 @@ document.addEventListener("DOMContentLoaded", () => {
     const loadingTitle = document.getElementById("loading-title");
     const loadingDesc = document.getElementById("loading-desc");
 
-    currentAbortController = new AbortController();
+    const analysisJob = beginAnalysis();
     setAnalysisRunning(true);
 
     setAnalysisStep(1);
     loadingTitle.textContent = typeof t === "function" ? t("loading_local_step1_title") : "1단계: 영상에서 오디오 추출 중...";
     loadingDesc.textContent = typeof t === "function" ? t("loading_local_step1_desc") : "FFmpeg를 통해 영상에서 고압축 음성 트랙(MP3)을 신속하게 추출하고 있습니다.";
-
-    const stepTimer = setTimeout(() => {
-      setAnalysisStep(2);
-      loadingTitle.textContent = typeof t === "function" ? t("loading_local_step2_title") : "2단계: Groq Whisper 자막 & Gemini 지식 노트 생성 중...";
-      const statusBadge = document.getElementById("analysis-model-status-badge");
-      if (!statusBadge || statusBadge.classList.contains("hidden")) {
-        loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "초고속 음성인식으로 정밀 자막을 생성하고, Gemini AI가 심층 학습 노트를 구성합니다.";
-      }
-    }, 2200);
 
     const formData = new FormData();
     formData.append("video", videoFile);
@@ -3348,9 +3436,8 @@ document.addEventListener("DOMContentLoaded", () => {
     formData.append("note_target_lang", currentNoteTargetLang);
 
     try {
-      const res = await fetch("/api/local/video-analyze", {
+      const res = await analysisFetch(analysisJob, "/api/local/video-analyze", {
         method: "POST",
-        signal: currentAbortController.signal,
         body: formData
       });
       let data = null;
@@ -3358,9 +3445,9 @@ document.addEventListener("DOMContentLoaded", () => {
         data = await res.json();
       } catch (e) {}
       if (!res.ok) throw new Error((data && data.detail) || "로컬 영상 음성 분석 실패");
-      if (!isCurrentMedia(gen)) return;
+      if (!isAnalysisCurrent(analysisJob) || !isCurrentMedia(gen)) return;
 
-      clearTimeout(stepTimer);
+      analysisJob.resultApplied = true;
       setAnalysisStep(3);
       loadingTitle.textContent = typeof t === "function" ? t("loading_local_step3_title") : "3단계: 노트 렌더링 및 보관함 저장 완료!";
 
@@ -3377,13 +3464,12 @@ document.addEventListener("DOMContentLoaded", () => {
         restoreSavedAudiobookForNote(data);
       }
       loadLibrary();
+      if (data.warning) alert(typeof t === "function" && data.subtitle_status === "unavailable" ? t("alert_audio_subtitles_unavailable") : data.warning);
     } catch (e) {
-      if (e.name === 'AbortError') return;
+      if (e.name === 'AbortError' || !isAnalysisCurrent(analysisJob)) return;
       alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
     } finally {
-      clearTimeout(stepTimer);
-      currentAbortController = null;
-      setAnalysisRunning(false);
+      finishAnalysis(analysisJob);
     }
   }
 
@@ -3405,6 +3491,10 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
     const subText = await subFile.text();
+    if (!subText.trim()) {
+      alert("자막 파일이 비어 있습니다.");
+      return;
+    }
 
     // 로컬 파일용 새 컨텍스트 (이전 YouTube 영상 ID·싱크값·번역이 섞이지 않도록)
     const gen = switchMediaContext(localMediaKey(videoFile, title), null);
@@ -3424,6 +3514,14 @@ document.addEventListener("DOMContentLoaded", () => {
         video_type: "local",
         duration_str: typeof t === "function" ? t("local_duration_str") : "로컬 영상"
       });
+    }
+
+    if (!videoFile) {
+      isLocalVideo = true;
+      if (ytPlayer && typeof ytPlayer.pauseVideo === "function") ytPlayer.pauseVideo();
+      const lp = document.getElementById("local-video-player");
+      if (lp) { lp.pause(); lp.removeAttribute("src"); lp.load(); }
+      displayVideoMetadata({ title, video_type: "local", channel: "Local Video", duration_str: "자막 파일" });
     }
 
     document.getElementById("local-file-modal").classList.add("hidden");
@@ -3462,7 +3560,7 @@ document.addEventListener("DOMContentLoaded", () => {
       // Gemini 분석
       const loadingTitle = document.getElementById("loading-title");
       const loadingDesc = document.getElementById("loading-desc");
-      currentAbortController = new AbortController();
+      const analysisJob = beginAnalysis();
       setAnalysisRunning(true);
       setAnalysisStep(2);
       if (loadingTitle) {
@@ -3472,10 +3570,9 @@ document.addEventListener("DOMContentLoaded", () => {
         loadingDesc.textContent = typeof t === "function" ? t("loading_local_step2_desc") : "로컬 자막을 분석하여 Gemini AI가 심층 학습 노트를 구성합니다.";
       }
       try {
-        const res = await fetch("/api/local/analyze", {
+        const res = await analysisFetch(analysisJob, "/api/local/analyze", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          signal: currentAbortController.signal,
           body: JSON.stringify({
             title: title,
             subtitle_text: subText,
@@ -3489,7 +3586,8 @@ document.addEventListener("DOMContentLoaded", () => {
           d = await res.json();
         } catch (e) {}
         if (!res.ok) throw new Error((d && d.detail) || "분석 실패");
-        if (!isCurrentMedia(gen)) return;
+        if (!isAnalysisCurrent(analysisJob) || !isCurrentMedia(gen)) return;
+        analysisJob.resultApplied = true;
         setAnalysisStep(3);
         if (d.video_info && d.video_info.video_id) {
           currentVideoId = d.video_info.video_id;
@@ -3503,11 +3601,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         loadLibrary();
       } catch (e) {
-        if (e.name === 'AbortError') return;
+        if (e.name === 'AbortError' || !isAnalysisCurrent(analysisJob)) return;
         alert(typeof t === "function" ? t("alert_analysis_error", { err: e.message }) : ("분석 오류: " + e.message));
       } finally {
-        currentAbortController = null;
-        setAnalysisRunning(false);
+      finishAnalysis(analysisJob);
       }
     }
   }

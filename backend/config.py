@@ -60,3 +60,5 @@ if not os.path.exists(FRONTEND_DIR) and IS_FROZEN:
 # 로컬 영상 업로드 최대 허용 용량 (기본 2048MB = 2GB)
 MAX_LOCAL_VIDEO_MB = int(os.environ.get("TUBESCHOLAR_MAX_VIDEO_MB", "2048"))
 MAX_LOCAL_VIDEO_BYTES = MAX_LOCAL_VIDEO_MB * 1024 * 1024
+# Includes upload, extraction, transcription, generation and saving.
+ANALYSIS_TIMEOUT_SECONDS = max(1.0, float(os.environ.get("TUBESCHOLAR_ANALYSIS_TIMEOUT_SECONDS", "600")))

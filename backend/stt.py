@@ -1,6 +1,7 @@
 import os
 from typing import Optional, Dict, Any, List
-from groq import Groq
+from groq import AsyncGroq
+from analysis_jobs import run_async_operation, remaining_seconds, check_analysis, AnalysisStopped
 try:
     from extractor import format_timestamp, format_srt_time, convert_to_srt
 except ImportError:
@@ -105,17 +106,18 @@ def transcribe_audio_groq(
         }
 
     try:
-        client = Groq(api_key=key)
         filename = os.path.basename(audio_path)
+        timeout = remaining_seconds(90.0)
 
-        with open(audio_path, "rb") as f:
-            transcription = client.audio.transcriptions.create(
-                file=(filename, f),
-                model=model,
-                response_format="verbose_json",
-                temperature=0.0,
-                prompt="Transcribe into concise, natural subtitle sentences."
-            )
+        async def transcribe():
+            async with AsyncGroq(api_key=key, timeout=timeout, max_retries=0) as client:
+                with open(audio_path, "rb") as f:
+                    return await client.audio.transcriptions.create(
+                        file=(filename, f), model=model, response_format="verbose_json",
+                        temperature=0.0, prompt="Transcribe into concise, natural subtitle sentences.",
+                    )
+
+        transcription = run_async_operation(transcribe, timeout)
 
         segments = getattr(transcription, "segments", []) or []
         raw_subtitles: List[Dict[str, Any]] = []
@@ -155,7 +157,10 @@ def transcribe_audio_groq(
             "model_used": f"Groq {model}",
             "segment_count": len(subtitles)
         }
+    except AnalysisStopped:
+        raise
     except Exception as e:
+        check_analysis()
         return {
             "success": False,
             "error": f"Groq Whisper 전사 실패: {str(e)}"

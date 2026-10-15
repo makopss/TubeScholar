@@ -2,12 +2,19 @@ import os
 import re
 import time
 import threading
+import asyncio
+import logging
 from typing import Dict, Any, Optional, List, Tuple
 from google import genai
 from google.genai import types
 from config import suppress_genai_warnings
 from languages import language_name
 from prompt_loader import get_system_prompt_for_lang
+from analysis_jobs import (
+    get_analysis_state, update_analysis_state, request_analysis_cancel,
+    reset_analysis_cancel, is_analysis_cancelled, interruptible_sleep as _interruptible_sleep,
+    run_async_operation, check_analysis, remaining_seconds, AnalysisStopped,
+)
 
 suppress_genai_warnings()
 
@@ -39,128 +46,38 @@ FALLBACK_TRANSLATE_MODELS = [
     "gemini-3.8-flash",
 ]
 
-# 3) 실시간 분석 진행, 모델 폴백 상태 추적 및 중단(Cancel) 이벤트
-_current_analysis_state = {
-    "status": "idle",       # "idle", "processing", "fallback", "completed", "cancelled", "error"
-    "model": "",
-    "event": "",
-    "attempt": 1,
-    "cycle": 1,
-    "message": "",
-    "step": 1,
-    "timestamp": 0.0
-}
-_analysis_state_lock = threading.Lock()
-_analysis_cancel_event = threading.Event()
+log = logging.getLogger("tubescholar.analysis")
 
 
-def request_analysis_cancel() -> None:
-    """진행 중인 학습 노트 생성/음성 분석 작업에 중단 신호를 보냅니다."""
-    _analysis_cancel_event.set()
-    update_analysis_state(
-        "cancelled",
-        event="cancelled",
-        message="사용자에 의해 분석이 중단되었습니다.",
-        step=2,
-    )
+def _gemini_io(api_key, operation, timeout_sec, *, check_job=True):
+    """Use cancellable async transports and close both clients on every attempt."""
+    timeout_sec = remaining_seconds(timeout_sec) if check_job else timeout_sec
 
-
-def reset_analysis_cancel() -> None:
-    """새 분석 시작 전 중단 플래그와 이전 분석 상태를 초기화합니다."""
-    _analysis_cancel_event.clear()
-    with _analysis_state_lock:
-        _current_analysis_state["status"] = "processing"
-        _current_analysis_state["model"] = ""
-        _current_analysis_state["event"] = "preparing"
-        _current_analysis_state["attempt"] = 1
-        _current_analysis_state["cycle"] = 1
-        _current_analysis_state["message"] = ""
-        _current_analysis_state["step"] = 1
-        _current_analysis_state["timestamp"] = time.time()
-
-
-def is_analysis_cancelled() -> bool:
-    """현재 분석 작업이 중단 요청되었는지 여부를 반환합니다."""
-    return _analysis_cancel_event.is_set()
-
-
-def _interruptible_sleep(seconds: float) -> bool:
-    """대기 중 중단 신호가 들어오면 즉시 깨어납니다. 중단되었으면 True 반환."""
-    return _analysis_cancel_event.wait(timeout=max(0.0, seconds))
-
-
-def _call_generate_content_interruptible(
-    client: genai.Client,
-    model: str,
-    contents: Any,
-    config: types.GenerateContentConfig,
-    timeout_sec: float = 65.0,
-) -> Any:
-    """
-    Gemini generate_content 호출이 무한정 블로킹되거나 사용자 중단 시 멈추는 현상을 방지하기 위해
-    데몬 스레드 + 0.25초 주기 중단 감지 및 하드 타임아웃을 적용합니다.
-    """
-    result_box: Dict[str, Any] = {}
-    done_evt = threading.Event()
-
-    # HttpOptions timeout (밀리초 단위) 설정
-    try:
-        config.http_options = types.HttpOptions(timeout=int(timeout_sec * 1000))
-    except Exception:
-        pass
-
-    def _worker():
+    async def invoke():
+        client = genai.Client(
+            api_key=api_key,
+            http_options=types.HttpOptions(
+                timeout=max(1, int(timeout_sec * 1000)),
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
+        )
         try:
-            result_box["response"] = client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=config,
-            )
-        except Exception as exc:
-            result_box["error"] = exc
+            return await operation(client.aio)
         finally:
-            done_evt.set()
+            try:
+                await asyncio.wait_for(client.aio.aclose(), timeout=2.0)
+            finally:
+                client.close()
 
-    t = threading.Thread(target=_worker, daemon=True)
-    t.start()
-
-    start_ts = time.time()
-    while not done_evt.wait(timeout=0.25):
-        if is_analysis_cancelled():
-            raise RuntimeError("CANCELLED_BY_USER")
-        if (time.time() - start_ts) >= timeout_sec:
-            raise TimeoutError(f"503 UNAVAILABLE: {model} 응답 시간 초과 ({int(timeout_sec)}s)")
-
-    if is_analysis_cancelled():
-        raise RuntimeError("CANCELLED_BY_USER")
-    if "error" in result_box:
-        raise result_box["error"]
-    return result_box.get("response")
+    return run_async_operation(invoke, timeout_sec, check_job=check_job)
 
 
-def get_analysis_state() -> Dict[str, Any]:
-    with _analysis_state_lock:
-        return dict(_current_analysis_state)
-
-
-def update_analysis_state(
-    status: str,
-    model: str = "",
-    event: str = "",
-    attempt: int = 1,
-    cycle: int = 1,
-    message: str = "",
-    step: int = 2
-):
-    with _analysis_state_lock:
-        _current_analysis_state["status"] = status
-        _current_analysis_state["model"] = model
-        _current_analysis_state["event"] = event
-        _current_analysis_state["attempt"] = attempt
-        _current_analysis_state["cycle"] = cycle
-        _current_analysis_state["message"] = message
-        _current_analysis_state["step"] = step
-        _current_analysis_state["timestamp"] = time.time()
+def _call_generate_content_interruptible(api_key, model, contents, config, timeout_sec=65.0):
+    return _gemini_io(
+        api_key,
+        lambda aio: aio.models.generate_content(model=model, contents=contents, config=config),
+        timeout_sec,
+    )
 
 
 def format_model_label(model: str) -> str:
@@ -288,7 +205,7 @@ def _build_models_to_try(preferred_model: Optional[str], fallback_models: List[s
 
 
 def _generate_with_model_fallback(
-    client: genai.Client,
+    api_key: str,
     contents: Any,
     system_instruction: str,
     models_to_try: List[str],
@@ -335,12 +252,13 @@ def _generate_with_model_fallback(
                         update_analysis_state("processing", model=target_model, event=evt, attempt=attempt, cycle=cycle, message=msg, step=2)
 
                     if is_audio:
-                        print(f"[*] Gemini 음성 분석 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
+                        log.info(f"[*] Gemini 음성 분석 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
                     else:
-                        print(f"[*] Gemini ({log_lang_label}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
+                        log.info(f"[*] Gemini ({log_lang_label}) 학습 노트 생성 요청 중... (모델: {target_model}{attempt_str}{cycle_str})")
 
+                    check_analysis()
                     response = _call_generate_content_interruptible(
-                        client=client,
+                        api_key=api_key,
                         model=target_model,
                         contents=contents,
                         config=types.GenerateContentConfig(
@@ -357,12 +275,16 @@ def _generate_with_model_fallback(
                             "error": "사용자에 의해 분석이 중단되었습니다.",
                         }
 
-                    if not response or not getattr(response, "text", None):
+                    if not response or not (getattr(response, "text", None) or "").strip():
                         raise RuntimeError(f"503 Empty response from {target_model}")
 
+                    candidates = getattr(response, "candidates", None) or []
+                    finish = str(getattr(candidates[0], "finish_reason", "")) if candidates else ""
+                    if "MAX_TOKENS" in finish:
+                        raise RuntimeError("503 Truncated model response (MAX_TOKENS)")
                     done_evt = "audio_completed" if is_audio else "completed"
                     done_msg = f"✅ {model_lbl} 음성 분석 완료!" if is_audio else f"✅ {model_lbl} 분석 완료! 문서 렌더링 중..."
-                    print(f"[*] Gemini {'음성 분석' if is_audio else '학습 노트 생성'} 완료! (사용 모델: {target_model})")
+                    log.info(f"[*] Gemini {'음성 분석' if is_audio else '학습 노트 생성'} 완료! (사용 모델: {target_model})")
                     update_analysis_state("completed", model=target_model, event=done_evt, message=done_msg, step=3)
                     return {
                         "success": True,
@@ -377,6 +299,9 @@ def _generate_with_model_fallback(
                             "error": "사용자에 의해 분석이 중단되었습니다.",
                         }
 
+                    if isinstance(e, AnalysisStopped):
+                        raise
+                    check_analysis()
                     last_error = str(e)
                     is_503 = any(
                         kw in last_error
@@ -407,27 +332,27 @@ def _generate_with_model_fallback(
 
                     if is_503:
                         fail_msg = f"⚠️ {model_lbl} 서버 혼잡/지연 감지. 대기 없이 다음 대체 모델로 즉시 전환합니다..."
-                        print(f"[!] {target_model} 서버 과부하/응답 지연 감지 ({last_error[:90]}) -> 다음 대체 모델로 즉시 전환")
+                        log.info(f"[!] {target_model} 서버 과부하/응답 지연 감지 ({last_error[:90]}) -> 다음 대체 모델로 즉시 전환")
                         update_analysis_state("fallback", model=target_model, event="503_failover", message=fail_msg, step=2)
                         break
 
                     if is_rate_limit and attempt < 2:
                         rate_msg = f"⏳ {model_lbl} 분당 요청 한도(429) 감지. 2초 후 재시도합니다..."
-                        print(f"[!] {target_model} 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
+                        log.info(f"[!] {target_model} 요청 한도(429) 감지. 2.0초 대기 후 재시도...")
                         update_analysis_state("processing", model=target_model, event="rate_limit", attempt=attempt, message=rate_msg, step=2)
                         if _interruptible_sleep(2.0):
                             return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
                         continue
                     else:
                         fail_msg = f"⚠️ {model_lbl} 호출 실패. 다음 대체 모델을 시도합니다..."
-                        print(f"[!] {target_model} 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
+                        log.info(f"[!] {target_model} 호출 실패 ({last_error[:120]}...). 대체 모델을 시도합니다.")
                         update_analysis_state("fallback", model=target_model, event="fail_next", message=fail_msg, step=2)
                         if _interruptible_sleep(0.3):
                             return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
                         break
 
         if cycle == 1:
-            print("[!] 1차 모델 순회 중 일시적 서버 과부하가 지속되어 2.0초 후 2차 복구 사이클을 진행합니다...")
+            log.info("[!] 1차 모델 순회 중 일시적 서버 과부하가 지속되어 2.0초 후 2차 복구 사이클을 진행합니다...")
             update_analysis_state("fallback", event="cycle2", message="서버 일시 혼잡 지속으로 2차 복구 사이클을 준비 중입니다...", step=2)
             if _interruptible_sleep(2.0):
                 return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
@@ -451,8 +376,6 @@ def generate_study_note_gemini(
             "error": "Gemini API 키가 설정되지 않았습니다. 설정창에서 무료 API 키를 등록해주세요."
         }
 
-    client = genai.Client(api_key=key)
-
     transcript_text = transcript_data.get("full_text", "")
     if not transcript_text.strip():
         return {"success": False, "error": "분석할 자막 텍스트가 없습니다."}
@@ -462,11 +385,11 @@ def generate_study_note_gemini(
     user_prompt = build_user_prompt(video_info, transcript_text, source_lang=source_lang, target_lang=target_lang)
 
     target_name = language_name(target_lang)
-    print(f"[*] 자막 언어 감지: {source_lang} -> 목표 언어: {target_name} ({target_lang})")
+    log.info(f"[*] 자막 언어 감지: {source_lang} -> 목표 언어: {target_name} ({target_lang})")
 
     models_to_try = _build_models_to_try(model_name, FALLBACK_NOTE_MODELS)
     gen_res = _generate_with_model_fallback(
-        client=client,
+        api_key=key,
         contents=user_prompt,
         system_instruction=active_system_prompt,
         models_to_try=models_to_try,
@@ -502,8 +425,6 @@ def generate_study_note_from_audio(
     if is_analysis_cancelled():
         return {"success": False, "cancelled": True, "error": "사용자에 의해 분석이 중단되었습니다."}
 
-    client = genai.Client(api_key=key)
-
     # 1. 오디오 파일 업로드
     uploaded_file = None
     try:
@@ -513,49 +434,55 @@ def generate_study_note_from_audio(
             message="오디오 트랙을 Gemini 멀티모달 서버로 전송 중...",
             step=1,
         )
-        uploaded_file = client.files.upload(file=audio_path)
+        uploaded_file = _gemini_io(key, lambda aio: aio.files.upload(file=audio_path), 60.0)
     except Exception as e:
         return {"success": False, "error": f"오디오 업로드 실패: {str(e)}"}
 
-    target = (target_lang or "ko").lower()
-    target_name = language_name(target)
-    active_system_prompt = get_system_prompt_for_lang(target, "en")
-
-    if target.startswith("en"):
-        req_instruction = "Generate the comprehensive Master Deep Learning Note entirely in English, capturing key proper nouns, their origins/etymology, dense chronological deep dives, and the 3-stage quiz."
-        sub_instruction = "Output all spoken dialogues as standard SRT subtitle format."
-    elif target.startswith("ja"):
-        req_instruction = "5大メタ原型に合わせた最高峰のマスター深層学習ノートをすべて日本語で作成してください。固有名詞の語源・命名由来辞典、タイムライン別Deep Dive解説、理解度チェッククイズを含めてください。"
-        sub_instruction = "音声の発話を標準SRT字幕形式で漏れなく作成してください。"
-    elif target == "ko":
-        req_instruction = (
-            "정확한 타임스탬프([MM:SS])와 함께 5대 메타 원형(분석·평가형, 스토리·해석형, 가이드·공략형, 지식·정보형, 대화·인터뷰형)에 맞춤화된 최고급 심화 지식 확장 마스터 노트를 작성해 주십시오.\n"
-            "음성 본문에 실제로 언급되는 중요한 고유명사(인물, 기관/기업, 프로젝트, 지명/천체 등)와 전문용어를 빠짐없이 포착하여 '유형 분류, 어원(Etymology) 및 명명 유래'가 담긴 사전과, 작동 원리와 배경 지식을 'Deep Dive(지식 보충)' 박스로 풍부하게 설명하고, 이해도 점검 퀴즈를 포함해 주십시오."
-        )
-        sub_instruction = "오디오의 발화 대사를 표준 SRT 자막 형식(1부터 시작하는 자막 번호, 00:00:00,000 --> 00:00:00,000 타임코드, 대사)으로 빠짐없이 작성해 주십시오."
-    else:
-        req_instruction = f"Generate the comprehensive Master Deep Learning Note strictly and entirely in {target_name} ({target}), capturing proper nouns, their origins/etymology, chronological deep dives, and quizzes."
-        sub_instruction = "Output the spoken dialogues in standard SRT subtitle format."
-
-    audio_prompt = f"""
-[Video Information]
-- Title: {video_title}
-- Audio File: Attached Audio
-- Target Language: {target_name} ({target})
-
-Please listen carefully to the attached audio, analyze it, and output clearly divided into the following two sections:
-
-===STUDY_NOTE===
-{req_instruction}
-
-===SUBTITLES_SRT===
-{sub_instruction}
-"""
-
     models_to_try = _build_models_to_try(model_name, FALLBACK_GEMINI_MODELS)
     try:
+        while "PROCESSING" in str(getattr(uploaded_file, "state", "")):
+            update_analysis_state("processing", event="audio_processing", message="업로드한 오디오 처리 대기 중...", step=2)
+            _interruptible_sleep(0.5)
+            uploaded_file = _gemini_io(key, lambda aio: aio.files.get(name=uploaded_file.name), 15.0)
+        if "FAILED" in str(getattr(uploaded_file, "state", "")):
+            return {"success": False, "error": "Gemini 서버에서 오디오 파일을 처리하지 못했습니다."}
+        target = (target_lang or "ko").lower()
+        target_name = language_name(target)
+        active_system_prompt = get_system_prompt_for_lang(target, "en")
+
+        if target.startswith("en"):
+            req_instruction = "Generate the comprehensive Master Deep Learning Note entirely in English, capturing key proper nouns, their origins/etymology, dense chronological deep dives, and the 3-stage quiz."
+            sub_instruction = "Output all spoken dialogues as standard SRT subtitle format."
+        elif target.startswith("ja"):
+            req_instruction = "5大メタ原型に合わせた最高峰のマスター深層学習ノートをすべて日本語で作成してください。固有名詞の語源・命名由来辞典、タイムライン別Deep Dive解説、理解度チェッククイズを含めてください。"
+            sub_instruction = "音声の発話を標準SRT字幕形式で漏れなく作成してください。"
+        elif target == "ko":
+            req_instruction = (
+                "정확한 타임스탬프([MM:SS])와 함께 5대 메타 원형(분석·평가형, 스토리·해석형, 가이드·공략형, 지식·정보형, 대화·인터뷰형)에 맞춤화된 최고급 심화 지식 확장 마스터 노트를 작성해 주십시오.\n"
+                "음성 본문에 실제로 언급되는 중요한 고유명사(인물, 기관/기업, 프로젝트, 지명/천체 등)와 전문용어를 빠짐없이 포착하여 '유형 분류, 어원(Etymology) 및 명명 유래'가 담긴 사전과, 작동 원리와 배경 지식을 'Deep Dive(지식 보충)' 박스로 풍부하게 설명하고, 이해도 점검 퀴즈를 포함해 주십시오."
+            )
+            sub_instruction = "오디오의 발화 대사를 표준 SRT 자막 형식(1부터 시작하는 자막 번호, 00:00:00,000 --> 00:00:00,000 타임코드, 대사)으로 빠짐없이 작성해 주십시오."
+        else:
+            req_instruction = f"Generate the comprehensive Master Deep Learning Note strictly and entirely in {target_name} ({target}), capturing proper nouns, their origins/etymology, chronological deep dives, and quizzes."
+            sub_instruction = "Output the spoken dialogues in standard SRT subtitle format."
+
+        audio_prompt = f"""
+    [Video Information]
+    - Title: {video_title}
+    - Audio File: Attached Audio
+    - Target Language: {target_name} ({target})
+
+    Please listen carefully to the attached audio, analyze it, and output clearly divided into the following two sections:
+
+    ===STUDY_NOTE===
+    {req_instruction}
+
+    ===SUBTITLES_SRT===
+    {sub_instruction}
+    """
+
         gen_res = _generate_with_model_fallback(
-            client=client,
+            api_key=key,
             contents=[uploaded_file, audio_prompt],
             system_instruction=active_system_prompt,
             models_to_try=models_to_try,
@@ -566,9 +493,9 @@ Please listen carefully to the attached audio, analyze it, and output clearly di
         # 임시 업로드 파일 정리
         try:
             if uploaded_file:
-                client.files.delete(name=uploaded_file.name)
-        except Exception:
-            pass
+                _gemini_io(key, lambda aio: aio.files.delete(name=uploaded_file.name), 3.0, check_job=False)
+        except Exception as exc:
+            log.warning("Gemini upload cleanup failed: %s", type(exc).__name__)
 
     if not gen_res.get("success"):
         return gen_res
@@ -588,33 +515,30 @@ Please listen carefully to the attached audio, analyze it, and output clearly di
     elif "===STUDY_NOTE===" in markdown_output:
         study_note = markdown_output.replace("===STUDY_NOTE===", "").strip()
 
-    if srt_raw:
+    srt_raw = re.sub(r"(?m)^\s*```(?:srt|vtt)?\s*$", "", srt_raw)
+    if srt_raw and re.search(r"(?m)^\s*(?:\d{1,2}:)?\d{2}:\d{2}[,.]\d{1,3}\s*-->", srt_raw):
         try:
             from extractor import parse_srt_vtt_text
             parsed = parse_srt_vtt_text(srt_raw)
             subtitles = parsed.get("subtitles", [])
+            if any(not s.get("text", "").strip() or s.get("end", 0) <= s.get("start", 0) for s in subtitles):
+                subtitles = []
         except Exception:
             pass
 
-    if not subtitles:
-        # 타임스탬프 라인으로부터 기본 자막 큐 생성 (폴백 보장)
-        ts_matches = re.findall(r'\[(\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.+)', study_note)
-        for t_str, text_line in ts_matches:
-            parts = [int(p) for p in t_str.split(':')]
-            sec = parts[0] * 60 + parts[1] if len(parts) == 2 else parts[0] * 3600 + parts[1] * 60 + parts[2]
-            subtitles.append({
-                "start": float(sec),
-                "duration": 4.0,
-                "end": float(sec + 4.0),
-                "timestamp": t_str,
-                "text": text_line.strip()
-            })
+    if not study_note.strip():
+        return {"success": False, "error": "음성 분석 응답에 학습 노트가 없습니다."}
+    # Notes are not dialogue. Missing/invalid SRT stays explicitly unavailable.
+    subtitle_status = "complete" if subtitles else "unavailable"
+    warning = None if subtitles else "음성 학습 노트는 생성했으나 원문 자막을 생성하지 못했습니다. 자막 파일을 별도로 선택해 주세요."
 
     return {
         "success": True,
         "markdown": study_note,
         "subtitles": subtitles,
         "srt_raw": srt_raw,
+        "subtitle_status": subtitle_status,
+        "warning": warning,
         "engine": "gemini_audio",
         "model_used": used_model
     }
