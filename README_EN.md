@@ -8,26 +8,6 @@ Going far beyond simple subtitle translation and generic summaries, it delivers 
 
 Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Claude Pro subscriptions, with all study notes saved locally on your machine in standard Markdown (`.md`)—100% compatible with Notion, Obsidian, and Logseq.
 
-## 🆕 v1.2.3 — Unified local analysis and saved video playback
-
-- **One analysis action**: Start Analysis automatically uses supplied subtitles or processes the video's audio.
-- **Audio routing**: Supplied subtitles go to Gemini. Without subtitles, a configured Groq key transcribes the audio before Gemini writes the note. If Groq is unavailable or transcription fails, Gemini analyzes the extracted audio. Missing or invalid generated SRT is reported explicitly.
-- **Prompt readiness**: Copy Prompt becomes available when subtitles are ready; imported SRT/VTT does not require note generation, and saved transcriptions can be reused.
-- **Videos reopen with notes**: Original media is copied into the app data's `videos/` directory. Saved notes restore video, subtitles and notes after restart, even if the original file moves. Older notes need **Reconnect Original Video** once.
-- Identical files are shared between notes. Deleting the final linked note removes the managed copy without touching the original. Copies consume disk space, and playback depends on the browser's codec support.
-
-[Release and installer](https://github.com/makopss/TubeScholar/releases/tag/v1.2.3) · [Analysis and verification guide](docs/local-analysis.md)
-
-## 🆕 v1.2.2 — Reliable local video analysis
-
-- **Cancellation and switching**: Each analysis owns its cancellation and progress state; late results cannot overwrite a newer analysis.
-- **Bounded processing**: Audio extraction, transcription and Gemini requests support cancellation and time limits. The default total deadline is 10 minutes, including upload.
-- **Recoverable transcripts**: Completed Groq transcripts and imported subtitle files are saved before note generation. After a failure or cancellation, reopen the saved entry and choose **Regenerate note (🔄)** without uploading or transcribing the video again.
-- **Subtitle integrity**: Missing or invalid generated SRT is reported as unavailable. Note summaries are never substituted for spoken dialogue.
-- **Upload and packaging checks**: Upload limits are enforced while receiving data, and builds check native-wheel compatibility with the Python interpreter.
-
-[Release and installer](https://github.com/makopss/TubeScholar/releases/tag/v1.2.2) · [Analysis and verification guide](docs/local-analysis.md)
-
 <p align="center">
   <img src="docs/images/tubescholar_main_splitview_en.png" alt="TubeScholar Main Split-View" width="100%" />
 </p>
@@ -36,8 +16,9 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 
 ## 🌟 Key Features
 
-### 1. ⏱️ Interactive Timestamped Split-View
-- **Left Panel**: Integrated video player supporting both YouTube streams and offline local video files (`.mp4`, `.webm`, `.mkv`) with `.srt` subtitle tracks.
+### 1. ⏱️ Interactive Timestamped Split-View & Unified Local Analysis
+- **Left Panel**: Integrated video player supporting both YouTube streams and offline local video files (`.mp4`, `.webm`, `.mkv`) with `.srt` / `.vtt` subtitle tracks.
+- **Unified Local Video Analysis**: Automatically analyzes supplied subtitles or routes audio through Groq Whisper transcription and Gemini direct audio analysis.
 - **Right Panel**: Structured Markdown study note. Clicking any timestamp (e.g. `[03:25]`) instantly jumps playback to that exact moment.
 - **Draggable CC Subtitle Overlay**: Real-time subtitles rendered directly over the video with custom font sizing, sync adjustment (`[` and `]`), and full-screen view.
 
@@ -83,7 +64,8 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 
 ### 7. 🌐 Clean Bilingual UI & High-Speed Decoupled Storage
 - Streamlined modern interface available in **Korean** and **English** (instant header dropdown switch).
-- **Decoupled High-Speed Storage Architecture**: Separates Markdown notes (`data/notes/`), heavy multilingual subtitle bundles (`data/subtitles/`), and neural audiobooks/cues (`data/audio/`) with `mtime`-based in-memory index caching—keeping library loading instantaneous even with hundreds of saved notes.
+- **Decoupled High-Speed Storage Architecture**: Separates Markdown notes (`data/notes/`), heavy multilingual subtitle bundles (`data/subtitles/`), neural audiobooks/cues (`data/audio/`), and deduplicated local videos (`data/videos/`, SHA-256) with `mtime`-based in-memory index caching—keeping library loading instantaneous even with hundreds of saved notes.
+- **Persistent Local Video & Transcript Restoration**: Analyzed local videos are retained safely in app data so saved notes reopen with video, subtitles, and study notes even after moving the original file or restarting the app (with checkpointed transcripts preserved if note generation is interrupted).
 - **Library Audiobook Badge (`🎧`) & Auto-Reset**: Easily spot notes with saved audiobooks via the `🎧` badge in the Library drawer. Switching notes cleanly resets any active audio playback and immediately synchronizes the newly selected note's saved audiobook.
 - All study notes are stored permanently in standard Markdown, ready to be synced with **Obsidian**, **Logseq**, or **Notion**.
 
@@ -103,7 +85,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run [TubeScholar-Setup-v1.2.3.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.3/TubeScholar-Setup-v1.2.3.exe). No Python installation is required. A SHA-256 checksum file is included with the release.
+Download and run `TubeScholar-Setup-v1.2.3.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
 
 #### Option B: Run from Source
 1. **Clone the repository:**
@@ -134,33 +116,12 @@ Download and run [TubeScholar-Setup-v1.2.3.exe](https://github.com/makopss/TubeS
 
 ---
 
-## 🔧 Analysis settings, builds and verification
-
-- The default upload limit is **2GB** and the total analysis deadline is **600 seconds**.
-- Configure `TUBESCHOLAR_MAX_VIDEO_MB` and `TUBESCHOLAR_ANALYSIS_TIMEOUT_SECONDS` in `%LOCALAPPDATA%\TubeScholar\.env` for the installed app, or the project `.env` when running from source.
-- Logs include job IDs, UTC timestamps, stages, models and elapsed time. Installed-app logs are stored at `%LOCALAPPDATA%\TubeScholar\tubescholar.log`.
-- Create the build environment with its own Python interpreter and install dependencies there. Copying `site-packages` from another Python version can cause DLL import failures.
-
-```powershell
-# Offline regression tests (28 backend + 6 frontend tests)
-.\.venv\Scripts\python.exe -u -B scripts\test_analysis.py
-node --test scripts\test_analysis_frontend.cjs
-
-# Build the Windows installer (requires Inno Setup 6)
-.\build_installer.bat
-
-# Verify packaged startup and transcript persistence (PowerShell 7; port 8000 must be free)
-.\scripts\smoke_packaged.ps1
-```
-
----
-
 ## ⚙️ Configuration
 
 Click the ⚙️ **Settings** icon in the top header (saved locally and securely in `.env`):
 
 1. **Google Gemini Free API Key**: Get a free API key from [Google AI Studio](https://aistudio.google.com/app/apikey) and enter it.
-   - **Automatic model fallback**: Study notes default to `gemini-3.5-flash`; subtitle translation uses `gemini-flash-lite-latest`. When a server is overloaded or slow, alternative models are tried within the analysis deadline.
+   - **Smart Automatic Engine**: Study notes default to `gemini-3.5-flash` and subtitle translation uses `gemini-flash-lite-latest`, with automatic multi-tier fallback within the analysis deadline when servers are overloaded or quota limits are reached.
 2. **Groq Cloud Free API Key (Optional)**: Get a free key from [Groq Console](https://console.groq.com/keys).
    - Used for ultra-fast local video/audio speech recognition (Whisper-large-v3) when analyzing local files without existing subtitle tracks.
 3. **💡 Subscription AI Users (Free without API Keys)**:
@@ -181,7 +142,7 @@ TubeScholar/
 │   ├── prompt_loader.py    # Dynamic markdown template loader & user overlay manager
 │   ├── extractor.py        # YouTube subtitle & metadata extractor
 │   ├── analyzer.py         # Google Gemini knowledge expansion & smart fallback engine
-│   ├── storage.py          # Markdown notes, decoupled subtitle bundles & audiobook store
+│   ├── storage.py          # Markdown notes, decoupled subtitle bundles, audio & video store
 │   ├── tts.py              # edge-tts neural audiobook & subtitle dubbing engine
 │   ├── stt.py              # Groq Cloud Whisper-large-v3 ultrafast STT engine
 │   └── languages.py        # 17-language catalog & normalization
@@ -202,10 +163,9 @@ TubeScholar/
 │   ├── notes/              # Permanent Markdown (.md) study notes
 │   ├── subtitles/          # Decoupled per-note subtitle & translation bundles (.json)
 │   ├── audio/              # Persistent neural audiobooks (.mp3) & timeline cues (.json)
+│   ├── videos/             # Deduplicated local video store (SHA-256)
 │   ├── prompts/            # User custom markdown templates (Optional)
 │   └── library.json        # Video metadata & study session index
-├── scripts/                # Regression tests, build checks & packaged smoke test
-├── docs/local-analysis.md  # Recovery, deadlines & verification guide
 ├── run.py                  # One-click server launcher & browser watchdog
 ├── requirements.txt        # Python backend dependency manifest
 ├── build_installer.bat     # Windows one-click installer build script

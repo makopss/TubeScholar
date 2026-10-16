@@ -8,28 +8,6 @@
 
 무료 Google Gemini API는 물론, 이미 구독 중인 ChatGPT Plus / Claude Pro 등의 외부 LLM과도 유연하게 연동되며, 모든 학습 결과는 내 PC에 표준 마크다운(`.md`)으로 영구 보관되어 노션(Notion) 및 옵시디언(Obsidian)과 완벽하게 호환됩니다.
 
-## 🆕 v1.2.3 — 로컬 분석 통합과 영상 보관
-
-- **분석 버튼 통합**: ‘분석 진행’ 하나로 첨부 자막 분석과 음성 분석을 자동 선택합니다.
-- **음성 처리 경로**: 자막이 있으면 Gemini에 전달합니다. 자막이 없으면 Groq 키가 등록된 경우 Groq 전사 후 Gemini가 노트를 생성하며, Groq 미등록 또는 전사 실패 시 Gemini가 추출한 음성을 분석합니다. 생성된 SRT가 없거나 유효하지 않으면 별도로 안내합니다.
-- **프롬프트 복사**: 자막이 준비되면 활성화됩니다. 첨부 SRT/VTT는 노트 생성 전에도 사용할 수 있고, 음성에서 얻은 자막은 보관된 전사를 재사용합니다.
-- **영상과 노트 함께 열기**: 분석한 원본 영상을 앱 데이터의 `videos/`에 보관합니다. 원본을 이동하거나 앱을 다시 실행해도 보관함에서 영상·자막·노트가 함께 열립니다. 구버전 노트는 **원본 영상 연결**을 한 번 선택해 주세요.
-- 같은 파일을 여러 노트에서 공유하며 마지막 연결 노트 삭제 시 앱에 보관된 사본도 정리합니다. 원본 파일은 변경하지 않습니다. 사본은 영상 크기만큼 저장 공간을 사용하며, 재생 가능 여부는 브라우저의 코덱 지원에 따릅니다.
-
-![로컬 분석 화면](docs/images/local-analysis-modal.jpg)
-
-[릴리즈 및 설치 파일](https://github.com/makopss/TubeScholar/releases/tag/v1.2.3) · [분석 처리·검증 문서](docs/local-analysis.md)
-
-## 🆕 v1.2.2 — 로컬 영상 분석 안정화
-
-- **중단·새 작업 전환 개선**: 작업별 취소와 진행 상태를 분리하여 이전 분석 결과가 새 화면에 섞이지 않도록 수정했습니다.
-- **지연 처리 개선**: 오디오 추출·음성 인식·Gemini 요청에 시간 제한과 취소 처리를 적용했습니다. 전체 분석 제한 시간은 업로드를 포함해 기본 10분입니다.
-- **전사 자막 복구**: Groq 전사가 완료되거나 자막 파일을 입력하면 노트 생성 전에 자막을 보관합니다. 생성 실패·취소 후 보관함에서 해당 항목을 열고 **노트 재작성(🔄)** 을 실행하면 영상 재업로드나 재전사 없이 이어갈 수 있습니다.
-- **자막 정확성 보호**: 생성된 SRT가 없거나 유효하지 않으면 자막 생성 실패를 안내하며, 노트의 요약문을 원문 자막으로 대신 저장하지 않습니다.
-- **업로드·패키징 검증**: 업로드 수신 중 용량을 검사하고, 빌드 전에 Python과 네이티브 패키지의 호환성을 확인합니다.
-
-[릴리즈 및 설치 파일](https://github.com/makopss/TubeScholar/releases/tag/v1.2.2) · [분석 처리·검증 문서](docs/local-analysis.md)
-
 <p align="center">
   <img src="docs/images/tubescholar_main_splitview.png" alt="TubeScholar 메인 스플릿 뷰" width="100%" />
 </p>
@@ -38,8 +16,9 @@
 
 ## 🌟 주요 핵심 기능
 
-### 1. ⏱️ 타임스탬프 연동 인터랙티브 스플릿 뷰 (Split-View)
-- **좌측**: YouTube 플레이어 및 내 PC의 로컬 영상(`.mp4`, `.webm`, `.mkv`)과 자막(`.srt`) 완벽 시청 지원.
+### 1. ⏱️ 타임스탬프 연동 인터랙티브 스플릿 뷰 (Split-View) & 원클릭 로컬 분석
+- **좌측**: YouTube 플레이어 및 내 PC의 로컬 영상(`.mp4`, `.webm`, `.mkv`)과 자막(`.srt`, `.vtt`) 완벽 시청 지원.
+- **통합 로컬 영상 분석**: 첨부 자막이 있으면 즉시 분석하고, 자막이 없으면 Groq Whisper 전사 또는 Gemini 음성 직접 분석으로 자동 연결합니다.
 - **우측**: 마크다운 학습 노트 (타임스탬프 `[03:25]` 클릭 시 해당 영상 위치로 즉시 점프).
 - **실시간 드래그 자막 오버레이**: 마우스로 원하는 위치에 배치 가능한 CC 자막, 글자 크기 조절, `[` / `]` 단축키 싱크 미세 보정.
 
@@ -86,7 +65,8 @@
 
 ### 7. 🌐 직관적인 UI 및 초고속 분리형 영구 보관소
 - **한국어 / 영어 2개 공식 UI** 언어 지원 (헤더 드롭다운으로 즉시 전환).
-- **분리형 고속 스토리지 아키텍처**: 마크다운 노트(`data/notes/`), 대용량 다국어 자막 번들(`data/subtitles/`), 신경망 오디오북 및 타임라인 큐(`data/audio/`)를 독립 분리하고 `mtime` 기반 인메모리 캐싱을 적용하여 수백 개의 노트가 쌓여도 보관함을 즉각 로딩합니다.
+- **분리형 고속 스토리지 아키텍처**: 마크다운 노트(`data/notes/`), 대용량 다국어 자막 번들(`data/subtitles/`), 신경망 오디오북 및 타임라인 큐(`data/audio/`), 로컬 영상 사본(`data/videos/`, SHA-256 중복 제거)을 독립 분리하고 `mtime` 기반 인메모리 캐싱을 적용하여 수백 개의 노트가 쌓여도 보관함을 즉각 로딩합니다.
+- **로컬 영상·자막·노트 통합 복원**: 분석한 로컬 영상은 앱 데이터에 안전하게 보관되어, 원본 파일 위치가 바뀌거나 앱을 재시작해도 보관함에서 영상·자막·노트가 함께 열립니다 (노트 생성 실패 시에도 보관된 자막으로 재업로드 없이 즉각 재작성 가능).
 - **보관함 오디오북 배지 (`🎧`) & 자동 리셋**: 보관함 드로어(Drawer)에서 오디오북이 함께 저장된 노트를 `🎧` 배지로 한눈에 식별하며, 다른 노트로 전환 시 이전 오디오 세션을 깔끔하게 초기화하고 해당 노트의 오디오북을 즉시 동기화합니다.
 - 생성된 모든 학습 문서는 표준 `.md` 파일로 영구 보관되어 **Obsidian**, **Logseq**, **Notion** 등에 즉시 복사/연동 가능.
 
@@ -104,7 +84,7 @@
 ## 🚀 빠른 시작 방법
 
 ### A. Windows 설치 프로그램 사용 (일반 사용자 추천)
-[TubeScholar-Setup-v1.2.3.exe](https://github.com/makopss/TubeScholar/releases/download/v1.2.3/TubeScholar-Setup-v1.2.3.exe)를 다운로드하여 실행하시면 Python 설치 없이 사용할 수 있습니다. 같은 릴리즈에 SHA-256 체크섬 파일도 제공합니다.
+[Latest Release](https://github.com/makopss/TubeScholar/releases)에서 `TubeScholar-Setup-v1.2.3.exe`를 다운로드하여 실행하시면 Python 설치 없이 바로 사용할 수 있습니다.
 
 ### B. 소스코드 직접 실행 (개발자용)
 1. **저장소 클론**:
@@ -135,33 +115,12 @@
 
 ---
 
-## 🔧 분석 설정·빌드·검증
-
-- 업로드 한도는 기본 **2GB**, 전체 분석 제한 시간은 기본 **600초**입니다.
-- 설치판은 `%LOCALAPPDATA%\TubeScholar\.env`, 소스 실행은 프로젝트 `.env`에서 `TUBESCHOLAR_MAX_VIDEO_MB`와 `TUBESCHOLAR_ANALYSIS_TIMEOUT_SECONDS`로 값을 조정할 수 있습니다.
-- 로그에는 작업 ID, UTC 시각, 처리 단계·모델·소요 시간이 기록됩니다. 설치판 로그는 `%LOCALAPPDATA%\TubeScholar\tubescholar.log`에 있습니다.
-- 빌드 가상환경은 같은 Python 버전으로 생성하고 의존성을 설치하세요. 다른 Python 버전의 `site-packages`를 복사하면 DLL 로딩 오류가 생길 수 있습니다.
-
-```powershell
-# 외부 AI API를 호출하지 않는 회귀 테스트 (백엔드 28개 + 프론트엔드 6개)
-.\.venv\Scripts\python.exe -u -B scripts\test_analysis.py
-node --test scripts\test_analysis_frontend.cjs
-
-# Windows 설치 파일 생성 (Inno Setup 6 필요)
-.\build_installer.bat
-
-# 패키지 기동·자막 보관 확인 (PowerShell 7, 포트 8000이 비어 있어야 함)
-.\scripts\smoke_packaged.ps1
-```
-
----
-
 ## ⚙️ API 키 설정
 
 웹 화면 우측 상단의 ⚙️ **설정** 아이콘을 클릭하여 등록합니다 (로컬 `.env`에 안전하게 보관됩니다):
 
 1. **Google Gemini 무료 API 키**: [Google AI Studio](https://aistudio.google.com/app/apikey)에서 무료로 발급받아 입력합니다.
-   - **스마트 자동 모델 엔진**: 노트 생성은 기본 `gemini-3.5-flash`, 자막 번역은 `gemini-flash-lite-latest`를 사용합니다. 서버 혼잡·응답 지연 시 제한 시간 안에서 대체 모델을 순서대로 시도합니다.
+   - **스마트 자동 모델 엔진**: 노트 생성은 기본 `gemini-3.5-flash`, 자막 번역은 `gemini-flash-lite-latest`를 사용하며, 서버 혼잡·할당량 초과 시 제한 시간 안에서 대체 모델로 자동 다단계 페일오버(Fallback)됩니다.
 2. **Groq Cloud 무료 API 키 (선택 사항)**: [Groq Console](https://console.groq.com/keys)에서 무료로 발급받아 등록합니다.
    - 자막이 없는 로컬 영상이나 음성 파일 학습 시, 오픈소스 최강 Whisper-large-v3 초고속 AI 음성인식 엔진으로 실시간 자막을 추출하거나 번역할 때 활용됩니다.
 3. **💡 구독형 AI 사용자 (API 키 없이 무료 사용)**:
@@ -182,7 +141,7 @@ TubeScholar/
 │   ├── prompt_loader.py    # 동적 마크다운 템플릿 로더 및 사용자 커스텀 오버레이
 │   ├── extractor.py        # 유튜브 자막 및 메타데이터 추출기
 │   ├── analyzer.py         # Google Gemini 지식 확장 & 스마트 모델 엔진
-│   ├── storage.py          # 마크다운 노트 & 분리형 자막 번들 & 오디오북 저장소
+│   ├── storage.py          # 마크다운 노트 & 분리형 자막 번들 & 오디오북·영상 저장소
 │   ├── tts.py              # edge-tts 신경망 오디오북 & 자막 더빙 엔진
 │   ├── stt.py              # Groq Cloud Whisper-large-v3 초고속 음성인식
 │   └── languages.py        # 17개 다국어 지원 언어 카탈로그
@@ -203,10 +162,9 @@ TubeScholar/
 │   ├── notes/              # 영구 보관 마크다운(.md) 학습 노트
 │   ├── subtitles/          # 노트별 분리 보관 자막·번역 번들 (.json)
 │   ├── audio/              # 영구 보관 신경망 오디오북 (.mp3) 및 타임라인 큐 (.json)
+│   ├── videos/             # 로컬 영상 사본 영구 보관소 (SHA-256 중복 제거)
 │   ├── prompts/            # 사용자 맞춤 커스텀 마크다운 템플릿 (선택 사항)
 │   └── library.json        # 영상 메타데이터 및 학습 기록 색인
-├── scripts/                # 회귀 테스트, 빌드 환경 검사, 패키지 기동 검증
-├── docs/local-analysis.md  # 로컬 분석 복구·제한 시간·검증 가이드
 ├── run.py                  # 원클릭 서버 실행 및 브라우저 자동 실행
 ├── requirements.txt        # Python 백엔드 의존성 목록
 ├── build_installer.bat     # Windows 원클릭 설치 프로그램 빌드 스크립트
