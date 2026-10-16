@@ -81,12 +81,31 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 
 ---
 
+## 🗂️ Study Library Management
+
+The library starts with search and thumbnail note rows. A single `⋯` menu beside search contains Manage groups, New group, and Trash. Text-only chips below search show All, manual groups, and automatic topics for direct navigation. Drop notes onto a manual group chip to add them.
+
+The new-group form stays open after creation so you can create several groups in succession; close it with its `×` button. Group management also has its own `×` button.
+
+Each note has a `⋯` menu for opening it, adding or removing group membership, and moving it to Trash. In Trash, the menu offers restore and permanent deletion. Selecting multiple notes reveals batch action icons.
+
+Selection checkboxes sit to the left of thumbnails, and group chips include note counts. Single-clicking a note opens it while keeping the library available for browsing. Double-click a note, press the close button, or click outside the library to close it.
+
+- Search titles, channels, tags and note text with matching text previews. Subtitle text search is not included.
+- Create or delete groups, add selected notes to a group, or remove them from the current group. Drag notes onto a group to add them. Selections span pages, with up to 500 notes per action.
+- Notes can belong to multiple groups. A drop adds membership; removing membership or deleting a group preserves the notes. The **All** chip shows all notes.
+- Saving or editing a note generates keyword tags and automatic topics from its title and text. Existing notes are classified when first opening the library. This local heuristic makes no API calls, supports ten broad topics, and puts uncertain notes in Other. Manual groups are preserved.
+- Deleting a note first moves it to **Trash**, retaining its note, subtitles, video and audio. Restore it or explicitly delete it permanently from Trash. Shared videos are removed only after their final note reference is permanently deleted.
+- Existing libraries remain usable. Playlist and folder batch analysis is not implemented yet.
+
+Run regression checks without building: `.venv/Scripts/python.exe -B -X utf8 scripts/test_library.py` and `node --test scripts/test_library_frontend.cjs`.
+
 ## 🚀 Quick Start
 
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run `TubeScholar-Setup-v1.2.4.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
+Download and run `TubeScholar-Setup-v1.3.0.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
 
 #### Option B: Run from Source
 1. **Clone the repository:**
@@ -144,6 +163,8 @@ TubeScholar/
 │   ├── extractor.py        # YouTube subtitle & metadata extractor
 │   ├── analyzer.py         # Google Gemini knowledge expansion & smart fallback engine
 │   ├── storage.py          # Markdown notes, decoupled subtitle bundles, audio & video store
+│   ├── library_manager.py  # Groups, search, Trash and batch operations
+│   ├── note_topics.py      # Local keyword tags and automatic topic classification
 │   ├── tts.py              # edge-tts neural audiobook & subtitle dubbing engine
 │   ├── stt.py              # Groq Cloud Whisper-large-v3 ultrafast STT engine
 │   └── languages.py        # 17-language catalog & normalization
@@ -157,6 +178,7 @@ TubeScholar/
 ├── frontend/
 │   ├── index.html          # Interactive split-view dashboard UI
 │   ├── app.js              # Unified interactive client JS (Player, Subtitle Editor, Audiobooks)
+│   ├── library.js          # Thumbnail library, group chips, selection and drag-and-drop
 │   ├── i18n.js             # Multilingual (English, Korean) UI catalog
 │   ├── style.css           # Custom dark theme & reader styling
 │   └── vendor/             # Standalone offline vendor libraries (Tailwind, Marked, DOMPurify)

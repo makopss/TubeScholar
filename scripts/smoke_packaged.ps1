@@ -45,7 +45,13 @@ try {
     }
     if (-not $taskReady) { throw 'Packaged app did not become ready.' }
     $taskPage = Invoke-WebRequest $taskBase -TimeoutSec 5
-    if ($taskPage.Content -notmatch 'app.js\?v=3.8.3') { throw 'Stale frontend was packaged.' }
+    if ($taskPage.Content -notmatch 'app.js\?v=3.9.0' -or $taskPage.Content -notmatch 'library.js\?v=1.0.0') { throw 'Stale frontend was packaged.' }
+    $taskBundledFrontend = Join-Path (Split-Path $taskExe -Parent) '_internal\frontend'
+    foreach ($taskAsset in @('app.js', 'library.js', 'style.css', 'i18n.js', 'index.html')) {
+        $taskExpectedHash = (Get-FileHash -LiteralPath (Join-Path $taskRepo "frontend\$taskAsset") -Algorithm SHA256).Hash
+        $taskBundledHash = (Get-FileHash -LiteralPath (Join-Path $taskBundledFrontend $taskAsset) -Algorithm SHA256).Hash
+        if ($taskExpectedHash -ne $taskBundledHash) { throw "Bundled asset differs from source: $taskAsset" }
+    }
     $taskId = [guid]::NewGuid().ToString('N')
     $taskHeaders['x-analysis-id'] = $taskId
     $taskBody = @{title='Packaged smoke'; subtitle_text="1`n00:00:00,000 --> 00:00:02,000`nSmoke dialogue.`n"} | ConvertTo-Json
@@ -80,6 +86,33 @@ try {
         if ($taskTtsReopened.audiobook.filename -ne $taskTts.filename) { throw 'Generated audiobook restoration failed.' }
         Write-Output 'Packaged live TTS OK: parenthetical meaning, MP3 delivery and saved audiobook restoration.'
     }
+    $taskGroupBody = @{name='Packaged library group'} | ConvertTo-Json
+    $taskGroup = Invoke-RestMethod "$taskBase/api/library/collections" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskGroupBody -TimeoutSec 5
+    $taskBulkBody = @{note_ids=@($taskNoteId);action='collection_add';collection_id=$taskGroup.id} | ConvertTo-Json
+    Invoke-RestMethod "$taskBase/api/library/notes/bulk" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskBulkBody -TimeoutSec 5 | Out-Null
+    $taskLibrary = Invoke-RestMethod "$taskBase/api/library?collection_id=$($taskGroup.id)" -TimeoutSec 5
+    if ($taskLibrary.total -ne 1 -or $taskLibrary.collections[0].count -ne 1 -or $taskLibrary.notes[0].classification_version -ne 1) { throw 'Packaged group or automatic classification missing.' }
+    $taskBulkBody = @{note_ids=@($taskNoteId);action='trash'} | ConvertTo-Json
+    Invoke-RestMethod "$taskBase/api/library/notes/bulk" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskBulkBody -TimeoutSec 5 | Out-Null
+    $taskTrash = Invoke-RestMethod "$taskBase/api/library?trash=true" -TimeoutSec 5
+    $taskHidden = Invoke-WebRequest "$taskBase/api/notes/$taskNoteId" -SkipHttpErrorCheck -TimeoutSec 5
+    if ($taskTrash.total -ne 1 -or $taskTrash.active_count -ne 0 -or [int]$taskHidden.StatusCode -ne 404) { throw 'Trashed note remains active.' }
+    $taskBulkBody = @{note_ids=@($taskNoteId);action='restore'} | ConvertTo-Json
+    Invoke-RestMethod "$taskBase/api/library/notes/bulk" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskBulkBody -TimeoutSec 5 | Out-Null
+    $taskRestored = Invoke-RestMethod "$taskBase/api/notes/$taskNoteId" -TimeoutSec 5
+    $taskLibrary = Invoke-RestMethod "$taskBase/api/library?collection_id=$($taskGroup.id)" -TimeoutSec 5
+    if ($taskLibrary.total -ne 1 -or -not $taskRestored.metadata.local_video_available) { throw 'Restored note lost group membership or media.' }
+    if ($VerifyTts -and $taskRestored.audiobook.filename -ne $taskTts.filename) { throw 'Restore lost saved audiobook.' }
+    Invoke-RestMethod "$taskBase/api/library/collections/$($taskGroup.id)" -Method Delete -Headers $taskHeaders -TimeoutSec 5 | Out-Null
+    $taskRestored = Invoke-RestMethod "$taskBase/api/notes/$taskNoteId" -TimeoutSec 5
+    $taskBulkBody = @{note_ids=@($taskNoteId);action='trash'} | ConvertTo-Json
+    Invoke-RestMethod "$taskBase/api/library/notes/bulk" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskBulkBody -TimeoutSec 5 | Out-Null
+    $taskBulkBody = @{note_ids=@($taskNoteId);action='purge'} | ConvertTo-Json
+    Invoke-RestMethod "$taskBase/api/library/notes/bulk" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskBulkBody -TimeoutSec 5 | Out-Null
+    $taskLibrary = Invoke-RestMethod "$taskBase/api/library?trash=true" -TimeoutSec 5
+    $taskVideoPath = Join-Path $taskProfile "data\videos\$($taskRestored.metadata.local_video.filename)"
+    if ($taskLibrary.total -ne 0 -or (Test-Path -LiteralPath $taskVideoPath) -or (Test-Path -LiteralPath (Join-Path $taskProfile "data\notes\$taskNoteId.md"))) { throw 'Permanent deletion left owned note or video files.' }
+    Write-Output 'Packaged library OK: asset hashes, automatic classification, groups, Trash, restore and permanent deletion.'
     if ($taskProcess.HasExited) { throw 'Packaged app exited unexpectedly.' }
     Write-Output "Packaged smoke OK: startup, unified dialog, transcript persistence, video attachment and Range playback. PID=$($taskProcess.Id)"
     Write-Output "Isolated profile: $taskProfile"

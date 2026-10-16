@@ -2836,73 +2836,9 @@ async function runSubscriptionPrompt(url) {
   }
 }
 
-// 보관함 목록 로드 (동일 영상의 여러 버전도 모두 나열)
+// The library controller owns organization independently of playback state.
 async function loadLibrary() {
-  try {
-    const res = await fetch("/api/notes");
-    const data = await res.json();
-    const notes = data.notes || [];
-
-    document.getElementById("library-count-badge").textContent = notes.length;
-    document.getElementById("drawer-count").textContent = typeof t === "function" ? `(${t("library_count_simple", { count: notes.length })})` : `(${notes.length}개)`;
-
-    const listEl = document.getElementById("library-list");
-    listEl.innerHTML = "";
-
-    if (notes.length === 0) {
-      listEl.innerHTML = `<p class="text-xs text-slate-500 text-center py-8" data-i18n="library_empty">${typeof t === "function" ? t("library_empty") : "아직 저장된 학습 노트가 없습니다."}</p>`;
-      return;
-    }
-
-    notes.forEach(item => {
-      const card = document.createElement("div");
-      card.className = "p-3 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/80 rounded-xl cursor-pointer transition flex space-x-3 items-start group relative";
-      const thumb = item.thumbnail || (item.video_id.startsWith('local_') ? '' : `https://i.ytimg.com/vi/${item.video_id}/hqdefault.jpg`);
-      const localLabel = typeof t === "function" ? t("tag_local") : "📁 로컬";
-      const delLabel = typeof t === "function" ? t("library_delete_btn") : "삭제";
-      
-      const hasAbBadge = item.has_audiobook
-        ? `<span class="inline-flex items-center px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40 text-[9px] font-semibold ml-1.5" title="저장된 오디오북 있음">🎧</span>`
-        : "";
-      
-      card.innerHTML = `
-        <div class="w-20 h-14 bg-slate-900 rounded-lg border border-slate-700 flex-shrink-0 overflow-hidden flex items-center justify-center">
-          ${thumb ? `<img src="${escapeHtmlStr(thumb)}" alt="thumb" class="w-full h-full object-cover">` : `<span class="text-xs text-amber-400 font-bold">${localLabel}</span>`}
-        </div>
-        <div class="flex-1 min-w-0 pr-6">
-          <p class="text-xs font-semibold text-sky-400 truncate">${escapeHtmlStr(item.channel || 'YouTube')}</p>
-          <h4 class="text-xs font-bold text-white truncate mt-0.5" title="${escapeHtmlStr(item.title)}">${escapeHtmlStr(item.title)}</h4>
-          <p class="text-[10px] text-slate-400 mt-1 flex items-center"><span>${escapeHtmlStr(item.created_at || '')}</span>${hasAbBadge}</p>
-        </div>
-        <button class="delete-note-btn absolute top-2 right-2 text-slate-500 hover:text-red-400 p-1 rounded opacity-0 group-hover:opacity-100 transition" title="${delLabel}">
-          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path></svg>
-        </button>
-      `;
-
-      card.addEventListener("click", (e) => {
-        if (e.target.closest(".delete-note-btn")) return;
-        loadSingleSavedNote(item.note_id || item.video_id);
-        toggleDrawer(false);
-      });
-
-      const delBtn = card.querySelector(".delete-note-btn");
-      delBtn.addEventListener("click", async (e) => {
-        e.stopPropagation();
-        if (confirm(typeof t === "function" ? t("confirm_delete_named", { title: item.title }) : `'${item.title}' 학습 노트를 삭제하시겠습니까?`)) {
-          const delId = item.note_id || item.video_id;
-          await fetch(`/api/notes/${delId}`, { method: "DELETE" });
-          if (currentNoteId && currentNoteId === item.note_id && typeof resetTtsPlayerState === "function") {
-            resetTtsPlayerState();
-          }
-          loadLibrary();
-        }
-      });
-
-      listEl.appendChild(card);
-    });
-  } catch (err) {
-    console.error("보관함 로드 실패:", err);
-  }
+  return window.StudyLibrary.refresh();
 }
 
 async function loadSingleSavedNote(noteIdOrVid) {
@@ -3116,10 +3052,19 @@ function switchMode(mode) {
   }
 }
 
-function toggleDrawer(open) {
+function toggleDrawer(open, { restoreFocus = true } = {}) {
   const drawer = document.getElementById("library-drawer");
-  if (open) drawer.classList.remove("translate-x-full");
-  else drawer.classList.add("translate-x-full");
+  drawer.inert = !open;
+  drawer.setAttribute('aria-hidden', String(!open));
+  if (open) {
+    drawer.classList.remove("translate-x-full");
+    loadLibrary();
+    document.getElementById('library-search')?.focus();
+  }
+  else {
+    drawer.classList.add("translate-x-full");
+    if (restoreFocus) document.getElementById('library-toggle-btn')?.focus();
+  }
 }
 
 async function checkConfig() {

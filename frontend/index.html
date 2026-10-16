@@ -14,12 +14,12 @@
   <!-- YouTube IFrame API -->
   <script src="https://www.youtube.com/iframe_api"></script>
   <!-- Custom CSS -->
-  <link rel="stylesheet" href="/static/style.css?v=2.2.2">
+  <link rel="stylesheet" href="/static/style.css?v=2.3.0">
   <!-- Tailwind CSS (로컬 정적 빌드: npm run build:css / 설정은 tailwind.config.js)
        기존 CDN 이 head 끝에 스타일을 주입하던 것과 같은 우선순위가 되도록 style.css 뒤에둠 -->
   <link rel="stylesheet" href="/static/vendor/tailwind.css">
   <!-- i18n 다국어 지원 시스템 (ko, en) -->
-  <script src="/static/i18n.js?v=1.0.11"></script>
+  <script src="/static/i18n.js?v=1.1.0"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans antialiased selection:bg-sky-500 selection:text-white overflow-hidden">
 
@@ -741,18 +741,52 @@
     </div>
   </div>
 
-  <!-- 보관함 사이드바 -->
-  <aside id="library-drawer" class="fixed inset-y-0 right-0 w-80 md:w-96 bg-slate-900 border-l border-slate-800 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
-    <div class="p-4 border-b border-slate-800 flex items-center justify-between">
-      <div class="flex items-center space-x-2">
-        <h3 class="font-bold text-sm text-white" data-i18n="library_drawer_title">나의 학습 보관함</h3>
-        <span id="drawer-count" class="text-xs text-slate-400">(0개)</span>
-      </div>
-      <button id="close-drawer-btn" class="p-1 text-slate-400 hover:text-white">
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-      </button>
+  <!-- Simple study library: search, folders and thumbnail notes. -->
+  <aside id="library-drawer" inert aria-hidden="true" class="fixed inset-y-0 right-0 bg-slate-900 border-l border-slate-800 shadow-2xl z-50 transform translate-x-full transition-transform duration-300 flex flex-col">
+    <header class="library-header">
+      <h3 data-i18n="library_drawer_title">나의 학습 보관함</h3><span id="drawer-count"></span>
+      <button id="close-drawer-btn" class="library-icon" data-i18n-title="lib_close" aria-label="Close library" data-library-icon="close"></button>
+    </header>
+    <div class="library-search-row">
+      <input id="library-search" type="search" maxlength="200" data-i18n-placeholder="lib_search" placeholder="노트 검색" aria-label="Search library">
+      <button id="library-more-btn" class="library-icon" aria-haspopup="menu" aria-expanded="false" aria-controls="library-toolbar-menu" data-library-icon="more" data-i18n-title="lib_library_menu"></button>
     </div>
-    <div id="library-list" class="flex-1 overflow-y-auto p-4 space-y-3"></div>
+    <div id="library-toolbar-menu" class="library-toolbar-menu hidden" role="menu">
+      <button id="library-groups-toggle" class="library-menu-item" role="menuitem" aria-expanded="false"><span data-library-icon="folder"></span><span data-i18n="lib_manage_groups">그룹 관리</span></button>
+      <button id="library-new-group-btn" class="library-menu-item" role="menuitem"><span data-library-icon="folderPlus"></span><span data-i18n="lib_new_group">새 그룹</span></button>
+      <button id="library-trash-view" class="library-menu-item" role="menuitem" data-library-view="trash"><span data-library-icon="trash"></span><span data-i18n="lib_trash">휴지통</span></button>
+    </div>
+    <form id="library-create-form" class="library-create-form hidden">
+      <input id="library-new-name" maxlength="100" required data-i18n-placeholder="lib_new_collection" placeholder="새 그룹 이름" aria-label="New group name">
+      <button class="library-icon" type="submit" data-library-icon="check" data-i18n-title="lib_create"></button>
+      <button id="library-cancel-create" class="library-icon" type="button" data-library-icon="close" data-i18n-title="lib_cancel"></button>
+    </form>
+    <nav id="library-folders" class="library-folders hidden" aria-label="Note groups">
+      <div class="library-folders-heading">
+        <span data-i18n="lib_manage_groups">그룹 관리</span>
+        <button id="library-close-groups" type="button" class="library-icon" data-library-icon="close" data-i18n-title="lib_close_groups" aria-label="Close group management"></button>
+      </div>
+      <div id="library-folders-body" class="library-folders-body">
+        <div id="library-views"></div><div id="library-collections"></div>
+        <div id="library-smart-groups"></div>
+      </div>
+    </nav>
+    <nav id="library-group-shortcuts" class="library-group-shortcuts" aria-label="Quick group navigation"></nav>
+    <div id="library-selection-bar" class="library-selection-bar hidden">
+      <label><input id="library-select-page" type="checkbox" aria-label="Select this page"></label>
+      <span id="library-selection-count" aria-live="polite"></span>
+      <button id="library-add-group-btn" class="library-icon" data-library-icon="folderPlus" data-i18n-title="lib_add_to_collection"></button>
+      <button id="library-remove-group-btn" class="library-icon" data-library-icon="folderMinus" data-library-action="collection_remove" data-i18n-title="lib_remove_from_collection"></button>
+      <button id="library-trash-selected" class="library-icon" data-library-icon="trash" data-library-action="trash" data-i18n-title="lib_move_trash"></button>
+      <button id="library-restore-selected" class="library-icon" data-library-icon="restore" data-library-action="restore" data-i18n-title="lib_restore"></button>
+      <button id="library-purge-selected" class="library-icon library-danger" data-library-icon="erase" data-library-action="purge" data-i18n-title="lib_purge"></button>
+      <button id="library-clear-selection" class="library-icon" data-library-icon="close" data-i18n-title="lib_clear_selection"></button>
+    </div>
+    <div id="library-destination-menu" class="library-destination-menu hidden"></div>
+    <div id="library-feedback" class="library-feedback" role="status" aria-live="polite"></div>
+    <div id="library-list" class="library-list"></div>
+    <div id="library-note-menu" class="library-note-menu hidden" role="menu"></div>
+    <div class="library-pagination"><button id="library-prev" class="library-icon" data-library-icon="left" data-i18n-title="lib_prev"></button><span id="library-page-label"></span><button id="library-next" class="library-icon" data-library-icon="right" data-i18n-title="lib_next"></button></div>
   </aside>
 
   <!-- 채널 영상 탐색 모달 -->
@@ -1016,7 +1050,8 @@
     </div>
   </div>
 
-  <script src="/static/app.js?v=3.8.3"></script>
+  <script src="/static/library.js?v=1.0.0"></script>
+  <script src="/static/app.js?v=3.9.0"></script>
 </body>
 
 </html>

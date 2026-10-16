@@ -10,6 +10,8 @@ import uuid
 import hashlib
 import tempfile
 from contextlib import nullcontext
+from copy import deepcopy
+from note_topics import classify_note
 from typing import List, Dict, Any, Optional
 
 from config import (
@@ -54,6 +56,27 @@ def is_safe_note_id(note_id: Optional[str]) -> bool:
 def _require_safe_note_id(note_id: str):
     if not is_safe_note_id(note_id):
         raise ValueError(f"허용되지 않는 노트 ID 형식입니다: {note_id!r}")
+
+
+def _audio_prefixes(note_id, video_id=None):
+    safe = re.sub(r'[^A-Za-z0-9_-]', '_', str(note_id))[:120]
+    prefixes = {f'{safe}_', f'sub_{safe}_', f'sub_{safe[:80]}_'}
+    if video_id:
+        vid = re.sub(r'[^A-Za-z0-9_-]', '_', str(video_id))
+        prefixes.update({f'sub_{vid[:80]}_', f'sub_{vid[:120]}_'})
+    return prefixes
+
+
+def _other_audio_prefixes(notes, note_id):
+    return {prefix for nid, meta in notes.items() if nid != note_id and isinstance(meta, dict)
+            for prefix in _audio_prefixes(nid, meta.get('video_id'))}
+
+
+def _owns_audio(filename, prefixes, other_prefixes):
+    # Prefer the longest registered owner; equal/shared prefixes are retained.
+    match = max((len(prefix) for prefix in prefixes if filename.startswith(prefix)), default=0)
+    return match > 0 and not any(len(prefix) >= match and filename.startswith(prefix)
+                                for prefix in other_prefixes)
 
 
 def local_video_path(reference):
@@ -614,10 +637,11 @@ created_at: "{created_time}"
         "created_at": existing_meta.get("created_at") or created_time,
         "updated_at": created_time,
     }
-    for k in ("source_lang", "original_lang", "target_lang", "note_target_lang", "translation_source", "translation_track", "audiobook", "subtitle_audiobook", "subtitle_status", "local_video"):
+    for k in ("source_lang", "original_lang", "target_lang", "note_target_lang", "translation_source", "translation_track", "audiobook", "subtitle_audiobook", "subtitle_status", "local_video", "tags", "learning_status", "starred", "trashed_at", "last_opened_at"):
         if existing_meta.get(k) is not None:
             meta[k] = existing_meta[k]
     meta.update(_clean_lang_meta(lang_meta))
+    meta.update(classify_note(title, clean_md))
     if meta["video_type"] == "local" and not meta.get("local_video"):
         for sibling in lib["notes"].values():
             if sibling.get("video_type") == "local" and sibling.get("video_id") == video_id and local_video_path(sibling.get("local_video")):
@@ -663,9 +687,10 @@ created_at: "{created_time}"
         content_hash = hashlib.sha1((clean_md or "").encode("utf-8")).hexdigest()[:8]
         # 만약 기존 노트를 덮어썼는데 마크다운 해시가 달라졌다면 이전 내용의 노트 오디오 파일은 정리
         safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
+        other_prefixes = _other_audio_prefixes(lib['notes'], note_id)
         if os.path.isdir(AUDIO_DIR):
             for fn in os.listdir(AUDIO_DIR):
-                if fn.startswith(f"{safe_note}_") and (fn.endswith(".mp3") or fn.endswith(".json")):
+                if _owns_audio(fn, {f'{safe_note}_'}, other_prefixes) and (fn.endswith(".mp3") or fn.endswith(".json")):
                     if not fn.endswith(f"_{content_hash}.mp3") and not fn.endswith(f"_{content_hash}.json"):
                         try:
                             os.remove(os.path.join(AUDIO_DIR, fn))
@@ -714,7 +739,7 @@ def update_note(note_id: str, new_markdown: str) -> Optional[Dict[str, Any]]:
     _require_safe_note_id(note_id)
     lib = load_library()
     meta = lib.get("notes", {}).get(note_id)
-    if not meta:
+    if not meta or meta.get("trashed_at"):
         return None
 
     file_path = os.path.join(NOTES_DIR, f"{note_id}.md")
@@ -744,9 +769,10 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
         bind_temp_note_audio(note_id, clean_md)
         content_hash = hashlib.sha1((clean_md or "").encode("utf-8")).hexdigest()[:8]
         safe_note = re.sub(r'[^A-Za-z0-9_-]', '_', note_id)[:120]
+        other_prefixes = _other_audio_prefixes(lib['notes'], note_id)
         if os.path.isdir(AUDIO_DIR):
             for fn in os.listdir(AUDIO_DIR):
-                if fn.startswith(f"{safe_note}_") and (fn.endswith(".mp3") or fn.endswith(".json")):
+                if _owns_audio(fn, {f'{safe_note}_'}, other_prefixes) and (fn.endswith(".mp3") or fn.endswith(".json")):
                     if not fn.endswith(f"_{content_hash}.mp3") and not fn.endswith(f"_{content_hash}.json"):
                         try:
                             os.remove(os.path.join(AUDIO_DIR, fn))
@@ -765,6 +791,7 @@ updated_at: "{time.strftime('%Y-%m-%d %H:%M:%S')}"
     except Exception:
         pass
 
+    meta.update(classify_note(meta.get('title', ''), clean_md))
     meta["updated_at"] = time.strftime('%Y-%m-%d %H:%M:%S')
     lib["notes"][note_id] = meta
     save_library(lib)
@@ -935,12 +962,12 @@ def get_note(note_id_or_video_id: str) -> Optional[Dict[str, Any]]:
     notes = lib.get("notes", {})
 
     target_id = None
-    if note_id_or_video_id in notes:
+    if note_id_or_video_id in notes and not notes[note_id_or_video_id].get("trashed_at"):
         target_id = note_id_or_video_id
     else:
         # video_id로 최신 노트 검색
         for nid, item in reversed(list(notes.items())):
-            if item.get("video_id") == note_id_or_video_id:
+            if item.get("video_id") == note_id_or_video_id and not item.get("trashed_at"):
                 target_id = nid
                 break
 
@@ -1105,6 +1132,8 @@ def list_saved_notes() -> List[Dict[str, Any]]:
 
     items = []
     for meta in lib.get("notes", {}).values():
+        if meta.get("trashed_at"):
+            continue
         entry = {k: v for k, v in meta.items() if k not in ("subtitles", "translations")}
         nid = entry.get("note_id", "")
         vid = entry.get("video_id", "")
@@ -1122,10 +1151,12 @@ def delete_note(note_id: str) -> bool:
     """학습 노트, 자막 번들 및 관련 TTS 오디오 캐시 파일을 삭제합니다."""
     if not is_safe_note_id(note_id):
         return False
-    lib = load_library()
+    lib = deepcopy(load_library())
     deleted_meta = None
     if note_id in lib.get("notes", {}):
         deleted_meta = lib["notes"].pop(note_id, None)
+        for group in lib.get("collections", {}).values():
+            group["note_ids"] = [nid for nid in group.get("note_ids", []) if nid != note_id]
         save_library(lib)
         _remove_unused_video((deleted_meta or {}).get("local_video"), lib["notes"])
 
@@ -1168,8 +1199,12 @@ def delete_note(note_id: str) -> bool:
                         patterns.append(os.path.join(AUDIO_DIR, f"sub_{safe_vid}_*.mp3"))
                         patterns.append(os.path.join(AUDIO_DIR, f"sub_{safe_vid}_*.json"))
 
+        owner_prefixes = _audio_prefixes(note_id, (deleted_meta or {}).get('video_id'))
+        other_prefixes = _other_audio_prefixes(lib.get('notes', {}), note_id)
         for pattern in patterns:
             for cached_file in glob.glob(pattern):
+                if not _owns_audio(os.path.basename(cached_file), owner_prefixes, other_prefixes):
+                    continue
                 try:
                     os.remove(cached_file)
                 except Exception:

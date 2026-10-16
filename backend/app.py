@@ -10,13 +10,13 @@ import shutil
 import logging
 import uuid
 import mimetypes
-from typing import Optional, List, Dict, Any
-from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form
+from typing import Optional, List, Dict, Any, Literal
+from fastapi import FastAPI, HTTPException, Request, UploadFile, File, Form, Query
 from fastapi.responses import JSONResponse, FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import iterate_in_threadpool, run_in_threadpool
 from starlette.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import imageio_ffmpeg
 
 # backend 디렉토리를 모듈 경로에 먼저 추가
@@ -78,6 +78,7 @@ from analysis_jobs import (
     AnalysisMiddleware, check_analysis, analysis_commit, set_checkpoint, current_job,
 )
 from media_process import run_ffmpeg
+import library_manager
 
 log = logging.getLogger("tubescholar.analysis")
 
@@ -222,6 +223,37 @@ class ManualSaveRequest(BaseModel):
 
 class UpdateNoteRequest(BaseModel):
     markdown: str
+
+
+class CollectionSource(BaseModel):
+    kind: Literal['manual', 'youtube_playlist', 'local_folder'] = 'manual'
+    reference: str = Field(default='', max_length=2000)
+
+
+class CollectionRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+    source: CollectionSource = Field(default_factory=CollectionSource)
+
+
+class CollectionRenameRequest(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class CollectionOrderRequest(BaseModel):
+    note_ids: List[str] = Field(max_length=10000)
+
+
+class LibraryBulkRequest(BaseModel):
+    note_ids: List[str] = Field(min_length=1, max_length=500)
+    action: Literal['tags_add', 'tags_remove', 'collection_add', 'collection_remove',
+                    'status', 'star', 'unstar', 'trash', 'restore', 'purge']
+    tags: Optional[List[str]] = None
+    collection_id: Optional[str] = None
+    status: Optional[Literal['unread', 'learning', 'completed', 'review']] = None
+
+
+class LibraryExportRequest(BaseModel):
+    note_ids: List[str] = Field(min_length=1, max_length=500)
 
 class ChannelRequest(BaseModel):
     channel_url: str
@@ -1219,6 +1251,56 @@ def download_subtitles(req: SubtitleDownloadRequest):
         "subtitles": subtitles
     }
 
+@app.get('/api/library')
+def query_study_library(
+    q: str = Query(default='', max_length=200), collection_id: str = '',
+    tag: str = '', status: Literal['', 'unread', 'learning', 'completed', 'review'] = '',
+    source: Literal['', 'youtube', 'local'] = '', language: str = '',
+    starred: bool = False, trash: bool = False,
+    sort: Literal['newest', 'updated', 'opened', 'title', 'collection'] = 'newest',
+    offset: int = Query(default=0, ge=0), limit: int = Query(default=40, ge=1, le=100),
+    topic: str = Query(default='', max_length=40),
+):
+    return library_manager.query_library(q, collection_id, tag, status, source, language,
+                                         starred, trash, sort, offset, limit, topic)
+
+
+@app.post('/api/library/collections')
+def create_study_collection(req: CollectionRequest):
+    return library_manager.create_collection(req.name, req.source.model_dump())
+
+
+@app.patch('/api/library/collections/{collection_id}')
+def rename_study_collection(collection_id: str, req: CollectionRenameRequest):
+    return library_manager.edit_collection(collection_id, name=req.name)
+
+
+@app.put('/api/library/collections/{collection_id}/order')
+def reorder_study_collection(collection_id: str, req: CollectionOrderRequest):
+    return library_manager.edit_collection(collection_id, note_ids=req.note_ids)
+
+
+@app.delete('/api/library/collections/{collection_id}')
+def remove_study_collection(collection_id: str):
+    return library_manager.edit_collection(collection_id, delete=True)
+
+
+@app.post('/api/library/notes/bulk')
+def bulk_manage_notes(req: LibraryBulkRequest):
+    return library_manager.bulk_update(**req.model_dump())
+
+
+@app.post('/api/library/export')
+def export_library_notes(req: LibraryExportRequest):
+    return StreamingResponse(library_manager.export_notes(req.note_ids), media_type='application/zip',
+                             headers={'Content-Disposition': 'attachment; filename="TubeScholar-notes.zip"'})
+
+
+@app.post('/api/library/notes/{note_id}/opened')
+def record_library_open(note_id: str):
+    return library_manager.record_opened(note_id)
+
+
 @app.get("/api/notes")
 def get_notes():
     return {"notes": list_saved_notes()}
@@ -1271,8 +1353,7 @@ def update_single_note(note_id: str, req: UpdateNoteRequest):
 def remove_note(note_id: str):
     if not is_safe_note_id(note_id):
         raise HTTPException(status_code=400, detail="잘못된 노트 ID 입니다.")
-    success = delete_note(note_id)
-    return {"success": success}
+    return library_manager.bulk_update([note_id], 'trash')
 
 @app.post("/api/channel/videos")
 def channel_videos(req: ChannelRequest):
