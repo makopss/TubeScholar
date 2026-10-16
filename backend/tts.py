@@ -117,6 +117,45 @@ VOICES = {
     }
 }
 DEFAULT_VOICE = 'injoon'
+AUDIO_RENDER_VERSION = 'v2'
+
+
+def _is_current_audio(filename: str) -> bool:
+    """Do not restore audio made with the old, lossy narration rules."""
+    return bool(re.search(
+        rf'_{AUDIO_RENDER_VERSION}_[a-z]+_[pm]\d{{1,3}}_[0-9a-f]{{8}}\.mp3$', filename
+    ))
+
+
+# Only complete caption annotations qualify; a keyword inside an explanation does not.
+_SOUND_CUES = frozenset({
+    '웃음', '웃음소리', '박수', '박수소리', '음악', '배경음악', '배경 음악',
+    '효과음', '소음', '한숨', '기침', '환호',
+    'music', 'background music', 'bgm', 'applause', 'laughter', 'laughing',
+    'chuckle', 'chuckles', 'chuckling', 'gasp', 'gasps', 'sigh', 'sighs',
+    'cough', 'coughing', 'cheering',
+    '音楽', '拍手', '笑い', '笑い声', '音乐', '音樂', '掌声', '掌聲', '笑声', '笑聲',
+})
+
+
+def _remove_subtitle_sound_cues(text: str) -> str:
+    """Preserve ambiguous/nested parentheses and annotations attached to a term."""
+    pairs = {'(': ')', '（': '）', '[': ']', '［': '］', '【': '】'}
+    stack, removals = [], []
+    for index, char in enumerate(text):
+        if char in pairs:
+            stack.append((index, pairs[char]))
+        elif stack and char == stack[-1][1]:
+            start, _ = stack.pop()
+            if stack:
+                continue
+            label = re.sub(r'\s+', ' ', text[start + 1:index]).strip().casefold()
+            attached = start > 0 and (text[start - 1].isalnum() or text[start - 1] == '_')
+            if label in _SOUND_CUES and not attached:
+                removals.append((start, index + 1))
+    for start, end in reversed(removals):
+        text = text[:start] + ' ' + text[end:]
+    return text
 
 
 async def _stream_tts_with_retry(text: str, voice_id: str, speed: str, filepath: str, max_attempts: int = 3) -> List[Dict[str, Any]]:
@@ -152,7 +191,8 @@ async def _stream_tts_with_retry(text: str, voice_id: str, speed: str, filepath:
                 await asyncio.sleep(0.8 * (attempt + 1))
     raise last_err or RuntimeError("edge-tts 음성 생성 실패")
 
-def clean_markdown_for_tts(markdown_text: str, max_chars: int = 15000) -> str:
+def clean_markdown_for_tts(markdown_text: str) -> str:
+    """Keep explanatory parentheses and all prose, including the end of long notes."""
     if not markdown_text:
         return ''
 
@@ -175,9 +215,7 @@ def clean_markdown_for_tts(markdown_text: str, max_chars: int = 15000) -> str:
     text = re.sub(r'\(\s*\d{1,2}:\d{2}(?::\d{2})?\s*\)', '', text)
     text = re.sub(r'^\s*#{1,6}\s*\d{1,2}:\d{2}(?::\d{2})?\s*', '', text, flags=re.MULTILINE)
 
-    # 5. 괄호 (...) 및 （...） 안의 보조 영문, 출처, 주석 단어 완전 제거 (듣기에 매끄러운 낭독 흐름)
-    text = re.sub(r'\([^)]*\)', '', text)
-    text = re.sub(r'（[^）]*）', '', text)
+    # 5. 노트의 괄호는 약어, 정의, 조건일 수 있으므로 내용과 구분 기호를 보존합니다.
 
     # 6. 각주 및 대괄호 기호 정리
     text = re.sub(r'\[\d+\]', '', text) # [1], [2] 각주 번호 제거
@@ -203,19 +241,12 @@ def clean_markdown_for_tts(markdown_text: str, max_chars: int = 15000) -> str:
     # 9. 문장 마침표 및 공백 표준화
     text = re.sub(r':\s*\n', '.\n', text)
     lines = [line.strip() for line in text.split('\n') if line.strip()]
-    cleaned = '. '.join(lines)
+    # edge-tts splits long input at newlines/spaces and accumulates cue offsets.
+    # Keep paragraph boundaries so its native chunking can use them without dropping prose.
+    cleaned = '.\n'.join(lines)
     cleaned = re.sub(r'\.{2,}', '.', cleaned)
     cleaned = re.sub(r'\s+([.,!?])', r'\1', cleaned)
-    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
-
-    if len(cleaned) > max_chars:
-        # 다국어 요약 마무리 문구 처리
-        if re.search(r'[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff]', cleaned[:300]) and not re.search(r'[\uac00-\ud7a3]', cleaned[:300]):
-            cleaned = cleaned[:max_chars] + '... 以上で主要な要約の聴取を終了します。'
-        elif not re.search(r'[\uac00-\ud7a3]', cleaned[:300]):
-            cleaned = cleaned[:max_chars] + '... This concludes the audio summary.'
-        else:
-            cleaned = cleaned[:max_chars] + '... 이상으로 주요 요약 청취를 마칩니다.'
+    cleaned = re.sub(r'[^\S\n]+', ' ', cleaned).strip()
 
     return cleaned
 
@@ -238,9 +269,9 @@ async def generate_note_audio(
     # 노트 내용이 수정되면 새 오디오를 만들도록 내용 해시를 캐시 키에 포함
     content_hash = hashlib.sha1((markdown_text or '').encode('utf-8')).hexdigest()[:8]
     safe_speed = speed.replace('+', 'p').replace('-', 'm').replace('%', '')
-    filename = f'{safe_note}_{voice_key}_{safe_speed}_{content_hash}.mp3'
+    filename = f'{safe_note}_{AUDIO_RENDER_VERSION}_{voice_key}_{safe_speed}_{content_hash}.mp3'
     filepath = os.path.join(AUDIO_DIR, filename)
-    json_filename = f'{safe_note}_{voice_key}_{safe_speed}_{content_hash}.json'
+    json_filename = filename[:-4] + '.json'
     json_filepath = os.path.join(AUDIO_DIR, json_filename)
 
     script_text = clean_markdown_for_tts(markdown_text)
@@ -371,9 +402,8 @@ def clean_subtitle_line_for_tts(text: str) -> str:
     """자막 한 줄을 음성 합성용으로 정제 (효과음/음악 괄호, AI 태그, HTML 태그 등 제거)"""
     if not text:
         return ""
-    # 1. 효과음, 음악, 청중 반응 등 괄호 표기 제거
-    text = re.sub(r'\[[^\]]*(?:music|음악|applause|laughter|박수|웃음|sound|chuckle|gasp|효과음|소음)[^\]]*\]', '', text, flags=re.IGNORECASE)
-    text = re.sub(r'\([^\)]*(?:music|음악|applause|laughter|박수|웃음|sound|효과음)[^\)]*\)', '', text, flags=re.IGNORECASE)
+    # 1. 명확한 효과음 표기만 제거하고 용어/조건/설명은 보존
+    text = _remove_subtitle_sound_cues(text)
     text = re.sub(r'[♪♫♬♩]', '', text)
     # 2. AI 인용 잔여물 및 참조 태그 제거
     text = clean_ai_citation_artifacts(text)
@@ -442,9 +472,9 @@ async def generate_subtitles_audio(
     candidate_modes = list(dict.fromkeys(candidate_modes))
 
     for c_mode in candidate_modes:
-        c_fn = f"sub_{safe_vid}_{c_mode}_{voice_key}_{safe_speed}_{content_hash}.mp3"
+        c_fn = f"sub_{safe_vid}_{c_mode}_{AUDIO_RENDER_VERSION}_{voice_key}_{safe_speed}_{content_hash}.mp3"
         c_fp = os.path.join(AUDIO_DIR, c_fn)
-        c_jfn = f"sub_{safe_vid}_{c_mode}_{voice_key}_{safe_speed}_{content_hash}.json"
+        c_jfn = c_fn[:-4] + '.json'
         c_jfp = os.path.join(AUDIO_DIR, c_jfn)
         if os.path.exists(c_fp) and os.path.getsize(c_fp) > 1024 and os.path.exists(c_jfp):
             try:
@@ -465,9 +495,9 @@ async def generate_subtitles_audio(
                 pass
 
     # 캐시가 없는 경우 생성할 기본 파일명 (번역 모드는 dub 으로 통일)
-    filename = f"sub_{safe_vid}_{norm_mode}_{voice_key}_{safe_speed}_{content_hash}.mp3"
+    filename = f"sub_{safe_vid}_{norm_mode}_{AUDIO_RENDER_VERSION}_{voice_key}_{safe_speed}_{content_hash}.mp3"
     filepath = os.path.join(AUDIO_DIR, filename)
-    json_filename = f"sub_{safe_vid}_{norm_mode}_{voice_key}_{safe_speed}_{content_hash}.json"
+    json_filename = filename[:-4] + '.json'
     json_filepath = os.path.join(AUDIO_DIR, json_filename)
 
     try:
@@ -557,7 +587,7 @@ def bind_temp_note_audio(note_id: str, markdown_text: str) -> Optional[Dict[str,
     bound_info = None
     try:
         for fname in os.listdir(AUDIO_DIR):
-            if not fname.endswith(f"_{content_hash}.mp3"):
+            if not _is_current_audio(fname) or not fname.endswith(f"_{content_hash}.mp3"):
                 continue
             for prefix in ("current_note_", "temp_note_"):
                 if fname.startswith(prefix):
@@ -606,7 +636,7 @@ def find_saved_note_audiobook(
     # 1. 메타데이터에 명시적으로 기록된 오디오북 파일 우선 확인
     if isinstance(saved_meta, dict) and saved_meta.get("filename"):
         saved_fn = os.path.basename(str(saved_meta["filename"]))
-        if saved_fn.endswith(".mp3"):
+        if _is_current_audio(saved_fn):
             if not content_hash or saved_fn.endswith(f"_{content_hash}.mp3"):
                 candidates.append(saved_fn)
 
@@ -620,7 +650,7 @@ def find_saved_note_audiobook(
     other_note_matches = []
     prefix = f"{safe_note}_"
     for fname in all_files:
-        if not fname.startswith(prefix) or not fname.endswith(".mp3"):
+        if not fname.startswith(prefix) or not _is_current_audio(fname):
             continue
         full_mp3 = os.path.join(AUDIO_DIR, fname)
         full_json = os.path.join(AUDIO_DIR, fname[:-4] + ".json")
@@ -752,7 +782,7 @@ def find_saved_subtitle_audiobook(
     candidates: List[str] = []
     if isinstance(saved_meta, dict) and saved_meta.get("filename"):
         saved_fn = os.path.basename(str(saved_meta["filename"]))
-        if saved_fn.startswith("sub_") and saved_fn.endswith(".mp3"):
+        if saved_fn.startswith("sub_") and _is_current_audio(saved_fn):
             candidates.append(saved_fn)
 
     prefixes = []
@@ -772,7 +802,7 @@ def find_saved_subtitle_audiobook(
             all_files = []
         disk_matches = []
         for fname in all_files:
-            if not fname.endswith(".mp3"):
+            if not _is_current_audio(fname):
                 continue
             if not any(fname.startswith(p) for p in prefixes):
                 continue
@@ -836,7 +866,7 @@ def has_saved_audiobook_on_disk(note_id: str, video_id: str = "") -> bool:
         return False
     try:
         for fname in os.listdir(AUDIO_DIR):
-            if fname.endswith(".mp3") and any(fname.startswith(p) for p in prefixes):
+            if _is_current_audio(fname) and any(fname.startswith(p) for p in prefixes):
                 mp3_path = os.path.join(AUDIO_DIR, fname)
                 json_path = os.path.join(AUDIO_DIR, fname[:-4] + ".json")
                 if os.path.getsize(mp3_path) > 1024 and os.path.exists(json_path):

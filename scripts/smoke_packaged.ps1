@@ -1,5 +1,8 @@
 #requires -Version 7.0
-param([string]$Executable = (Join-Path $PSScriptRoot '..\dist\TubeScholar\TubeScholar.exe'))
+param(
+    [string]$Executable = (Join-Path $PSScriptRoot '..\dist\TubeScholar\TubeScholar.exe'),
+    [switch]$VerifyTts
+)
 $ErrorActionPreference = 'Stop'
 $taskExe = (Resolve-Path -LiteralPath $Executable).Path
 $taskRepo = Split-Path $PSScriptRoot -Parent
@@ -63,6 +66,20 @@ try {
     if (-not $taskReopened.metadata.local_video_available) { throw 'Saved video reference missing.' }
     $taskRange = Invoke-WebRequest "$taskBase/api/notes/$taskNoteId/video" -Headers @{Range='bytes=0-7'} -TimeoutSec 5
     if ([int]$taskRange.StatusCode -ne 206 -or $taskRange.Headers['Content-Range'] -ne 'bytes 0-7/22') { throw 'Saved video range playback failed.' }
+    if ($VerifyTts) {
+        $taskNarration = "강화학습(RL)은 보상을 바탕으로 학습합니다.`n`n결과는 감소합니다(단, 온도가 일정할 때)."
+        $taskEdit = @{markdown=$taskNarration} | ConvertTo-Json
+        Invoke-RestMethod "$taskBase/api/notes/$taskNoteId" -Method Put -Headers $taskHeaders -ContentType 'application/json; charset=utf-8' -Body $taskEdit -TimeoutSec 10 | Out-Null
+        $taskTtsBody = @{note_id=$taskNoteId; voice='injoon'} | ConvertTo-Json
+        $taskTts = Invoke-RestMethod "$taskBase/api/tts/generate" -Method Post -Headers $taskHeaders -ContentType 'application/json' -Body $taskTtsBody -TimeoutSec 60
+        $taskCueText = ($taskTts.cues | ForEach-Object { $_.text }) -join ' '
+        if (-not $taskTts.success -or $taskTts.filename -notmatch '_v2_injoon_' -or $taskCueText -notmatch '온도가 일정할 때' -or $taskCueText -notmatch '\(RL\)') { throw 'Content-preserving narration failed.' }
+        $taskAudio = Invoke-WebRequest "$taskBase/api/tts/audio/$($taskTts.filename)" -Headers @{Range='bytes=0-7'} -TimeoutSec 10
+        if ([int]$taskAudio.StatusCode -ne 206) { throw 'Generated audiobook playback failed.' }
+        $taskTtsReopened = Invoke-RestMethod "$taskBase/api/notes/$taskNoteId" -TimeoutSec 10
+        if ($taskTtsReopened.audiobook.filename -ne $taskTts.filename) { throw 'Generated audiobook restoration failed.' }
+        Write-Output 'Packaged live TTS OK: parenthetical meaning, MP3 delivery and saved audiobook restoration.'
+    }
     if ($taskProcess.HasExited) { throw 'Packaged app exited unexpectedly.' }
     Write-Output "Packaged smoke OK: startup, unified dialog, transcript persistence, video attachment and Range playback. PID=$($taskProcess.Id)"
     Write-Output "Isolated profile: $taskProfile"

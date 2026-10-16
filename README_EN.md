@@ -42,6 +42,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### 4. 🎧 Dual AI Neural Audiobook & Persistent Sync System (edge-tts)
 - **7 Languages, 16 Microsoft Neural Voices & Smart Voice Matching**: Choose from 16 expressive neural voices across Korean, English, Japanese, Chinese, Spanish, French, and German, with automatic language-compatible voice selection when switching between notes and subtitle tracks.
 - **Study Note Audiobook**: Listen to generated markdown study notes with paragraph-by-paragraph highlight synchronization.
+- **Content-Preserving Narration**: Keeps definitions, abbreviations, and conditions in note parentheses. Long notes use automatic chunking instead of being cut off at 15,000 characters. Subtitles omit only explicit sound annotations such as `(laughter)` and `[applause]`, preserving ambiguous explanations. Audio made with the previous rules needs to be regenerated.
 - **Subtitle Dubbing Audiobook (Subtitle Dubbing)**: Voices entire subtitle transcripts in natural spoken tone, synchronized with real-time text highlight cues and auto-scroll.
 - **Persistent Note-Audiobook Binding & Stale Cache Cleanup**: Generated audiobooks (`.mp3`) and timeline cue maps (`.json`) are permanently bound to your saved study notes—instantly restoring the player and 100% cue highlight sync on reload—while automatically cleaning up outdated audio files when notes or subtitles are edited.
 - **Zero-Latency Session Switching & Clean Download Filenames**: Toggle seamlessly between Note Audiobook (`{Title}_Audiobook.mp3`) and Subtitle Dubbing (`sub_{Title}_Audiobook.mp3`) with configurable narration speed (`0.75x` – `2.0x`) and clean title-based `.mp3` downloads.
@@ -85,7 +86,7 @@ Works seamlessly with free Google Gemini API or your existing ChatGPT Plus / Cla
 ### Installation & Launch
 
 #### Option A: Windows Installer (Recommended for non-developers)
-Download and run `TubeScholar-Setup-v1.2.3.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
+Download and run `TubeScholar-Setup-v1.2.4.exe` from the [Latest Release](https://github.com/makopss/TubeScholar/releases). It includes everything required—no Python installation needed!
 
 #### Option B: Run from Source
 1. **Clone the repository:**
